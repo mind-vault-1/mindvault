@@ -2,6 +2,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { resources, publishers, verifications } from "../db/schema.js";
 import { uploadFile, deleteFile } from "../storage/supabaseStorage.js";
+import { createFileContentHash, createLinkContentHash } from "../utils/contentHash.js";
 
 export async function createFileResource(data: {
   publisherId: string;
@@ -23,6 +24,10 @@ export async function createFileResource(data: {
       walletAddress: data.walletAddress,
       resourceType: "file",
       mimeType: data.mimeType,
+      contentHash: createFileContentHash({
+        title: data.title,
+        bytes: data.fileBuffer,
+      }),
     })
     .returning();
 
@@ -60,6 +65,10 @@ export async function createLinkResource(data: {
       walletAddress: data.walletAddress,
       resourceType: "link",
       externalUrl: data.externalUrl,
+      contentHash: createLinkContentHash({
+        title: data.title,
+        externalUrl: data.externalUrl,
+      }),
     })
     .returning();
 
@@ -83,6 +92,7 @@ export async function listCatalog() {
       price: resources.price,
       resourceType: resources.resourceType,
       mimeType: resources.mimeType,
+      contentHash: resources.contentHash,
       publisherName: publishers.name,
       createdAt: resources.createdAt,
     })
@@ -100,6 +110,7 @@ export async function getResourceMeta(id: string) {
       price: resources.price,
       resourceType: resources.resourceType,
       mimeType: resources.mimeType,
+      contentHash: resources.contentHash,
       verificationStatus: resources.verificationStatus,
       publisherName: publishers.name,
       publisherWallet: resources.walletAddress,

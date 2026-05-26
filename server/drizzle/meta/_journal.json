@@ -15,6 +15,13 @@
       "when": 1775469568360,
       "tag": "0001_supreme_raza",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779786607610,
+      "tag": "0002_hot_roulette",
+      "breakpoints": true
     }
   ]
 }

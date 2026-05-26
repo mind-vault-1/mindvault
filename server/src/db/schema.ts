@@ -44,6 +44,8 @@ export const resources = pgTable("resources", {
   resourceType: resourceTypeEnum("resource_type").notNull(),
   storagePath: text("storage_path"), // Supabase Storage path (for type "file")
   externalUrl: text("external_url"), // For type "link"
+  onchainTxHash: text("onchain_tx_hash"),
+  contentHash: text("content_hash"), // SHA-256 integrity anchor for on-chain metadata
   mimeType: text("mime_type"),
   verificationStatus: verificationStatusEnum("verification_status")
     .notNull()
