@@ -10,6 +10,13 @@ const envSchema = z.object({
   FACILITATOR_URL: z
     .string()
     .default("https://www.x402.org/facilitator"),
+  SOROBAN_RPC_URL: z
+    .string()
+    .url("SOROBAN_RPC_URL must be a valid URL")
+    .default("https://soroban-testnet.stellar.org"),
+  VAULT_REGISTRY_CONTRACT_ID: z
+    .string()
+    .min(1, "VAULT_REGISTRY_CONTRACT_ID is required"),
   PAY_TO: z.string().min(1, "PAY_TO (platform wallet address) is required"),
   AGENT_SECRET_KEY: z
     .string()
