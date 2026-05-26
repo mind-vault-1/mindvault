@@ -43,6 +43,7 @@ export const resources = pgTable("resources", {
   walletAddress: text("wallet_address").notNull(), // payTo for this resource
   resourceType: resourceTypeEnum("resource_type").notNull(),
   storagePath: text("storage_path"), // Supabase Storage path (for type "file")
+  contentHash: text("content_hash"),
   externalUrl: text("external_url"), // For type "link"
   mimeType: text("mime_type"),
   verificationStatus: verificationStatusEnum("verification_status")
