@@ -2,6 +2,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { resources, publishers, verifications } from "../db/schema.js";
 import { uploadFile, deleteFile } from "../storage/supabaseStorage.js";
+import { calculateContentHash } from "../utils/crypto.js";
 import { hashContentUrl } from "../utils/crypto.js";
 
 export async function createFileResource(data: {
@@ -14,6 +15,8 @@ export async function createFileResource(data: {
   filename: string;
   mimeType: string;
 }) {
+  const contentHash = calculateContentHash(data.fileBuffer);
+
   const [resource] = await db
     .insert(resources)
     .values({
@@ -24,6 +27,7 @@ export async function createFileResource(data: {
       walletAddress: data.walletAddress,
       resourceType: "file",
       mimeType: data.mimeType,
+      contentHash,
     })
     .returning();
 
