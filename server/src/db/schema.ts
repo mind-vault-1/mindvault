@@ -17,6 +17,12 @@ export const verificationStatusEnum = pgEnum("verification_status", [
   "skipped",
 ]);
 
+export const onchainStatusEnum = pgEnum("onchain_status", [
+  "pending",
+  "registered",
+  "failed",
+]);
+
 // Publishers — humans or AI agents that publish resources
 export const publishers = pgTable("publishers", {
   id: text("id")
@@ -49,6 +55,8 @@ export const resources = pgTable("resources", {
     .notNull()
     .default("pending"),
   verificationId: text("verification_id"),
+  onchainStatus: onchainStatusEnum("onchain_status").notNull().default("pending"),
+  onchainTxHash: text("onchain_tx_hash"),
   listed: boolean("listed").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
