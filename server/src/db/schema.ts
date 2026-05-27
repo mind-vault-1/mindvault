@@ -17,6 +17,13 @@ export const verificationStatusEnum = pgEnum("verification_status", [
   "skipped",
 ]);
 
+export const onchainStatusEnum = pgEnum("onchain_status_enum", [
+  "none",
+  "pending",
+  "registered",
+  "failed",
+]);
+
 // Publishers — humans or AI agents that publish resources
 export const publishers = pgTable("publishers", {
   id: text("id")
@@ -43,16 +50,15 @@ export const resources = pgTable("resources", {
   walletAddress: text("wallet_address").notNull(), // payTo for this resource
   resourceType: resourceTypeEnum("resource_type").notNull(),
   storagePath: text("storage_path"), // Supabase Storage path (for type "file")
-  contentHash: text("content_hash"),
-  externalUrl: text("external_url"), // For type "link"
   contentHash: text("content_hash"), // SHA-256 of canonical content (URL for links, file bytes for files)
+  externalUrl: text("external_url"), // For type "link"
   mimeType: text("mime_type"),
   verificationStatus: verificationStatusEnum("verification_status")
     .notNull()
     .default("pending"),
   verificationId: text("verification_id"),
   listed: boolean("listed").notNull().default(false),
-  onchainStatus: text("onchain_status"),
+  onchainStatus: onchainStatusEnum("onchain_status").notNull().default("none"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
