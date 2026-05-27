@@ -32,6 +32,7 @@ const envSchema = z.object({
 
   // Verification
   VERIFICATION_PRICE: z.string().default("0.10"),
+  REGISTRY_CONTRACT_ID: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

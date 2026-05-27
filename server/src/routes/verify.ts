@@ -11,6 +11,7 @@ import { eq, desc, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { resources, verifications } from "../db/schema.js";
 import { checkOriginality } from "../services/verificationService.js";
+import { registerResourceOnchain } from "../services/registryClient.js";
 import { config } from "../config.js";
 
 const router: RouterType = Router();
@@ -71,6 +72,13 @@ router.post("/verify-content", verifyPaywall, async (req, res) => {
         listed: result.isOriginal,
       })
       .where(eq(resources.id, resourceId));
+
+    // If verified, trigger onchain registration (async)
+    if (result.isOriginal) {
+      registerResourceOnchain(resourceId).catch((err) => {
+        console.error(`Background onchain registration failed for ${resourceId}:`, err);
+      });
+    }
   }
 
   res.json(result);
