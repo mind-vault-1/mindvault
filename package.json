@@ -14,7 +14,8 @@
     "db:migrate": "pnpm --filter @mindvault/server db:migrate",
     "generate-wallet": "pnpm --filter @mindvault/server generate-wallet",
     "contract:build": "stellar contract build --manifest-path contract/Cargo.toml",
-    "contract:test": "cargo test --manifest-path contract/Cargo.toml"
+    "contract:test": "cargo test --manifest-path contract/Cargo.toml",
+    "contract:bindings": "node scripts/generate-bindings.mjs"
   },
   "keywords": [
     "x402",

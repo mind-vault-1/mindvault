@@ -1,0 +1,23 @@
+{
+  "name": "@mindvault/mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP server for MindVault — AI agent access to the vault",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@stellar/stellar-sdk": "^15.0.1",
+    "@x402/fetch": "^2.9.0",
+    "@x402/stellar": "^2.9.0",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  }
+}

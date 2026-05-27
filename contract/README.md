@@ -50,6 +50,24 @@ stellar contract deploy \
 The command prints the deployed contract ID — wire it into the server config so
 the backend can record resources on registration.
 
+### Testnet Deployment
+
+The current canonical testnet deployment:
+
+| Field             | Value                                                          |
+|-------------------|----------------------------------------------------------------|
+| Contract ID       | `CDQKUIADLO5S5WEHEUTTXX2M45WAHVRU2PBEBD6ZGDKMOP5A72FJ3OD4`     |
+| Wasm Hash         | `fa60c0c2086fddf6add8abc7e1b191e1368ed62983f4e967069fc4b4d679c8eb` |
+| Deployer Address  | `GDAL5CGX7PU56PS2GJW65JNZSN7VLWI6R7H7E3G2HVS5R6XQQI2NJX34`     |
+| Network           | Stellar Testnet (`Test SDF Network ; September 2015`)          |
+| Soroban RPC       | `https://soroban-testnet.stellar.org`                          |
+| Deployment Date   | 2026-05-27                                                     |
+| Explorer          | [stellar.expert](https://stellar.expert/explorer/testnet/contract/CDQKUIADLO5S5WEHEUTTXX2M45WAHVRU2PBEBD6ZGDKMOP5A72FJ3OD4) |
+
+Set `VAULT_REGISTRY_CONTRACT_ID` and `SOROBAN_RPC_URL` in the server `.env`
+(see [`server/.env.example`](../server/.env.example)) so the backend can
+record/read resources on this contract.
+
 ### Ideas for contributors
 
 - A `list` / pagination method (current `get` is by id only).

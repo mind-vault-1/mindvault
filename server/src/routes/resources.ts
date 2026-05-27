@@ -10,11 +10,18 @@ import {
   getResourceMeta,
   getVerificationDetails,
   delistResource,
+  getResourceById,
 } from "../services/resourceService.js";
 import { downloadFile } from "../storage/supabaseStorage.js";
 import { db } from "../db/client.js";
-import { payments } from "../db/schema.js";
+import { payments, resources } from "../db/schema.js";
+import { eq } from "drizzle-orm";
 import { config } from "../config.js";
+import {
+  registryClient,
+  NETWORK_PASSPHRASE,
+  registryKeypair,
+} from "../services/registryClient.js";
 
 const router: RouterType = Router();
 const upload = multer({
@@ -187,6 +194,109 @@ router.delete("/resources/:id", apiKeyAuth, async (req, res) => {
     return;
   }
   res.json({ message: "Resource delisted", id: resource.id });
+});
+
+// POST /resources/:id/price/prepare — build unsigned set_price tx (owner only)
+// Returns the XDR of an unsigned transaction the owner must sign client-side.
+router.post("/resources/:id/price/prepare", apiKeyAuth, async (req, res) => {
+  const publisher = req.publisher!;
+  const resourceId = req.params.id as string;
+
+  const resource = await getResourceById(resourceId);
+  if (!resource) {
+    res.status(404).json({ error: "Resource not found" });
+    return;
+  }
+  if (resource.publisherId !== publisher.id) {
+    res.status(403).json({ error: "Forbidden: you do not own this resource" });
+    return;
+  }
+
+  const parsed = z.object({ price: z.string().min(1) }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.format() });
+    return;
+  }
+
+  // Convert USDC string (e.g. "0.50") to stroops (i128, 7 decimals)
+  const priceStroops = BigInt(Math.round(parseFloat(parsed.data.price) * 1_000_000_0));
+
+  const tx = await (registryClient as any).set_price(
+    { id: resourceId, new_price: priceStroops },
+    { simulate: false }
+  );
+
+  const unsignedXdr = tx.toXDR();
+  res.json({ unsignedXdr, networkPassphrase: NETWORK_PASSPHRASE });
+});
+
+// POST /resources/:id/price — submit signed set_price tx and sync DB price
+router.post("/resources/:id/price", apiKeyAuth, async (req, res) => {
+  const publisher = req.publisher!;
+  const resourceId = req.params.id as string;
+
+  const resource = await getResourceById(resourceId);
+  if (!resource) {
+    res.status(404).json({ error: "Resource not found" });
+    return;
+  }
+  if (resource.publisherId !== publisher.id) {
+    res.status(403).json({ error: "Forbidden: you do not own this resource" });
+    return;
+  }
+
+  const parsed = z
+    .object({ signedXdr: z.string().min(1), price: z.string().min(1) })
+    .safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.format() });
+    return;
+  }
+
+  // Submit the signed transaction via the registry client's underlying RPC server
+  const { rpc: StellarRpc, Transaction: StellarTransaction } = await import(
+    "@stellar/stellar-sdk"
+  );
+  const rpcServer = new StellarRpc.Server(config.SOROBAN_RPC_URL);
+  const signedTx = new StellarTransaction(
+    parsed.data.signedXdr,
+    NETWORK_PASSPHRASE
+  );
+  const sendResult = await rpcServer.sendTransaction(signedTx);
+
+  if (sendResult.status !== "PENDING") {
+    res.status(502).json({ error: "Transaction rejected", detail: sendResult.status });
+    return;
+  }
+
+  // Poll for confirmation
+  const txHash = sendResult.hash;
+  let confirmed = false;
+  for (let i = 0; i < 10; i++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const txResult = await rpcServer.getTransaction(txHash);
+    if (txResult.status === StellarRpc.Api.GetTransactionStatus.SUCCESS) {
+      confirmed = true;
+      break;
+    }
+    if (txResult.status === StellarRpc.Api.GetTransactionStatus.FAILED) {
+      res.status(502).json({ error: "Transaction failed on-chain" });
+      return;
+    }
+  }
+  if (!confirmed) {
+    res.status(504).json({ error: "Transaction confirmation timed out" });
+    return;
+  }
+
+  // Sync the DB price to match the on-chain value
+  const [updated] = await db
+    .update(resources)
+    .set({ price: parsed.data.price })
+    .where(eq(resources.id, resourceId))
+    .returning();
+
+  res.json({ id: updated.id, price: updated.price, status: "confirmed" });
 });
 
 export default router;

@@ -11,6 +11,9 @@ target/
 .env.local
 .env.*.local
 
+# Stellar CLI local identities (contain secret keys)
+.stellar/
+
 # Logs
 *.log
 

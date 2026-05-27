@@ -1,0 +1,37 @@
+{
+  "name": "@mindvault/registry-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript client for the MindVault vault-registry Soroban contract on Stellar.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "mindvault",
+    "vault-registry"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@stellar/stellar-sdk": "^15.0.1",
+    "buffer": "^6.0.3"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.2"
+  }
+}

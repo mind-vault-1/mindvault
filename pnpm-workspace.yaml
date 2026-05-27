@@ -2,4 +2,7 @@ packages:
   - "server"
   - "web"
   - "mcp"
+  - "packages/*"
 # Note: contract/ is a Rust/Soroban workspace, managed by cargo (not pnpm).
+# packages/* holds shared TS packages (e.g. registry-client — typed wrappers
+# around the Soroban contract bindings) consumed by server/, web/, and mcp/.

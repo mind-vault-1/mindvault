@@ -15,6 +15,19 @@ const envSchema = z.object({
     .string()
     .min(1, "AGENT_SECRET_KEY (platform agent secret) is required"),
 
+  // Soroban / vault-registry
+  // RPC endpoint used to read/write the on-chain registry. Default is the
+  // public Stellar testnet RPC; override for mainnet or a self-hosted node.
+  SOROBAN_RPC_URL: z
+    .string()
+    .url("SOROBAN_RPC_URL must be a valid URL")
+    .default("https://soroban-testnet.stellar.org"),
+  // Deployed contract ID for the vault-registry. Required so the server can
+  // record/read canonical resource entries on-chain.
+  VAULT_REGISTRY_CONTRACT_ID: z
+    .string()
+    .min(1, "VAULT_REGISTRY_CONTRACT_ID is required"),
+
   // OpenRouter
   OPENROUTER_API_KEY: z.string().min(1, "OPENROUTER_API_KEY is required"),
   OPENROUTER_MODEL: z.string().default("anthropic/claude-sonnet-4"),
@@ -29,6 +42,17 @@ const envSchema = z.object({
 
   // Limits
   MAX_FILE_SIZE_MB: z.coerce.number().default(50),
+
+  // Soroban registry
+  SOROBAN_RPC_URL: z
+    .string()
+    .default("https://soroban-testnet.stellar.org"),
+  REGISTRY_CONTRACT_ID: z
+    .string()
+    .min(1, "REGISTRY_CONTRACT_ID is required"),
+  REGISTRY_SECRET_KEY: z
+    .string()
+    .min(1, "REGISTRY_SECRET_KEY (deployer / owner secret) is required"),
 
   // Verification
   VERIFICATION_PRICE: z.string().default("0.10"),
