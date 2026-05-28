@@ -44,9 +44,6 @@ const envSchema = z.object({
   MAX_FILE_SIZE_MB: z.coerce.number().default(50),
 
   // Soroban registry
-  SOROBAN_RPC_URL: z
-    .string()
-    .default("https://soroban-testnet.stellar.org"),
   REGISTRY_CONTRACT_ID: z
     .string()
     .min(1, "REGISTRY_CONTRACT_ID is required"),
