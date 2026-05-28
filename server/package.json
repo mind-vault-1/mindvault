@@ -24,6 +24,7 @@
   "author": "mano.dev",
   "license": "MIT",
   "dependencies": {
+    "@mindvault/registry-client": "workspace:*",
     "@paralleldrive/cuid2": "^3.3.0",
     "@stellar/stellar-sdk": "^15.0.1",
     "@supabase/supabase-js": "^2.101.1",
