@@ -49,3 +49,35 @@ export async function resourceCount(): Promise<number> {
   const tx = await registryClient.count();
   return Number(tx.result);
 }
+
+/**
+ * Convert a USDC decimal string (e.g. "0.50") to i128 stroops.
+ * Stellar USDC uses 7 decimal places: 1 USDC = 10_000_000 stroops.
+ */
+export function usdcToStroops(usdc: string): bigint {
+  return BigInt(Math.round(parseFloat(usdc) * 10_000_000));
+}
+
+/**
+ * Build an unsigned set_price transaction for the resource owner to sign.
+ * Returns the transaction XDR string.
+ */
+export async function setPrice(id: string, newPriceUsdc: string): Promise<string> {
+  const tx = await (registryClient as any).set_price(
+    { id, new_price: usdcToStroops(newPriceUsdc) },
+    { simulate: false }
+  );
+  return tx.toXDR();
+}
+
+/**
+ * Build an unsigned transfer_ownership transaction for the resource owner to sign.
+ * Returns the transaction XDR string.
+ */
+export async function transferOwnership(id: string, newCreator: string): Promise<string> {
+  const tx = await (registryClient as any).transfer_ownership(
+    { id, new_creator: newCreator },
+    { simulate: false }
+  );
+  return tx.toXDR();
+}

@@ -2,6 +2,7 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import cors from "cors";
 import healthRouter from "./routes/health.js";
 import publisherRouter from "./routes/publishers.js";
+import registryRouter from "./routes/registry.js";
 import resourceRouter from "./routes/resources.js";
 import verifyRouter from "./routes/verify.js";
 
@@ -20,6 +21,7 @@ export function createApp(): Express {
   // Routes
   app.use(healthRouter);
   app.use(publisherRouter);
+  app.use(registryRouter);
   app.use(resourceRouter);
   app.use(verifyRouter);
 

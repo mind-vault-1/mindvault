@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { EditPriceModal } from "./components/EditPriceModal.js";
+import { TransferOwnershipModal } from "./components/TransferOwnershipModal.js";
+import { fetchRegistryStatus } from "./api/resources.js";
 
 interface Resource {
   id: string;
@@ -7,31 +9,60 @@ interface Resource {
   price: string;
   resourceType: string;
   publisherName: string;
+  walletAddress: string;
 }
+
+type ActiveModal =
+  | { kind: "editPrice"; resource: Resource }
+  | { kind: "transferOwnership"; resource: Resource }
+  | null;
 
 const API_KEY = import.meta.env.VITE_API_KEY ?? "";
 
 export default function App() {
   const [resources, setResources] = useState<Resource[]>([]);
-  const [editTarget, setEditTarget] = useState<Resource | null>(null);
+  const [registryCount, setRegistryCount] = useState<number | null>(null);
+  const [activeModal, setActiveModal] = useState<ActiveModal>(null);
 
   useEffect(() => {
     fetch("/resources")
       .then((r) => r.json())
       .then(setResources)
       .catch(console.error);
+
+    fetchRegistryStatus()
+      .then((s) => setRegistryCount(s.resourceCount))
+      .catch(console.error);
   }, []);
 
-  function handleConfirmed(id: string, price: string) {
+  function handlePriceConfirmed(id: string, price: string) {
     setResources((prev) =>
       prev.map((r) => (r.id === id ? { ...r, price } : r))
     );
-    setEditTarget(null);
+    setActiveModal(null);
+  }
+
+  function handleOwnershipConfirmed(id: string, newCreator: string) {
+    setResources((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, walletAddress: newCreator } : r))
+    );
+    setActiveModal(null);
   }
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
-      <h1 className="mb-6 text-2xl font-bold text-gray-900">MindVault</h1>
+      <div className="mb-6 flex flex-col gap-1">
+        <h1 className="text-2xl font-bold text-gray-900">MindVault</h1>
+        {registryCount !== null && (
+          <p className="text-sm text-gray-500">
+            Registry:{" "}
+            <span className="font-semibold text-indigo-600">
+              {registryCount}
+            </span>{" "}
+            resource{registryCount !== 1 ? "s" : ""} registered on-chain
+          </p>
+        )}
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {resources.map((r) => (
@@ -41,30 +72,56 @@ export default function App() {
           >
             <p className="font-semibold text-gray-900">{r.title}</p>
             <p className="mt-1 text-sm text-gray-500">by {r.publisherName}</p>
-            <div className="mt-3 flex items-center justify-between">
+            <p className="mt-1 truncate text-xs text-gray-400" title={r.walletAddress}>
+              Owner: {r.walletAddress}
+            </p>
+            <div className="mt-3 flex items-center justify-between gap-2">
               <span className="text-sm font-medium text-indigo-600">
                 {r.price} USDC
               </span>
               {API_KEY && (
-                <button
-                  onClick={() => setEditTarget(r)}
-                  className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200"
-                >
-                  Edit price
-                </button>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setActiveModal({ kind: "editPrice", resource: r })}
+                    className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200"
+                  >
+                    Edit price
+                  </button>
+                  <button
+                    onClick={() =>
+                      setActiveModal({ kind: "transferOwnership", resource: r })
+                    }
+                    className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200"
+                  >
+                    Transfer
+                  </button>
+                </div>
               )}
             </div>
           </div>
         ))}
       </div>
 
-      {editTarget && (
+      {activeModal?.kind === "editPrice" && (
         <EditPriceModal
-          resourceId={editTarget.id}
-          currentPrice={editTarget.price}
+          resourceId={activeModal.resource.id}
+          currentPrice={activeModal.resource.price}
           apiKey={API_KEY}
-          onClose={() => setEditTarget(null)}
-          onConfirmed={(price) => handleConfirmed(editTarget.id, price)}
+          onClose={() => setActiveModal(null)}
+          onConfirmed={(price) =>
+            handlePriceConfirmed(activeModal.resource.id, price)
+          }
+        />
+      )}
+
+      {activeModal?.kind === "transferOwnership" && (
+        <TransferOwnershipModal
+          resourceId={activeModal.resource.id}
+          apiKey={API_KEY}
+          onClose={() => setActiveModal(null)}
+          onConfirmed={(newCreator) =>
+            handleOwnershipConfirmed(activeModal.resource.id, newCreator)
+          }
         />
       )}
     </div>
