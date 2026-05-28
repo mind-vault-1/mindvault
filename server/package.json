@@ -13,7 +13,8 @@
     "db:studio": "drizzle-kit studio",
     "generate-wallet": "tsx scripts/generate-wallet.ts",
     "e2e": "tsx scripts/e2e-test.ts",
-    "reconcile": "tsx scripts/reconcile.ts"
+    "reconcile": "tsx scripts/reconcile.ts",
+    "test": "vitest run"
   },
   "keywords": [
     "x402",
@@ -49,6 +50,7 @@
     "@types/multer": "^2.1.0",
     "drizzle-kit": "^0.31.10",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.7"
   }
 }
