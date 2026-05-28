@@ -11,6 +11,7 @@ import { resources } from "../db/schema.js";
 import type { Network } from "@x402/core/types";
 import type { RoutesConfig } from "@x402/core/server";
 import { config } from "../config.js";
+import { getResource } from "../services/registryClient.js";
 
 const network = config.NETWORK as Network;
 
@@ -56,8 +57,25 @@ export async function dynamicPaywall(
   // Attach resource to request for the delivery handler
   (req as any).resource = resource;
 
-  // Check cache
-  const cached = middlewareCache.get(resourceId);
+  // Try to get on-chain price if resource is registered
+  let finalPrice = resource.price;
+  if (resource.onchainStatus === "registered") {
+    try {
+      const onchainResource = await getResource(resourceId);
+      if (onchainResource) {
+        // Convert from stroops (7 decimals) to USDC string
+        const onchainPriceUsdc = (Number(onchainResource.price) / 10_000_000).toString();
+        finalPrice = onchainPriceUsdc;
+      }
+    } catch (error) {
+      console.warn(`Failed to fetch on-chain price for ${resourceId}:`, error);
+      // Fall back to database price
+    }
+  }
+
+  // Check cache with final price as part of cache key
+  const cacheKey = `${resourceId}:${finalPrice}`;
+  const cached = middlewareCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.mw(req, res, next);
   }
@@ -70,7 +88,7 @@ export async function dynamicPaywall(
         scheme: "exact" as const,
         network,
         payTo: resource.walletAddress,
-        price: `$${resource.price}`,
+        price: finalPrice,
       },
       description: resource.title,
     },
@@ -78,8 +96,8 @@ export async function dynamicPaywall(
 
   const mw = paymentMiddleware(routes, resourceServer);
 
-  // Cache it
-  middlewareCache.set(resourceId, {
+  // Cache it with the final price key
+  middlewareCache.set(cacheKey, {
     mw,
     expiresAt: Date.now() + CACHE_TTL_MS,
   });

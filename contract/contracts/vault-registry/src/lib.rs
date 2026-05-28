@@ -27,6 +27,7 @@ pub struct Resource {
     pub creator: Address,
     pub price: i128,
     pub metadata: String,
+    pub listed: bool,
 }
 
 #[contracttype]
@@ -72,6 +73,7 @@ impl VaultRegistry {
             creator: creator.clone(),
             price,
             metadata,
+            listed: true, // Resources are listed by default when registered
         };
         env.storage().persistent().set(&key, &resource);
         env.storage()
@@ -121,6 +123,22 @@ impl VaultRegistry {
         env.events()
             .publish((symbol_short!("transfer"), id), new_creator);
         Ok(())
+    }
+
+    /// Set the listing state of a resource. Only the creator may call this.
+    pub fn set_listed(env: Env, id: String, listed: bool) -> Result<(), Error> {
+        let mut resource = Self::load(&env, &id)?;
+        resource.creator.require_auth();
+        resource.listed = listed;
+        Self::save(&env, &resource);
+        env.events()
+            .publish((symbol_short!("setlisted"), id), listed);
+        Ok(())
+    }
+
+    /// Delist a resource (convenience method for set_listed(false)). Only the creator may call this.
+    pub fn delist(env: Env, id: String) -> Result<(), Error> {
+        Self::set_listed(env, id, false)
     }
 
     /// Fetch a resource. Errors with `NotFound` if it does not exist.

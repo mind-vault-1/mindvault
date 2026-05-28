@@ -129,6 +129,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "listed"
+                      },
+                      "val": {
+                        "bool": true
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "metadata"
                       },
                       "val": {

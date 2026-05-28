@@ -28,6 +28,7 @@ fn register_then_read() {
     assert_eq!(r.creator, creator);
     assert_eq!(r.price, 1_000_000i128);
     assert_eq!(r.metadata, metadata);
+    assert_eq!(r.listed, true); // Resources are listed by default
 }
 
 #[test]
@@ -100,4 +101,56 @@ fn ownership_can_transfer() {
     let new_owner = Address::generate(&env);
     client.transfer_ownership(&id, &new_owner);
     assert_eq!(client.get(&id).creator, new_owner);
+}
+
+#[test]
+fn set_listed_toggles_listing_state() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "r4");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+
+    // Initially listed
+    assert_eq!(client.get(&id).listed, true);
+
+    // Delist
+    client.set_listed(&id, &false);
+    assert_eq!(client.get(&id).listed, false);
+
+    // Re-list
+    client.set_listed(&id, &true);
+    assert_eq!(client.get(&id).listed, true);
+}
+
+#[test]
+fn delist_convenience_method() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "r5");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+
+    // Initially listed
+    assert_eq!(client.get(&id).listed, true);
+
+    // Delist using convenience method
+    client.delist(&id);
+    assert_eq!(client.get(&id).listed, false);
+}
+
+#[test]
+fn set_listed_requires_creator_auth() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "r6");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+
+    // This should work fine since we mock all auths
+    client.set_listed(&id, &false);
+    assert_eq!(client.get(&id).listed, false);
+}
+
+#[test]
+fn set_listed_on_missing_resource_fails() {
+    let (env, _creator, client) = setup();
+    let id = String::from_str(&env, "missing");
+    
+    let res = client.try_set_listed(&id, &false);
+    assert_eq!(res, Err(Ok(Error::NotFound)));
 }

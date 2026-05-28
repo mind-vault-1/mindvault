@@ -18,7 +18,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
                 {
-                  "string": "dup"
+                  "string": "r6"
                 },
                 {
                   "i128": {
@@ -27,7 +27,7 @@
                   }
                 },
                 {
-                  "string": "x"
+                  "string": "m"
                 }
               ]
             }
@@ -36,7 +36,28 @@
         }
       ]
     ],
-    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "function_name": "set_listed",
+              "args": [
+                {
+                  "string": "r6"
+                },
+                {
+                  "bool": false
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
     []
   ],
   "ledger": {
@@ -59,7 +80,7 @@
                   "symbol": "Resource"
                 },
                 {
-                  "string": "dup"
+                  "string": "r6"
                 }
               ]
             },
@@ -79,7 +100,7 @@
                       "symbol": "Resource"
                     },
                     {
-                      "string": "dup"
+                      "string": "r6"
                     }
                   ]
                 },
@@ -99,7 +120,7 @@
                         "symbol": "id"
                       },
                       "val": {
-                        "string": "dup"
+                        "string": "r6"
                       }
                     },
                     {
@@ -107,7 +128,7 @@
                         "symbol": "listed"
                       },
                       "val": {
-                        "bool": true
+                        "bool": false
                       }
                     },
                     {
@@ -115,7 +136,7 @@
                         "symbol": "metadata"
                       },
                       "val": {
-                        "string": "x"
+                        "string": "m"
                       }
                     },
                     {
@@ -205,6 +226,39 @@
                 "key": {
                   "ledger_key_nonce": {
                     "nonce": 801925984706572462
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "ledger_key_nonce": {
+                "nonce": 5541220902715666415
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 5541220902715666415
                   }
                 },
                 "durability": "temporary",
