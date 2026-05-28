@@ -81,3 +81,21 @@ export async function transferOwnership(id: string, newCreator: string): Promise
   );
   return tx.toXDR();
 }
+
+export async function prepareRegister(
+  id: string,
+  creator: string,
+  priceUsdc: string,
+  metadata: string
+): Promise<string> {
+  const tx = await (registryClient as any).register(
+    {
+      creator,
+      id,
+      price: usdcToStroops(priceUsdc),
+      metadata,
+    },
+    { simulate: false }
+  );
+  return tx.toXDR();
+}

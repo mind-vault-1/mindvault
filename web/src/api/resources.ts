@@ -8,16 +8,63 @@ export async function fetchMyResources(apiKey: string): Promise<any[]> {
   return res.json();
 }
 
-export async function registerOnChain(resourceId: string, apiKey: string): Promise<{ id: string; onchainStatus: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/register`, {
+export async function prepareRegister(
+  resourceId: string,
+  apiKey: string
+): Promise<{ unsignedXdr: string; networkPassphrase: string }> {
+  const res = await fetch(`${API_BASE}/resources/${resourceId}/register/prepare`, {
     method: "POST",
-    headers: { "x-api-key": apiKey },
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+    },
   });
   if (!res.ok) {
     const { error } = await res.json();
-    throw new Error(error ?? "Registration failed");
+    throw new Error(error ?? "Failed to prepare register transaction");
   }
   return res.json();
+}
+
+export async function submitRegister(
+  resourceId: string,
+  signedXdr: string,
+  apiKey: string
+): Promise<{ id: string; onchainStatus: string; onchainTxHash?: string }> {
+  const res = await fetch(`${API_BASE}/resources/${resourceId}/register`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+    },
+    body: JSON.stringify({ signedXdr }),
+  });
+  if (!res.ok) {
+    const { error } = await res.json();
+    throw new Error(error ?? "Failed to submit register transaction");
+  }
+  return res.json();
+}
+
+export async function registerOnChain(resourceId: string, apiKey: string): Promise<{ id: string; onchainStatus: string; onchainTxHash?: string }> {
+  const { unsignedXdr, networkPassphrase } = await prepareRegister(resourceId, apiKey);
+
+  const freighter = await import("@stellar/freighter-api");
+  const result = await freighter.signTransaction(unsignedXdr, {
+    networkPassphrase,
+  });
+
+  if ("error" in result && result.error) {
+    throw new Error(
+      typeof result.error === "string" ? result.error : "Wallet rejected signing"
+    );
+  }
+
+  const signedXdr =
+    "signedTxXdr" in result ? result.signedTxXdr : (result as any).result?.signedTxXdr;
+  if (!signedXdr) throw new Error("No signed transaction returned by wallet");
+
+  return submitRegister(resourceId, signedXdr, apiKey);
 }
 
 export async function prepareSetPrice(

@@ -19,8 +19,12 @@ import { eq } from "drizzle-orm";
 import { config } from "../config.js";
 import {
   NETWORK_PASSPHRASE,
+  registryClient,
+  registryKeypair,
+  prepareRegister,
   setPrice,
   transferOwnership,
+  usdcToStroops,
 } from "../services/registryClient.js";
 
 const router: RouterType = Router();
@@ -196,6 +200,39 @@ router.delete("/resources/:id", apiKeyAuth, async (req, res) => {
   res.json({ message: "Resource delisted", id: resource.id });
 });
 
+// POST /resources/:id/register/prepare — build unsigned register tx (owner only)
+router.post("/resources/:id/register/prepare", apiKeyAuth, async (req, res) => {
+  const publisher = req.publisher!;
+  const resourceId = req.params.id as string;
+
+  const resource = await getResourceById(resourceId);
+  if (!resource) {
+    res.status(404).json({ error: "Resource not found" });
+    return;
+  }
+  if (resource.publisherId !== publisher.id) {
+    res.status(403).json({ error: "Forbidden: you do not own this resource" });
+    return;
+  }
+  if (resource.verificationStatus !== "verified") {
+    res.status(400).json({ error: "Resource must be verified before registering on-chain" });
+    return;
+  }
+  if (resource.onchainStatus === "registered") {
+    res.status(409).json({ error: "Resource is already registered on-chain" });
+    return;
+  }
+
+  const unsignedXdr = await prepareRegister(
+    resourceId,
+    resource.walletAddress,
+    resource.price,
+    JSON.stringify({ title: resource.title, description: resource.description ?? "" })
+  );
+
+  res.json({ unsignedXdr, networkPassphrase: NETWORK_PASSPHRASE });
+});
+
 // POST /resources/:id/register — register a verified resource on-chain (owner only)
 router.post("/resources/:id/register", apiKeyAuth, async (req, res) => {
   const publisher = req.publisher!;
@@ -219,26 +256,80 @@ router.post("/resources/:id/register", apiKeyAuth, async (req, res) => {
     return;
   }
 
+  const parsed = z.object({ signedXdr: z.string().min(1).optional() }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.format() });
+    return;
+  }
+
   await db.update(resources).set({ onchainStatus: "pending" }).where(eq(resources.id, resourceId));
 
   try {
-    const priceStroops = BigInt(Math.round(parseFloat(resource.price) * 1_000_000_0));
-    const tx = await (registryClient as any).register(
-      {
-        creator: resource.walletAddress,
-        id: resourceId,
-        price: priceStroops,
-        metadata: JSON.stringify({ title: resource.title, description: resource.description ?? "" }),
-      },
-      { simulate: false }
-    );
+    let txHash: string;
+    if (parsed.data.signedXdr) {
+      const tx = registryClient.txFromXDR<void>(parsed.data.signedXdr);
+      const sentTx = await tx.send();
+      const sendResult = sentTx.sendTransactionResponse;
 
-    await tx.signAndSend({ signTransaction: async (xdr: string) => {
-      const { Transaction, Networks } = await import("@stellar/stellar-sdk");
-      const stellarTx = new Transaction(xdr, NETWORK_PASSPHRASE);
-      stellarTx.sign(registryKeypair);
-      return stellarTx.toXDR();
-    }});
+      if (!sendResult || (sendResult.status !== "PENDING" && sendResult.status !== "DUPLICATE")) {
+        await db.update(resources).set({ onchainStatus: "failed" }).where(eq(resources.id, resourceId));
+        res.status(502).json({ error: "Transaction rejected", detail: sendResult?.status ?? "no response" });
+        return;
+      }
+
+      txHash = sendResult.hash;
+      const { rpc: StellarRpc } = await import("@stellar/stellar-sdk");
+      const rpcServer = new StellarRpc.Server(config.SOROBAN_RPC_URL);
+
+      let confirmed = false;
+      for (let i = 0; i < 10; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const txResult = await rpcServer.getTransaction(txHash);
+        if (txResult.status === StellarRpc.Api.GetTransactionStatus.SUCCESS) {
+          confirmed = true;
+          break;
+        }
+        if (txResult.status === StellarRpc.Api.GetTransactionStatus.FAILED) {
+          await db.update(resources).set({ onchainStatus: "failed" }).where(eq(resources.id, resourceId));
+          res.status(502).json({ error: "Transaction failed on-chain", detail: txResult });
+          return;
+        }
+      }
+
+      if (!confirmed) {
+        await db.update(resources).set({ onchainStatus: "pending" }).where(eq(resources.id, resourceId));
+        res.status(202).json({ id: resourceId, onchainStatus: "pending", onchainTxHash: txHash });
+        return;
+      }
+    } else {
+      const priceStroops = usdcToStroops(resource.price);
+      const tx = await (registryClient as any).register(
+        {
+          creator: resource.walletAddress,
+          id: resourceId,
+          price: priceStroops,
+          metadata: JSON.stringify({ title: resource.title, description: resource.description ?? "" }),
+        },
+        { simulate: false }
+      );
+
+      const sentTx = await tx.signAndSend({
+        signTransaction: async (xdr: string) => {
+          const { Transaction } = await import("@stellar/stellar-sdk");
+          const stellarTx = new Transaction(xdr, NETWORK_PASSPHRASE);
+          stellarTx.sign(registryKeypair);
+          return stellarTx.toXDR();
+        }
+      });
+
+      const sendResult = sentTx.sendTransactionResponse;
+      txHash = sendResult?.hash ?? "";
+      if (!sendResult || (sendResult.status !== "PENDING" && sendResult.status !== "DUPLICATE")) {
+        await db.update(resources).set({ onchainStatus: "failed" }).where(eq(resources.id, resourceId));
+        res.status(502).json({ error: "Transaction rejected", detail: sendResult?.status ?? "no response" });
+        return;
+      }
+    }
 
     const [updated] = await db
       .update(resources)
@@ -246,7 +337,7 @@ router.post("/resources/:id/register", apiKeyAuth, async (req, res) => {
       .where(eq(resources.id, resourceId))
       .returning();
 
-    res.json({ id: updated.id, onchainStatus: updated.onchainStatus });
+    res.json({ id: updated.id, onchainStatus: updated.onchainStatus, onchainTxHash: txHash });
   } catch (err: any) {
     await db.update(resources).set({ onchainStatus: "failed" }).where(eq(resources.id, resourceId));
     res.status(502).json({ error: "On-chain registration failed", detail: err?.message });

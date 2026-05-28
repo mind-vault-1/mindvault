@@ -12,6 +12,11 @@ import type { Network } from "@x402/core/types";
 import type { RoutesConfig } from "@x402/core/server";
 import { config } from "../config.js";
 import { getResource } from "../services/registryClient.js";
+import {
+  getOnChainPrice,
+  normalizeUsdcPrice,
+  OnChainLookupError,
+} from "../lib/stellarRegistry.js";
 
 const network = config.NETWORK as Network;
 
