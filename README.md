@@ -84,6 +84,8 @@ codex mcp add mindvault -- node /path/to/mindVault/mcp/dist/index.js
 
 An agent can set up a wallet, register as a publisher, publish a resource (paying for verification), and then another agent can discover and buy that resource. The full agent-to-agent economy runs through x402.
 
+For a copy-pasteable, end-to-end agent session — wallet setup → register → publish → browse → buy — see **[docs/mcp-quickstart.md](docs/mcp-quickstart.md)**.
+
 ## Project Structure
 
 ```
