@@ -9,13 +9,27 @@
   },
   "scripts": {
     "dev:server": "pnpm --filter @mindvault/server dev",
-    "build:server": "pnpm --filter @mindvault/server build",
+    "build:registry-client": "pnpm --filter @mindvault/registry-client build",
+    "build:server": "pnpm run build:registry-client && pnpm --filter @mindvault/server build",
     "db:generate": "pnpm --filter @mindvault/server db:generate",
     "db:migrate": "pnpm --filter @mindvault/server db:migrate",
     "generate-wallet": "pnpm --filter @mindvault/server generate-wallet",
     "contract:build": "stellar contract build --manifest-path contract/Cargo.toml",
     "contract:test": "cargo test --manifest-path contract/Cargo.toml",
-    "contract:bindings": "node scripts/generate-bindings.mjs"
+    "contract:bindings": "node scripts/generate-bindings.mjs",
+    "lint": "pnpm exec eslint \"server/src/**/*.{ts,tsx}\" \"web/src/**/*.{ts,tsx}\" \"packages/**/*.{ts,tsx}\" \"mcp/src/**/*.{ts,tsx}\"",
+    "format:check": "pnpm exec prettier --check \"server/**/*.{ts,tsx,js,json,md}\" \"web/**/*.{ts,tsx,js,json,md}\" \"packages/**/*.{ts,tsx,js,json,md}\" \"mcp/**/*.{ts,tsx,js,json,md}\"",
+    "test": "pnpm run build:registry-client && pnpm --filter @mindvault/server test"
+  },
+  "devDependencies": {
+    "@types/supertest": "^3.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.20.0",
+    "@typescript-eslint/parser": "^6.20.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-prettier": "^5.0.0",
+    "prettier": "^3.9.0",
+    "supertest": "^6.3.3"
   },
   "keywords": [
     "x402",

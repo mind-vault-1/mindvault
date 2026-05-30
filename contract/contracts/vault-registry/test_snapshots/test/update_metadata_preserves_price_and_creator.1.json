@@ -18,16 +18,16 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
                 {
-                  "string": "r6"
+                  "string": "r8"
                 },
                 {
                   "i128": {
                     "hi": 0,
-                    "lo": 100
+                    "lo": 500
                   }
                 },
                 {
-                  "string": "m"
+                  "string": "ipfs://QmOriginal"
                 }
               ]
             }
@@ -43,13 +43,13 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "set_listed",
+              "function_name": "update_metadata",
               "args": [
                 {
-                  "string": "r6"
+                  "string": "r8"
                 },
                 {
-                  "bool": false
+                  "string": "ipfs://QmUpdated"
                 }
               ]
             }
@@ -106,7 +106,7 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "string": "r6"
+                  "string": "r8"
                 }
               }
             },
@@ -125,7 +125,7 @@
                   "symbol": "Resource"
                 },
                 {
-                  "string": "r6"
+                  "string": "r8"
                 }
               ]
             },
@@ -145,7 +145,7 @@
                       "symbol": "Resource"
                     },
                     {
-                      "string": "r6"
+                      "string": "r8"
                     }
                   ]
                 },
@@ -165,7 +165,7 @@
                         "symbol": "id"
                       },
                       "val": {
-                        "string": "r6"
+                        "string": "r8"
                       }
                     },
                     {
@@ -173,7 +173,7 @@
                         "symbol": "listed"
                       },
                       "val": {
-                        "bool": false
+                        "bool": true
                       }
                     },
                     {
@@ -181,7 +181,7 @@
                         "symbol": "metadata"
                       },
                       "val": {
-                        "string": "m"
+                        "string": "ipfs://QmUpdated"
                       }
                     },
                     {
@@ -191,7 +191,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 100
+                          "lo": 500
                         }
                       }
                     }

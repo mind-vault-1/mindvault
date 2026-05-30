@@ -136,6 +136,62 @@ fn delist_convenience_method() {
 }
 
 #[test]
+fn set_price_preserves_other_fields() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "r7");
+    let metadata = String::from_str(&env, "ipfs://QmPreserve");
+    client.register(&creator, &id, &100i128, &metadata);
+
+    client.set_price(&id, &250i128);
+    let resource = client.get(&id);
+
+    assert_eq!(resource.price, 250i128);
+    assert_eq!(resource.metadata, metadata);
+    assert_eq!(resource.creator, creator);
+    assert_eq!(resource.listed, true);
+}
+
+#[test]
+fn transfer_ownership_keeps_count_and_order() {
+    let (env, creator, client) = setup();
+    let ids = ["a", "b"];
+    for id in &ids {
+        client.register(
+            &creator,
+            &String::from_str(&env, id),
+            &100i128,
+            &String::from_str(&env, "m"),
+        );
+    }
+
+    let new_owner = Address::generate(&env);
+    let id = String::from_str(&env, "a");
+    client.transfer_ownership(&id, &new_owner);
+
+    assert_eq!(client.count(), 2);
+    let list = client.list(&0u32, &10u32);
+    assert_eq!(list.get(0).unwrap().id, id);
+    assert_eq!(list.get(0).unwrap().creator, new_owner);
+    assert_eq!(list.get(1).unwrap().id, String::from_str(&env, "b"));
+}
+
+#[test]
+fn update_metadata_preserves_price_and_creator() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "r8");
+    let original_metadata = String::from_str(&env, "ipfs://QmOriginal");
+    client.register(&creator, &id, &500i128, &original_metadata);
+
+    let new_metadata = String::from_str(&env, "ipfs://QmUpdated");
+    client.update_metadata(&id, &new_metadata);
+
+    let resource = client.get(&id);
+    assert_eq!(resource.metadata, new_metadata);
+    assert_eq!(resource.price, 500i128);
+    assert_eq!(resource.creator, creator);
+}
+
+#[test]
 fn set_listed_requires_creator_auth() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r6");

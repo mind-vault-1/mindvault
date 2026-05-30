@@ -25,7 +25,6 @@ import {
   buildRegisterTx,
   submitSignedTx,
   registryKeypair,
-  registryClient,
 } from "../services/registryClient.js";
 
 const router: RouterType = Router();
@@ -301,7 +300,7 @@ router.post("/resources/:id/register", apiKeyAuth, async (req, res) => {
     if (parsed.data.signedXdr) {
       // New flow: submit signed XDR
       const result = await submitSignedTx(parsed.data.signedXdr);
-      
+
       if (result.success) {
         const [updated] = await db
           .update(resources)
@@ -309,15 +308,15 @@ router.post("/resources/:id/register", apiKeyAuth, async (req, res) => {
           .where(eq(resources.id, resourceId))
           .returning();
 
-        res.json({ 
-          id: updated.id, 
+        res.json({
+          id: updated.id,
           onchainStatus: updated.onchainStatus,
           txHash: result.txHash,
         });
       } else {
         await db.update(resources).set({ onchainStatus: "failed" }).where(eq(resources.id, resourceId));
-        res.status(502).json({ 
-          error: "On-chain registration failed", 
+        res.status(502).json({
+          error: "On-chain registration failed",
           detail: result.error,
           txHash: result.txHash || undefined,
         });
@@ -335,12 +334,14 @@ router.post("/resources/:id/register", apiKeyAuth, async (req, res) => {
         { simulate: false }
       );
 
-      await tx.signAndSend({ signTransaction: async (xdr: string) => {
-        const { Transaction, Networks } = await import("@stellar/stellar-sdk");
-        const stellarTx = new Transaction(xdr, NETWORK_PASSPHRASE);
-        stellarTx.sign(registryKeypair);
-        return stellarTx.toXDR();
-      }});
+      await tx.signAndSend({
+        signTransaction: async (xdr: string) => {
+          const { Transaction, Networks } = await import("@stellar/stellar-sdk");
+          const stellarTx = new Transaction(xdr, NETWORK_PASSPHRASE);
+          stellarTx.sign(registryKeypair);
+          return stellarTx.toXDR();
+        }
+      });
 
       const [updated] = await db
         .update(resources)
