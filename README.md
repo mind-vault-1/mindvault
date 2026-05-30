@@ -95,29 +95,51 @@ mindVault/
 
 ## Running Locally
 
-Requires Node.js 20+, pnpm, a Supabase project (free tier), and Stellar testnet wallets funded with USDC from [faucet.circle.com](https://faucet.circle.com).
+Requires Node.js 20+, pnpm, and a Supabase project (free tier). Stellar testnet wallets need XLM (via Friendbot) and Soroban USDC for x402 payments.
+
+### Quick start
 
 ```bash
-# Install
-cd server && pnpm install
-cd ../web && pnpm install
-cd ../mcp && pnpm install
+# 1. Install dependencies
+make install          # or: pnpm install
 
-# Configure
-cd ../server
-cp .env.example .env
-# Fill in Supabase, Stellar, and OpenRouter credentials
-pnpm db:generate && pnpm db:migrate
+# 2. Configure environment
+cp server/.env.example server/.env
+# Fill in Supabase, Stellar contract IDs, and OpenRouter credentials.
 
-# Generate wallets (run twice for separate platform + agent wallets)
-pnpm generate-wallet
+# 3. One-time setup (DB migrations + wallet generation)
+make setup
 
-# Run
-pnpm dev          # Backend on :4021
+# 4. After setting AGENT_SECRET_KEY in server/.env, prepare USDC trustline
+make setup-usdc
 
-cd ../web
-pnpm dev          # Frontend on :5173
+# 5. Run API (:4021) and web app (:5173)
+make dev
 ```
+
+Set `VITE_API_URL=http://localhost:4021` when running the web app separately (e.g. in a `web/.env` file).
+
+### Makefile targets
+
+| Target | Description |
+|--------|-------------|
+| `make setup` | Install deps, run DB migrations, generate a testnet wallet |
+| `make setup-usdc` | Add USDC trustline for `AGENT_SECRET_KEY` and print faucet guidance |
+| `make dev` | Start server and web app together |
+| `make dev-server` | Backend only on `:4021` |
+| `make dev-web` | Frontend only on `:5173` |
+| `make test` | Run unit tests |
+
+### Local services
+
+MindVault does not require Docker Compose. External services used locally:
+
+- **Supabase** — Postgres (`DATABASE_URL`) and file storage (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`)
+- **Stellar testnet** — Soroban RPC (`SOROBAN_RPC_URL`), Friendbot for XLM, Soroban USDC for x402
+- **OpenRouter** — AI verification (`OPENROUTER_API_KEY`)
+- **x402 facilitator** — payment verify/settle (`FACILITATOR_URL`, default `https://www.x402.org/facilitator`)
+
+Wallet helpers live in `server/scripts/generate-wallet.ts` (run via `make wallets` or `pnpm generate-wallet`) and `server/scripts/setup-usdc.ts` (run via `make setup-usdc`).
 
 ## Architecture
 

@@ -1,0 +1,44 @@
+.PHONY: setup setup-usdc dev dev-server dev-web test install migrate wallets
+
+# MindVault local development entrypoints.
+# Prerequisites: Node.js 20+, pnpm, and a configured server/.env (see server/.env.example).
+
+install:
+	pnpm install
+
+migrate:
+	pnpm db:generate && pnpm db:migrate
+
+wallets:
+	@echo "Generating a Stellar testnet wallet (platform or agent)..."
+	pnpm generate-wallet
+	@echo ""
+	@echo "Run 'make wallets' again if you need separate platform + agent wallets."
+
+setup-usdc:
+	pnpm --filter @mindvault/server setup-usdc
+
+# First-time setup after copying server/.env.example -> server/.env and filling credentials.
+setup: install migrate wallets
+	@echo ""
+	@echo "Setup complete."
+	@echo "  1. Copy keys from 'make wallets' into server/.env (PAY_TO, AGENT_SECRET_KEY, REGISTRY_SECRET_KEY)."
+	@echo "  2. Run 'make setup-usdc' after AGENT_SECRET_KEY is set to add a USDC trustline."
+	@echo "  3. Acquire Soroban testnet USDC for x402 (see server/scripts/setup-usdc.ts output)."
+	@echo "  4. Start the stack with 'make dev'."
+
+dev-server:
+	pnpm dev:server
+
+dev-web:
+	pnpm --filter @mindvault/web dev
+
+# Run API (:4021) and web app (:5173) together.
+dev:
+	@trap 'kill 0' INT TERM; \
+	pnpm dev:server & \
+	pnpm --filter @mindvault/web dev & \
+	wait
+
+test:
+	pnpm test

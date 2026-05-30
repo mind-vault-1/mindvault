@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev:server": "pnpm --filter @mindvault/server dev",
+    "dev:web": "pnpm --filter @mindvault/web dev",
     "build:registry-client": "pnpm --filter @mindvault/registry-client build",
     "build:server": "pnpm run build:registry-client && pnpm --filter @mindvault/server build",
     "db:generate": "pnpm --filter @mindvault/server db:generate",

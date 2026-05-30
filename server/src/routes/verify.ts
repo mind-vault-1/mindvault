@@ -16,6 +16,8 @@ import {
   verifyIpRateLimit,
   verifyWalletRateLimit,
 } from "../middleware/rateLimiters.js";
+import { validate } from "../middleware/validate.js";
+import { verifyContentSchema } from "../schemas/requests.js";
 
 const router: RouterType = Router();
 const network = config.NETWORK as Network;
@@ -49,13 +51,9 @@ router.post(
   verifyIpRateLimit,
   verifyPaywall,
   verifyWalletRateLimit,
+  validate(verifyContentSchema),
   async (req, res) => {
   const { content, resourceId } = req.body;
-
-  if (!content) {
-    res.status(400).json({ error: "content is required" });
-    return;
-  }
 
   const result = await checkOriginality(content, "text");
 

@@ -1,6 +1,7 @@
 import { Router, type Router as RouterType } from "express";
-import { z } from "zod/v4";
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
+import { validate } from "../middleware/validate.js";
+import { publisherRegisterSchema } from "../schemas/requests.js";
 import {
   registerPublisher,
   getPublisherResources,
@@ -12,22 +13,10 @@ import { config } from "../config.js";
 
 const router: RouterType = Router();
 
-const registerSchema = z.object({
-  name: z.string().min(1),
-  email: z.email(),
-  walletAddress: z.string().min(1),
-});
-
 // POST /publishers — register a new publisher (public)
-router.post("/publishers", async (req, res) => {
-  const parsed = registerSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
-    return;
-  }
-
+router.post("/publishers", validate(publisherRegisterSchema), async (req, res) => {
   try {
-    const { publisher, apiKey } = await registerPublisher(parsed.data);
+    const { publisher, apiKey } = await registerPublisher(req.body);
     res.status(201).json({
       id: publisher.id,
       name: publisher.name,

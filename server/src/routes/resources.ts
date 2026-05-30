@@ -1,7 +1,16 @@
 import { Router, type Router as RouterType } from "express";
 import multer from "multer";
-import { z } from "zod/v4";
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
+import { validate, validateFields } from "../middleware/validate.js";
+import {
+  filePublishBodySchema,
+  linkPublishSchema,
+  registerResourceSchema,
+  preparePriceSchema,
+  setPriceSchema,
+  prepareOwnershipSchema,
+  transferOwnershipSchema,
+} from "../schemas/requests.js";
 import { dynamicPaywall } from "../middleware/dynamicPaywall.js";
 import {
   createFileResource,
@@ -37,14 +46,6 @@ const upload = multer({
   limits: { fileSize: config.MAX_FILE_SIZE_MB * 1024 * 1024 },
 });
 
-const linkSchema = z.object({
-  title: z.string().min(1),
-  description: z.string().optional(),
-  price: z.string().min(1),
-  walletAddress: z.string().optional(),
-  externalUrl: z.url(),
-});
-
 // POST /resources — publish a resource (authenticated)
 router.post(
   "/resources",
@@ -57,12 +58,13 @@ router.post(
 
   // File upload
   if (req.file) {
-    const { title, description, price, walletAddress } = req.body;
-
-    if (!title || !price) {
-      res.status(400).json({ error: "title and price are required" });
+    const parsed = validateFields(filePublishBodySchema, req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.format() });
       return;
     }
+
+    const { title, description, price, walletAddress } = parsed.data;
 
     const resource = await createFileResource({
       publisherId: publisher.id,
@@ -83,7 +85,7 @@ router.post(
   }
 
   // Link resource
-  const parsed = linkSchema.safeParse(req.body);
+  const parsed = linkPublishSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.format() });
     return;
@@ -267,7 +269,11 @@ router.get("/resources/:id/register/prepare", apiKeyAuth, async (req, res) => {
 
 // POST /resources/:id/register — register a verified resource on-chain (owner only)
 // Can be called again to retry if onchainStatus is "failed".
-router.post("/resources/:id/register", apiKeyAuth, async (req, res) => {
+router.post(
+  "/resources/:id/register",
+  apiKeyAuth,
+  validate(registerResourceSchema),
+  async (req, res) => {
   const publisher = req.publisher!;
   const resourceId = req.params.id as string;
 
@@ -298,19 +304,14 @@ router.post("/resources/:id/register", apiKeyAuth, async (req, res) => {
   }
   // "none" or "failed" → proceed (failed is retryable)
 
-  // Check if signedXdr is provided (new flow) or use legacy flow
-  const parsed = z.object({ signedXdr: z.string().optional() }).safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
-    return;
-  }
+  const { signedXdr } = req.body;
 
   await db.update(resources).set({ onchainStatus: "pending" }).where(eq(resources.id, resourceId));
 
   try {
-    if (parsed.data.signedXdr) {
+    if (signedXdr) {
       // New flow: submit signed XDR
-      const result = await submitSignedTx(parsed.data.signedXdr);
+      const result = await submitSignedTx(signedXdr);
 
       if (result.success) {
         const [updated] = await db
@@ -375,7 +376,11 @@ router.post("/resources/:id/register", apiKeyAuth, async (req, res) => {
 
 // POST /resources/:id/price/prepare — build unsigned set_price tx (owner only)
 // Returns the XDR of an unsigned transaction the owner must sign client-side.
-router.post("/resources/:id/price/prepare", apiKeyAuth, async (req, res) => {
+router.post(
+  "/resources/:id/price/prepare",
+  apiKeyAuth,
+  validate(preparePriceSchema),
+  async (req, res) => {
   const publisher = req.publisher!;
   const resourceId = req.params.id as string;
 
@@ -389,18 +394,18 @@ router.post("/resources/:id/price/prepare", apiKeyAuth, async (req, res) => {
     return;
   }
 
-  const parsed = z.object({ price: z.string().min(1) }).safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
-    return;
-  }
+  const { price } = req.body;
 
-  const unsignedXdr = await setPrice(resourceId, parsed.data.price);
+  const unsignedXdr = await setPrice(resourceId, price);
   res.json({ unsignedXdr, networkPassphrase: NETWORK_PASSPHRASE });
 });
 
 // POST /resources/:id/price — submit signed set_price tx and sync DB price
-router.post("/resources/:id/price", apiKeyAuth, async (req, res) => {
+router.post(
+  "/resources/:id/price",
+  apiKeyAuth,
+  validate(setPriceSchema),
+  async (req, res) => {
   const publisher = req.publisher!;
   const resourceId = req.params.id as string;
 
@@ -414,13 +419,7 @@ router.post("/resources/:id/price", apiKeyAuth, async (req, res) => {
     return;
   }
 
-  const parsed = z
-    .object({ signedXdr: z.string().min(1), price: z.string().min(1) })
-    .safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
-    return;
-  }
+  const { signedXdr, price } = req.body;
 
   // Submit the signed transaction via the registry client's underlying RPC server
   const { rpc: StellarRpc, Transaction: StellarTransaction } = await import(
@@ -428,7 +427,7 @@ router.post("/resources/:id/price", apiKeyAuth, async (req, res) => {
   );
   const rpcServer = new StellarRpc.Server(config.SOROBAN_RPC_URL);
   const signedTx = new StellarTransaction(
-    parsed.data.signedXdr,
+    signedXdr,
     NETWORK_PASSPHRASE
   );
   const sendResult = await rpcServer.sendTransaction(signedTx);
@@ -461,7 +460,7 @@ router.post("/resources/:id/price", apiKeyAuth, async (req, res) => {
   // Sync the DB price to match the on-chain value
   const [updated] = await db
     .update(resources)
-    .set({ price: parsed.data.price })
+    .set({ price })
     .where(eq(resources.id, resourceId))
     .returning();
 
@@ -469,7 +468,11 @@ router.post("/resources/:id/price", apiKeyAuth, async (req, res) => {
 });
 
 // POST /resources/:id/ownership/prepare — build unsigned transfer_ownership tx (owner only)
-router.post("/resources/:id/ownership/prepare", apiKeyAuth, async (req, res) => {
+router.post(
+  "/resources/:id/ownership/prepare",
+  apiKeyAuth,
+  validate(prepareOwnershipSchema),
+  async (req, res) => {
   const publisher = req.publisher!;
   const resourceId = req.params.id as string;
 
@@ -483,20 +486,18 @@ router.post("/resources/:id/ownership/prepare", apiKeyAuth, async (req, res) => 
     return;
   }
 
-  const parsed = z
-    .object({ newCreator: z.string().min(1) })
-    .safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
-    return;
-  }
+  const { newCreator } = req.body;
 
-  const unsignedXdr = await transferOwnership(resourceId, parsed.data.newCreator);
+  const unsignedXdr = await transferOwnership(resourceId, newCreator);
   res.json({ unsignedXdr, networkPassphrase: NETWORK_PASSPHRASE });
 });
 
 // POST /resources/:id/ownership — submit signed transfer_ownership tx and sync DB
-router.post("/resources/:id/ownership", apiKeyAuth, async (req, res) => {
+router.post(
+  "/resources/:id/ownership",
+  apiKeyAuth,
+  validate(transferOwnershipSchema),
+  async (req, res) => {
   const publisher = req.publisher!;
   const resourceId = req.params.id as string;
 
@@ -510,19 +511,13 @@ router.post("/resources/:id/ownership", apiKeyAuth, async (req, res) => {
     return;
   }
 
-  const parsed = z
-    .object({ signedXdr: z.string().min(1), newCreator: z.string().min(1) })
-    .safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
-    return;
-  }
+  const { signedXdr, newCreator } = req.body;
 
   const { rpc: StellarRpc, Transaction: StellarTransaction } = await import(
     "@stellar/stellar-sdk"
   );
   const rpcServer = new StellarRpc.Server(config.SOROBAN_RPC_URL);
-  const signedTx = new StellarTransaction(parsed.data.signedXdr, NETWORK_PASSPHRASE);
+  const signedTx = new StellarTransaction(signedXdr, NETWORK_PASSPHRASE);
   const sendResult = await rpcServer.sendTransaction(signedTx);
 
   if (sendResult.status !== "PENDING") {
@@ -551,7 +546,7 @@ router.post("/resources/:id/ownership", apiKeyAuth, async (req, res) => {
 
   const [updated] = await db
     .update(resources)
-    .set({ walletAddress: parsed.data.newCreator })
+    .set({ walletAddress: newCreator })
     .where(eq(resources.id, resourceId))
     .returning();
 

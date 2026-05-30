@@ -2,8 +2,13 @@ import "dotenv/config";
 import { z } from "zod/v4";
 
 const envSchema = z.object({
+  NODE_ENV: z
+    .enum(["development", "production", "test"])
+    .default("development"),
   PORT: z.coerce.number().default(4021),
   BASE_URL: z.string().default("http://localhost:4021"),
+  WEB_APP_URL: z.string().url().default("http://localhost:5173"),
+  ALLOWED_ORIGINS: z.string().optional(),
 
   // Stellar / x402
   NETWORK: z.string().default("stellar:testnet"),
