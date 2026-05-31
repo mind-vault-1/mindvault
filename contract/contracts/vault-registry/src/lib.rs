@@ -11,7 +11,8 @@
 //! `require_auth`). Ownership can be transferred.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, IntoVal,
+    String, Val, Vec,
 };
 
 // ~5s ledgers → 17,280 per day. Persistent entries are bumped ~30 days on each
@@ -77,22 +78,17 @@ impl VaultRegistry {
             listed: true, // Resources are listed by default when registered
         };
         env.storage().persistent().set(&key, &resource);
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+        Self::bump_persistent(&env, &key);
 
         let count: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
         let idx_key = DataKey::Index(count);
         env.storage().persistent().set(&idx_key, &id);
-        env.storage()
-            .persistent()
-            .extend_ttl(&idx_key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+        Self::bump_persistent(&env, &idx_key);
         env.storage().instance().set(&DataKey::Count, &(count + 1));
-        env.storage()
-            .instance()
-            .extend_ttl(LIFETIME_THRESHOLD, BUMP_AMOUNT);
+        Self::bump_instance(&env);
 
-        env.events().publish((symbol_short!("register"), creator), id);
+        env.events()
+            .publish((symbol_short!("register"), creator), id);
         Ok(())
     }
 
@@ -199,10 +195,27 @@ impl VaultRegistry {
     fn save(env: &Env, resource: &Resource) {
         let key = DataKey::Resource(resource.id.clone());
         env.storage().persistent().set(&key, resource);
+        Self::bump_persistent(env, &key);
+    }
+
+    /// Extend persistent entry TTL when below threshold (Soroban archival safety).
+    fn bump_persistent<K>(env: &Env, key: &K)
+    where
+        K: IntoVal<Env, Val>,
+    {
         env.storage()
             .persistent()
-            .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+            .extend_ttl(key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+    }
+
+    fn bump_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(LIFETIME_THRESHOLD, BUMP_AMOUNT);
     }
 }
+
+#[cfg(test)]
+pub(crate) const TTL_BUMP_AMOUNT: u32 = BUMP_AMOUNT;
 
 mod test;

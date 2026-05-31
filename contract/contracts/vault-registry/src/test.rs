@@ -1,7 +1,17 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, Env, String};
+use soroban_sdk::{
+    testutils::{storage::Persistent as _, Address as _, Ledger as _},
+    Address, Env, String,
+};
+
+const DAY_IN_LEDGERS: u32 = 17_280;
+
+fn resource_storage_ttl(env: &Env, contract: &soroban_sdk::Address, id: &String) -> u32 {
+    let key = DataKey::Resource(id.clone());
+    env.as_contract(contract, || env.storage().persistent().get_ttl(&key))
+}
 
 fn setup<'a>() -> (Env, Address, VaultRegistryClient<'a>) {
     let env = Env::default();
@@ -286,12 +296,72 @@ fn list_start_beyond_count_returns_empty() {
 }
 
 #[test]
+fn register_extends_resource_storage_ttl() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "ttl-register");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+    assert_eq!(
+        resource_storage_ttl(&env, &client.address, &id),
+        TTL_BUMP_AMOUNT
+    );
+}
+
+#[test]
+fn set_price_reextends_resource_ttl() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "ttl-price");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + DAY_IN_LEDGERS);
+    assert_eq!(
+        resource_storage_ttl(&env, &client.address, &id),
+        TTL_BUMP_AMOUNT - DAY_IN_LEDGERS
+    );
+
+    client.set_price(&id, &200i128);
+    assert_eq!(
+        resource_storage_ttl(&env, &client.address, &id),
+        TTL_BUMP_AMOUNT
+    );
+}
+
+#[test]
+fn update_metadata_reextends_resource_ttl() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "ttl-meta");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "old"));
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + DAY_IN_LEDGERS);
+
+    client.update_metadata(&id, &String::from_str(&env, "new"));
+    assert_eq!(
+        resource_storage_ttl(&env, &client.address, &id),
+        TTL_BUMP_AMOUNT
+    );
+}
+
+#[test]
+fn transfer_ownership_reextends_resource_ttl() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "ttl-xfer");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + DAY_IN_LEDGERS);
+
+    let new_owner = Address::generate(&env);
+    client.transfer_ownership(&id, &new_owner);
+    assert_eq!(
+        resource_storage_ttl(&env, &client.address, &id),
+        TTL_BUMP_AMOUNT
+    );
+}
+
+#[test]
 fn list_limit_capped_at_20() {
     let (env, creator, client) = setup();
     let ids = [
-        "i00","i01","i02","i03","i04","i05","i06","i07","i08","i09",
-        "i10","i11","i12","i13","i14","i15","i16","i17","i18","i19",
-        "i20","i21","i22","i23","i24",
+        "i00", "i01", "i02", "i03", "i04", "i05", "i06", "i07", "i08", "i09", "i10", "i11", "i12",
+        "i13", "i14", "i15", "i16", "i17", "i18", "i19", "i20", "i21", "i22", "i23", "i24",
     ];
     register_n(&env, &creator, &client, &ids);
 
