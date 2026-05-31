@@ -7,8 +7,10 @@ import { Toast } from "./components/Toast.js";
 import { CatalogSearch } from "./components/CatalogSearch.js";
 import { ResourceGridSkeleton } from "./components/ResourceCardSkeleton.js";
 import { ErrorBanner } from "./components/ErrorBanner.js";
+import { WalletButton } from "./components/WalletButton.js";
 import { useTheme } from "./hooks/useTheme.js";
 import { useAsync } from "./hooks/useAsync.js";
+import { useWalletConnection } from "./hooks/useWalletConnection.js";
 import { fetchCatalog, fetchMyResources, fetchRegistryStatus } from "./api/resources.js";
 import type { CatalogFilters } from "./api/resources.js";
 
@@ -49,6 +51,7 @@ export default function App() {
   // Local overrides applied on top of fetched data (price edits, ownership transfers, etc.)
   const [overrides, setOverrides] = useState<Record<string, Partial<Resource>>>({});
   const { theme, toggleTheme } = useTheme();
+  const wallet = useWalletConnection();
 
   // ── Catalog / my-resources fetch ──────────────────────────────────────────
   const {
@@ -147,14 +150,17 @@ export default function App() {
             </p>
           )}
         </div>
-        <button
-          onClick={toggleTheme}
-          aria-label="Toggle light/dark theme"
-          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-        >
-          {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
-        </button>
+        <div className="flex items-center gap-2">
+          <WalletButton wallet={wallet} />
+          <button
+            onClick={toggleTheme}
+            aria-label="Toggle light/dark theme"
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+          >
+            {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
+          </button>
+        </div>
       </div>
 
       {/* ── Pending registration banner ─────────────────────────────────────── */}
