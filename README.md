@@ -59,16 +59,18 @@ MindVault includes an MCP server that lets any AI system (Claude Code, Codex, or
 
 Available tools:
 
-| Tool | Description |
-|------|-------------|
-| `mindvault_setup_wallet` | Create a Stellar wallet using the sponsored account protocol |
-| `mindvault_wallet_info` | Check wallet address and USDC balance |
-| `mindvault_browse` | List available resources in the vault |
-| `mindvault_preview` | Get details and price for a resource |
-| `mindvault_register` | Register as a publisher using the agent's wallet |
-| `mindvault_publish` | Publish a resource and pay for verification via x402 |
-| `mindvault_buy` | Pay USDC and access a resource via x402 |
-| `mindvault_agent_status` | Check the verification agent's earnings and activity |
+| Tool | Description | Example |
+|------|-------------|---------|
+| `mindvault_setup_wallet` | Create a Stellar wallet using the sponsored account protocol | `"Create a wallet for me"` |
+| `mindvault_wallet_info` | Check wallet address and USDC balance | `"What's my wallet balance?"` |
+| `mindvault_browse` | List available resources in the vault | `"Show me what resources are available"` |
+| `mindvault_preview` | Get details and price for a resource | `"Preview resource swcn98besxpp6t1u8e77fqz3"` |
+| `mindvault_register` | Register as a publisher using the agent's wallet | `"Register me as Alice, alice@example.com"` |
+| `mindvault_publish` | Publish a resource and pay for verification via x402 | `"Publish 'My Dataset' for 5 USDC at https://example.com/data"` |
+| `mindvault_buy` | Pay USDC and access a resource via x402 | `"Buy resource swcn98besxpp6t1u8e77fqz3"` |
+| `mindvault_agent_status` | Check the verification agent's earnings and activity | `"What's the agent's status?"` |
+| `mindvault_registry_info` | Return the on-chain vault-registry contract details | `"Show me registry info"` |
+| `mindvault_tx_status` | Look up a Stellar transaction status by hash | `"Check tx a1b2c3d4..."` |
 
 ### Install
 
@@ -158,6 +160,7 @@ Wallet helpers live in `server/scripts/generate-wallet.ts` (run via `make wallet
 
 ## Operations
 
+- **Deployment runbook**: see [docs/deployment-runbook.md](docs/deployment-runbook.md) — step-by-step guide to deploy the full stack (contract + server + frontend + MCP) to a new Stellar network.
 - **Reconciliation**: see [docs/reconciliation.md](docs/reconciliation.md) — detects and reports drift between the DB and the on-chain vault registry; run with `pnpm reconcile` from `server/`.
 
 ## Testing the 402 Flow

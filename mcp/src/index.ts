@@ -22,6 +22,7 @@ const REGISTRY_NETWORK_PASSPHRASE = registryNetworks.testnet.networkPassphrase;
 const SPONSORED_ACCOUNT_URL =
   process.env.SPONSORED_ACCOUNT_URL ?? "https://stellar-sponsored-agent-account.onrender.com";
 const HORIZON_URL = process.env.HORIZON_URL ?? "https://horizon-testnet.stellar.org";
+const SOROBAN_RPC_URL = process.env.SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
 const NETWORK = "stellar:testnet";
 
 // ── In-memory agent state ─────────────────────────────────────────────────────
@@ -72,6 +73,40 @@ async function getUsdcBalance(publicKey: string): Promise<string> {
     (b: any) => b.asset_type === "credit_alphanum4" && b.asset_code === "USDC",
   );
   return b?.balance ?? "0";
+}
+
+async function txStatus(txHash: string): Promise<string> {
+  const res = await fetch(SOROBAN_RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getTransaction",
+      params: { hash: txHash },
+    }),
+  });
+  if (!res.ok) throw new Error(`Soroban RPC error: ${res.status}`);
+  const data: any = await res.json();
+  if (data.error) throw new Error(`RPC error: ${JSON.stringify(data.error)}`);
+  const tx = data.result;
+  return JSON.stringify(
+    {
+      status: tx.status,
+      hash: txHash,
+      ledger: tx.ledger,
+      ledgerCloseTime: tx.createdAt
+        ? new Date(tx.createdAt * 1000).toISOString()
+        : null,
+      applicationOrder: tx.applicationOrder,
+      feeBump: tx.feeBump,
+      envelopeXdr: tx.envelopeXdr,
+      resultXdr: tx.resultXdr,
+      resultMetaXdr: tx.resultMetaXdr,
+    },
+    null,
+    2,
+  );
 }
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
@@ -243,7 +278,7 @@ function registryInfo(): string {
   } = {
     contractId: REGISTRY_CONTRACT_ID,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
-    rpcUrl: "https://soroban-testnet.stellar.org",
+    rpcUrl: SOROBAN_RPC_URL,
     resourceFields: ["id", "creator", "price", "metadata", "listed"],
   };
   return JSON.stringify(info, null, 2);
@@ -327,6 +362,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Return the on-chain vault-registry contract ID and network so you can query ownership, price, and listing state directly from Stellar without trusting the MindVault API.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
+    {
+      name: "mindvault_tx_status",
+      description:
+        "Look up the status of a Stellar transaction by hash via Soroban RPC. Returns SUCCESS, FAILED, or NOT_FOUND along with ledger details and XDR.",
+      inputSchema: {
+        type: "object",
+        properties: { txHash: { type: "string" } },
+        required: ["txHash"],
+      },
+    },
   ],
 }));
 
@@ -370,6 +415,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "mindvault_registry_info":
         result = registryInfo();
+        break;
+      case "mindvault_tx_status":
+        result = await txStatus(args.txHash as string);
         break;
       default:
         throw new Error(`Unknown tool: ${name}`);
