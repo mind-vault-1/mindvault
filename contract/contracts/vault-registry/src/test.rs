@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use super::*;
+use proptest::prelude::*;
 use soroban_sdk::{
     testutils::{storage::Persistent as _, Address as _, Ledger as _},
     Address, Env, String,
@@ -442,4 +443,59 @@ fn list_limit_capped_at_20() {
     // Requesting 25 items should be silently capped to 20.
     let page = client.list(&0u32, &25u32);
     assert_eq!(page.len(), 20);
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+    #[test]
+    fn test_metadata_pointer_roundtrip_property(
+        id_str in r"[a-zA-Z0-9_-]{1,32}",
+        price in 1..1000000000000i128,
+        price_2 in 1..1000000000000i128,
+        meta_str in r"[a-zA-Z0-9:/\\._-]{0,512}",
+        meta_str_2 in r"[a-zA-Z0-9:/\\._-]{0,512}",
+        listed in any::<bool>(),
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(VaultRegistry, ());
+        let client = VaultRegistryClient::new(&env, &contract_id);
+        let creator = Address::generate(&env);
+
+        let id = String::from_str(&env, &id_str);
+        let metadata = String::from_str(&env, &meta_str);
+        let metadata_2 = String::from_str(&env, &meta_str_2);
+
+        // 1. Register resource with initial metadata
+        client.register(&creator, &id, &price, &metadata);
+
+        // 2. Get and verify metadata is identical
+        let r = client.get(&id);
+        assert_eq!(r.metadata, metadata);
+        assert_eq!(r.price, price);
+        assert_eq!(r.creator, creator);
+        assert_eq!(r.listed, true);
+
+        // 3. Update metadata
+        client.update_metadata(&id, &metadata_2);
+
+        // 4. Verify updated metadata is identical and other fields preserved
+        let r2 = client.get(&id);
+        assert_eq!(r2.metadata, metadata_2);
+        assert_eq!(r2.price, price);
+        assert_eq!(r2.creator, creator);
+        assert_eq!(r2.listed, true);
+
+        // 5. Update price and verify metadata is unaffected
+        client.set_price(&id, &price_2);
+        let r3 = client.get(&id);
+        assert_eq!(r3.metadata, metadata_2);
+        assert_eq!(r3.price, price_2);
+
+        // 6. Update listing status and verify metadata is unaffected
+        client.set_listed(&id, &listed);
+        let r4 = client.get(&id);
+        assert_eq!(r4.metadata, metadata_2);
+        assert_eq!(r4.listed, listed);
+    }
 }
