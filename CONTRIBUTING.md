@@ -204,7 +204,8 @@ curl -s -X POST http://localhost:4021/resources/<id>/ownership \
    - Backend: `pnpm build:server`
    - Contract: `pnpm contract:test`
 4. Use clear commit messages (e.g. `feat: add catalog search`, `fix: cors header`).
-5. Open a PR against `main` describing **what** changed and **why**, and how you
+5. Use Conventional Commits formatting for your PR titles (e.g., `feat: add catalog search` or `fix(auth): cors header`). PR titles are automatically linted, and non-conforming titles will fail CI.
+6. Open a PR against `main` describing **what** changed and **why**, and how you
    tested it.
 
 ## Good first issues
