@@ -57,6 +57,18 @@ const envSchema = z.object({
   RATE_LIMIT_PUBLISH_IP_WINDOW_MS: z.coerce.number().default(60_000),
   RATE_LIMIT_PUBLISH_WALLET_MAX: z.coerce.number().default(10),
   RATE_LIMIT_PUBLISH_WALLET_WINDOW_MS: z.coerce.number().default(3_600_000),
+
+  // Per-request timeout — slow upstreams (RPC, facilitator) return 503 instead
+  // of hanging the connection.
+  REQUEST_TIMEOUT_MS: z.coerce.number().default(30_000),
+  // Max time to drain in-flight requests on SIGTERM/SIGINT before forcing exit.
+  GRACEFUL_SHUTDOWN_TIMEOUT_MS: z.coerce.number().default(10_000),
+  // How long a publish Idempotency-Key is remembered so retries return the
+  // original result instead of creating a duplicate (default 24h).
+  IDEMPOTENCY_TTL_MS: z.coerce.number().default(86_400_000),
+  // Short-lived cache for catalog/preview reads to cut DB load. Kept low so
+  // newly published/delisted resources surface quickly.
+  CATALOG_CACHE_TTL_MS: z.coerce.number().default(10_000),
 });
 
 const parsed = envSchema.safeParse(process.env);

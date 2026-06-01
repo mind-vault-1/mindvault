@@ -6,3 +6,6 @@ import * as schema from "./schema.js";
 const client = postgres(config.DATABASE_URL);
 
 export const db = drizzle(client, { schema });
+
+// Exposed so graceful shutdown (issue #112) can close the connection pool.
+export const pgClient = client;

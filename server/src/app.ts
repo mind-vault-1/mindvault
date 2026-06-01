@@ -1,7 +1,10 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
+import { config } from "./config.js";
 import { corsMiddleware } from "./cors.js";
 import { getLogger } from "./lib/logger.js";
 import { requestContextMiddleware } from "./middleware/requestContext.js";
+import { inFlightMiddleware } from "./middleware/inFlight.js";
+import { requestTimeout } from "./middleware/timeout.js";
 import healthRouter from "./routes/health.js";
 import publisherRouter from "./routes/publishers.js";
 import registryRouter from "./routes/registry.js";
@@ -14,7 +17,9 @@ export function createApp(): Express {
 
   app.use(corsMiddleware());
   app.use(requestContextMiddleware);
+  app.use(inFlightMiddleware);
   app.use(express.json());
+  app.use(requestTimeout(config.REQUEST_TIMEOUT_MS));
 
   // Routes
   app.use(healthRouter);
