@@ -209,8 +209,66 @@ export default function App() {
               </button>
             </div>
           ) : resources.length === 0 ? (
-            <div className="col-span-full py-12 text-center text-sm text-gray-400 dark:text-gray-500">
-              No resources found.
+            <div className="col-span-full flex flex-col items-center gap-4 py-20 text-center">
+              {/* Icon */}
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-50 dark:bg-indigo-950">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-8 w-8 text-indigo-400 dark:text-indigo-500"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M20 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2Z"
+                  />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M16 3H8a2 2 0 0 0-2 2v2h12V5a2 2 0 0 0-2-2ZM12 12v4M10 14h4"
+                  />
+                </svg>
+              </div>
+
+              {/* Heading + description */}
+              <div className="max-w-sm space-y-1">
+                <p className="text-base font-semibold text-gray-700 dark:text-gray-200">
+                  The catalog is empty
+                </p>
+                <p className="text-sm text-gray-400 dark:text-gray-500">
+                  No resources have been published yet. Be the first to share yours with the
+                  world.
+                </p>
+              </div>
+
+              {/* CTA */}
+              <a
+                href="https://docs.mindvault.app/publishing"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:bg-indigo-500 dark:hover:bg-indigo-600"
+              >
+                Publish a resource
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+                  />
+                </svg>
+              </a>
             </div>
           ) : (
             filteredResources.map((r) => (
@@ -240,26 +298,24 @@ export default function App() {
 
                 <div className="mt-2 flex flex-wrap gap-1">
                   <span
-                    className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                      r.verificationStatus === "verified"
+                    className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${r.verificationStatus === "verified"
                         ? "bg-green-100 text-green-700"
                         : r.verificationStatus === "rejected"
                           ? "bg-red-100 text-red-700"
                           : "bg-gray-100 text-gray-600"
-                    }`}
+                      }`}
                   >
                     {r.verificationStatus}
                   </span>
                   <span
-                    className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                      r.onchainStatus === "registered"
+                    className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${r.onchainStatus === "registered"
                         ? "bg-indigo-100 text-indigo-700"
                         : r.onchainStatus === "failed"
                           ? "bg-red-100 text-red-700"
                           : r.onchainStatus === "pending"
                             ? "bg-yellow-100 text-yellow-700"
                             : "bg-gray-100 text-gray-500"
-                    }`}
+                      }`}
                   >
                     {r.onchainStatus === "none" ? "not on-chain" : r.onchainStatus}
                   </span>
