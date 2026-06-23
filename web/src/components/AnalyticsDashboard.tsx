@@ -2,8 +2,6 @@ import React from "react";
 import { useAnalytics } from "../hooks/useAnalytics.js";
 import { RecentPayment, ResourceStat } from "../api/analytics.js";
 
-const EXPLORER = "https://stellar.expert/explorer/testnet/tx";
-
 interface Props {
   apiKey: string;
 }
@@ -11,17 +9,9 @@ interface Props {
 export function AnalyticsDashboard({ apiKey }: Props) {
   const { data, loading, error } = useAnalytics(apiKey);
 
-  if (loading)
-    return (
-      <p className="mt-8 text-center text-sm text-gray-500">
-        Loading analytics…
-      </p>
-    );
+  if (loading) return <p className="mt-8 text-center text-sm text-gray-500">Loading analytics…</p>;
 
-  if (error)
-    return (
-      <p className="mt-8 text-center text-sm text-red-500">Error: {error}</p>
-    );
+  if (error) return <p className="mt-8 text-center text-sm text-red-500">Error: {error}</p>;
 
   if (!data) return null;
 
@@ -33,8 +23,7 @@ export function AnalyticsDashboard({ apiKey }: Props) {
       <div className="mt-8 rounded-xl border border-dashed border-gray-200 p-10 text-center text-gray-500">
         <p className="text-lg font-medium">No resources yet</p>
         <p className="mt-1 text-sm">
-          Publish your first resource to start earning USDC directly to your
-          Stellar wallet.
+          Publish your first resource to start earning USDC directly to your Stellar wallet.
         </p>
       </div>
     );
@@ -70,20 +59,10 @@ export function AnalyticsDashboard({ apiKey }: Props) {
   );
 }
 
-function StatCard({
-  label,
-  value,
-  note,
-}: {
-  label: string;
-  value: string;
-  note: string;
-}) {
+function StatCard({ label, value, note }: { label: string; value: string; note: string }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-        {label}
-      </p>
+      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">{label}</p>
       <p className="mt-1 text-2xl font-bold text-gray-900">{value}</p>
       <p className="mt-1 text-xs text-gray-400">{note}</p>
     </div>
@@ -118,9 +97,7 @@ function ResourceRow({ resource: r }: { resource: ResourceStat }) {
           </p>
         </div>
         <div className="text-right">
-          <p className="text-sm font-semibold text-indigo-600">
-            {r.totalEarned} USDC
-          </p>
+          <p className="text-sm font-semibold text-indigo-600">{r.totalEarned} USDC</p>
           <p className="text-xs text-gray-400">
             {r.totalSales} sale{r.totalSales !== 1 ? "s" : ""}
           </p>
@@ -166,9 +143,7 @@ function PaymentRow({ payment: p }: { payment: RecentPayment }) {
         {p.payerAddress.slice(0, 8)}…{p.payerAddress.slice(-4)}
       </span>
       <span className="ml-2 font-medium text-gray-900">{p.amount} USDC</span>
-      <span className="ml-2 text-gray-400">
-        {new Date(p.paidAt).toLocaleDateString()}
-      </span>
+      <span className="ml-2 text-gray-400">{new Date(p.paidAt).toLocaleDateString()}</span>
     </li>
   );
 }

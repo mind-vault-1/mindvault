@@ -62,11 +62,7 @@ export default function App() {
     data: rawResources,
     error: resourcesError,
     retry: retryResources,
-  } = useAsync<Resource[]>(
-    (_signal) =>
-      API_KEY ? fetchMyResources(API_KEY) : fetchCatalog(),
-    [],
-  );
+  } = useAsync<Resource[]>((_signal) => (API_KEY ? fetchMyResources(API_KEY) : fetchCatalog()), []);
 
   // ── Registry status fetch ─────────────────────────────────────────────────
   const { data: registryData } = useAsync<{ resourceCount: number }>(
@@ -309,24 +305,26 @@ export default function App() {
 
                     <div className="mt-2 flex flex-wrap gap-1">
                       <span
-                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${r.verificationStatus === "verified"
+                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                          r.verificationStatus === "verified"
                             ? "bg-green-100 text-green-700"
                             : r.verificationStatus === "rejected"
                               ? "bg-red-100 text-red-700"
                               : "bg-gray-100 text-gray-600"
-                          }`}
+                        }`}
                       >
                         {r.verificationStatus}
                       </span>
                       <span
-                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${r.onchainStatus === "registered"
+                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                          r.onchainStatus === "registered"
                             ? "bg-indigo-100 text-indigo-700"
                             : r.onchainStatus === "failed"
                               ? "bg-red-100 text-red-700"
                               : r.onchainStatus === "pending"
                                 ? "bg-yellow-100 text-yellow-700"
                                 : "bg-gray-100 text-gray-500"
-                          }`}
+                        }`}
                       >
                         {r.onchainStatus === "none" ? "not on-chain" : r.onchainStatus}
                       </span>
