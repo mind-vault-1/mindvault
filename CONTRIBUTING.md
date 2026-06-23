@@ -176,6 +176,7 @@ curl -s -X POST http://localhost:4021/resources/<id>/ownership \
 3. Make sure things build/pass before pushing:
    - Backend: `pnpm build:server`
    - Contract: `pnpm contract:test`
+   - Docs: `pnpm docs:links` (checks repo-local Markdown links; external URLs are skipped in CI to avoid flaky third-party failures — set `DOCS_LINKS_CHECK_EXTERNAL=1` to include them locally)
 4. Use clear commit messages (e.g. `feat: add catalog search`, `fix: cors header`).
 5. Use Conventional Commits formatting for your PR titles (e.g., `feat: add catalog search` or `fix(auth): cors header`). PR titles are automatically linted, and non-conforming titles will fail CI.
 6. Open a PR against `main` describing **what** changed and **why**, and how you

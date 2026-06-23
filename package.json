@@ -20,7 +20,8 @@
     "contract:bindings": "node scripts/generate-bindings.mjs",
     "lint": "pnpm exec eslint \"server/src/**/*.{ts,tsx}\" \"web/src/**/*.{ts,tsx}\" \"packages/**/*.{ts,tsx}\" \"mcp/src/**/*.{ts,tsx}\"",
     "format:check": "pnpm exec prettier --check \"server/**/*.{ts,tsx,js,json,md}\" \"web/**/*.{ts,tsx,js,json,md}\" \"packages/**/*.{ts,tsx,js,json,md}\" \"mcp/**/*.{ts,tsx,js,json,md}\"",
-    "test": "pnpm run build:registry-client && pnpm --filter @mindvault/server test"
+    "test": "pnpm run build:registry-client && pnpm --filter @mindvault/server test",
+    "docs:links": "node scripts/check-doc-links.mjs"
   },
   "devDependencies": {
     "@types/supertest": "^6.0.2",
@@ -29,6 +30,7 @@
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.0.0",
     "eslint-plugin-prettier": "^5.0.0",
+    "markdown-link-check": "^3.14.2",
     "prettier": "^3.8.3",
     "supertest": "^6.3.3"
   },
