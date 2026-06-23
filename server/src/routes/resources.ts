@@ -406,6 +406,7 @@ router.post(
               title: resource.title,
               description: resource.description ?? "",
             }),
+            tags: [],
           },
           { simulate: false },
         );

@@ -14,6 +14,8 @@ target/
 # Stellar CLI local identities (contain secret keys)
 .stellar/
 
+packages/registry-client/bindings-tmp/
+
 # Logs
 *.log
 

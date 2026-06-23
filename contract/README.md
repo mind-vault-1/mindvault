@@ -17,9 +17,10 @@ reads the canonical resource entry here.
 
 | Function | Auth | Description |
 |----------|------|-------------|
-| `register(creator, id, price, metadata)` | creator | Register a new resource. Errors if `id` exists or `price <= 0`. Resources are listed by default. |
+| `register(creator, id, price, metadata, tags)` | creator | Register a new resource. Errors if `id` exists or `price <= 0`. Resources are listed by default. |
 | `set_price(id, new_price)` | creator | Update the price. |
 | `update_metadata(id, metadata)` | creator | Update the metadata pointer (e.g. IPFS URI / content hash). |
+| `set_tags(id, tags)` | creator | Replace discovery tags. Does not modify `metadata`. |
 | `transfer_ownership(id, new_creator)` | creator | Hand the resource to a new owner. |
 | `set_listed(id, listed)` | creator | Set the listing state of a resource (true = listed, false = delisted). |
 | `delist(id)` | creator | Convenience method to delist a resource (equivalent to `set_listed(id, false)`). |
@@ -32,7 +33,21 @@ reads the canonical resource entry here.
 `id` is the resource's cuid2 string, matching the server's resource IDs.
 `metadata` is a pointer string (IPFS URI, content hash, or compact JSON anchor), max
 512 bytes (`MetadataTooLong` if exceeded).
+`tags` is a `Vec<String>` of discovery labels (e.g. `"dataset"`, `"research"`), up to
+8 tags, each 1–32 characters (`InvalidTag` if violated). Pass an empty vector when no
+tags are needed. Tags are separate from `metadata` so the content anchor stays stable.
 `listed` is a boolean indicating whether the resource is available for discovery and purchase.
+
+### Breaking change: tags on `register` (v2)
+
+`register` now requires a fifth argument `tags: Vec<String>`. Existing callers must pass
+`[]` (empty tags) until they adopt labels. The `Resource` struct gains a `tags` field;
+`set_tags` updates tags without touching `metadata`.
+
+**Migration:** redeploy the contract, regenerate TypeScript bindings
+(`CONTRACT_WASM=... pnpm contract:bindings`), and update every `register` call site to
+include `tags` (use `[]` for resources without labels). Server-side filtering by tag is
+a follow-up; tags are stored on-chain for catalog use.
 
 ### Develop
 
@@ -82,8 +97,6 @@ for the architecture spike on admin pause/unpause. **v1 does not implement pause
 
 ### Ideas for contributors
 
-- A `list` / pagination method (current `get` is by id only).
-- Categories or tags stored alongside each resource.
 - Optional escrow/refund extension (see the root README's "Not Yet Built").
 - A TypeScript binding generated via `stellar contract bindings typescript`
   for the `server/` and `web/` packages to consume.

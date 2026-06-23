@@ -28,6 +28,9 @@
                 },
                 {
                   "string": "ipfs://QmOriginal"
+                },
+                {
+                  "vec": []
                 }
               ]
             }
@@ -193,6 +196,14 @@
                           "hi": 0,
                           "lo": 500
                         }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "tags"
+                      },
+                      "val": {
+                        "vec": []
                       }
                     }
                   ]
