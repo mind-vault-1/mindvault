@@ -78,10 +78,10 @@ Available tools:
 cd mcp && pnpm install && pnpm build
 
 # Claude Code
-claude mcp add mindvault node /path/to/mindVault/mcp/dist/index.js
+claude mcp add mindvault node /path/to/mindvault/mcp/dist/index.js
 
 # Codex
-codex mcp add mindvault -- node /path/to/mindVault/mcp/dist/index.js
+codex mcp add mindvault -- node /path/to/mindvault/mcp/dist/index.js
 ```
 
 An agent can set up a wallet, register as a publisher, publish a resource (paying for verification), and then another agent can discover and buy that resource. The full agent-to-agent economy runs through x402.
@@ -91,7 +91,7 @@ For a copy-pasteable, end-to-end agent session — wallet setup → register →
 ## Project Structure
 
 ```
-mindVault/
+mindvault/
   server/     Express backend, x402 middleware, Supabase, verification agent
   web/        React frontend, Stellar wallet connection, Tailwind
   mcp/        MCP server for AI agent access
