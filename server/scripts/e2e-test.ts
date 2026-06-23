@@ -273,6 +273,7 @@ async function registerOnChain(args: {
     id: args.resourceId,
     price: priceStroops,
     metadata: args.metadata,
+    tags: [],
   });
 
   const sent = await tx.signAndSend();

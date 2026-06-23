@@ -131,6 +131,7 @@ async function registerOnChain(resource: {
       id: resource.id,
       price: BigInt(Math.round(parseFloat(resource.price) * 10_000_000)),
       metadata,
+      tags: [],
     });
 
     await tx.signAndSend({ signer: registryKeypair });

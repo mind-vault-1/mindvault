@@ -73,6 +73,17 @@ pub struct Resource {
 |----------|-------|-------------|
 | `MAX_METADATA_POINTER_LEN` | `512` | Maximum length of the metadata pointer in bytes. |
 
+### Breaking change: tags on `register` (v2)
+
+`register` now requires a fifth argument `tags: Vec<String>`. Existing callers must pass
+`[]` (empty tags) until they adopt labels. The `Resource` struct gains a `tags` field;
+`set_tags` updates tags without touching `metadata`.
+
+**Migration:** redeploy the contract, regenerate TypeScript bindings
+(`CONTRACT_WASM=... pnpm contract:bindings`), and update every `register` call site to
+include `tags` (use `[]` for resources without labels). Server-side filtering by tag is
+a follow-up; tags are stored on-chain for catalog use.
+
 ### Develop
 
 ```bash
@@ -121,8 +132,6 @@ for the architecture spike on admin pause/unpause. **v1 does not implement pause
 
 ### Ideas for contributors
 
-- A `list` / pagination method (current `get` is by id only).
-- Categories or tags stored alongside each resource.
 - Optional escrow/refund extension (see the root README's "Not Yet Built").
 - A TypeScript binding generated via `stellar contract bindings typescript`
   for the `server/` and `web/` packages to consume.

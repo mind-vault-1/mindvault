@@ -107,6 +107,7 @@ async function main() {
         id: resource.id,
         price: BigInt(priceStroops),
         metadata,
+        tags: [],
       });
 
       await tx.signAndSend({ signer: registryKeypair });

@@ -101,6 +101,7 @@ export async function buildRegisterTx(
       id,
       price: usdcToStroops(priceUsdc),
       metadata,
+      tags: [],
     },
     { simulate: false },
   );
