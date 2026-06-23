@@ -136,6 +136,7 @@ Commit the updated `packages/registry-client/src/generated/index.ts` so all cons
 ## Further reading
 
 - [x402 protocol spec](https://www.x402.org/)
+- [x402 buy/pay sequence diagram](x402-sequence-diagram.md) — step-by-step walkthrough of the payment flow
 - [Soroban contract source](../contract/contracts/vault-registry/)
 - [Reconciliation runbook](reconciliation.md) — detecting drift between the server DB and the on-chain registry
 - [Creator-signed registration flow](creator-signed-registration-flow.md)

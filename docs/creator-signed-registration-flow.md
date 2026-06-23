@@ -55,7 +55,7 @@ Creator (Browser/MCP)          Server                     Stellar/Soroban
 1. Creator publishes a resource via the web app
 2. Server builds the unsigned `register` transaction
 3. Server returns `{ unsignedXdr, networkPassphrase }` to the browser
-4. Browser uses Stellar Wallets Kit (`@creit.tech/stellar-wallets-kit`) to prompt the creator to sign
+4. Browser uses `@stellar/freighter-api` to prompt the creator to sign via the [Freighter](https://www.freighter.app/) extension
 5. Browser sends `{ signedXdr }` back to the server
 6. Server submits, confirms, and updates the DB
 

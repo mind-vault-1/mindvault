@@ -26,13 +26,21 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             contract/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('contract/Cargo.lock') }}
+          key: ${{ runner.os }}-contract-wasm-${{ hashFiles('contract/Cargo.toml', 'contract/Cargo.lock', 'contract/contracts/**/Cargo.toml') }}
           restore-keys: |
+            ${{ runner.os }}-contract-wasm-
             ${{ runner.os }}-cargo-
 
-      - name: Build contract
+      - name: Build optimized wasm contract
         working-directory: contract
         run: cargo build --target wasm32-unknown-unknown --release
+
+      - name: Upload wasm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vault-registry-wasm
+          path: contract/target/wasm32-unknown-unknown/release/*.wasm
+          if-no-files-found: error
 
       - name: Run tests
         working-directory: contract

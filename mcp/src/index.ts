@@ -22,6 +22,7 @@ const REGISTRY_NETWORK_PASSPHRASE = registryNetworks.testnet.networkPassphrase;
 const SPONSORED_ACCOUNT_URL =
   process.env.SPONSORED_ACCOUNT_URL ?? "https://stellar-sponsored-agent-account.onrender.com";
 const HORIZON_URL = process.env.HORIZON_URL ?? "https://horizon-testnet.stellar.org";
+const SOROBAN_RPC_URL = process.env.SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org";
 const NETWORK = "stellar:testnet";
 
 // ── In-memory agent state ─────────────────────────────────────────────────────
@@ -74,6 +75,68 @@ async function getUsdcBalance(publicKey: string): Promise<string> {
   return b?.balance ?? "0";
 }
 
+function formatResource(r: any): string {
+  return `[${r.id}] ${r.title} — $${r.price} USDC\n  ${r.description ?? ""}\n  ${r.accessUrl}`;
+}
+
+/**
+ * Compares the agent wallet's USDC balance against an amount it is about to
+ * spend. Returns an actionable insufficient-funds message (balance, amount
+ * needed, and the shortfall) when the wallet can't cover the cost, or null
+ * when the balance is sufficient.
+ */
+async function insufficientFundsMessage(
+  wallet: AgentWallet,
+  amountNeeded: string | number,
+  action: string,
+): Promise<string | null> {
+  const need = typeof amountNeeded === "number" ? amountNeeded : parseFloat(amountNeeded);
+  if (!Number.isFinite(need)) return null;
+  const balance = await getUsdcBalance(wallet.publicKey);
+  const have = parseFloat(balance);
+  if (!Number.isFinite(have) || have >= need) return null;
+  const shortfall = need - have;
+  return [
+    `Insufficient USDC to ${action}.`,
+    `Amount needed: ${need} USDC`,
+    `Current balance: ${have} USDC`,
+    `Shortfall: ${shortfall.toFixed(7).replace(/\.?0+$/, "")} USDC`,
+    `Fund ${wallet.publicKey} with the shortfall and retry.`,
+  ].join("\n");
+}
+
+async function txStatus(txHash: string): Promise<string> {
+  const res = await fetch(SOROBAN_RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "getTransaction",
+      params: { hash: txHash },
+    }),
+  });
+  if (!res.ok) throw new Error(`Soroban RPC error: ${res.status}`);
+  const data: any = await res.json();
+  if (data.error) throw new Error(`RPC error: ${JSON.stringify(data.error)}`);
+  const tx = data.result;
+  return JSON.stringify(
+    {
+      status: tx.status,
+      hash: txHash,
+      ledger: tx.ledger,
+      ledgerCloseTime: tx.createdAt ? new Date(tx.createdAt * 1000).toISOString() : null,
+      applicationOrder: tx.applicationOrder,
+      feeBump: tx.feeBump,
+      envelopeXdr: tx.envelopeXdr,
+      resultXdr: tx.resultXdr,
+      resultMetaXdr: tx.resultMetaXdr,
+    },
+    null,
+    2,
+  );
+}
+
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
 async function setupWallet(): Promise<string> {
@@ -94,11 +157,20 @@ async function browse(): Promise<string> {
   if (!res.ok) throw new Error(`Browse failed: ${JSON.stringify(res.data)}`);
   const items: any[] = res.data;
   if (items.length === 0) return "No resources listed yet.";
-  return items
-    .map(
-      (r) => `[${r.id}] ${r.title} — $${r.price} USDC\n  ${r.description ?? ""}\n  ${r.accessUrl}`,
-    )
-    .join("\n\n");
+  return items.map(formatResource).join("\n\n");
+}
+
+async function search(query: string): Promise<string> {
+  const q = (query ?? "").trim().toLowerCase();
+  if (!q) return "Provide a non-empty search query.";
+  const res = await jsonFetch(`${BASE_URL}/resources`);
+  if (!res.ok) throw new Error(`Search failed: ${JSON.stringify(res.data)}`);
+  const items: any[] = res.data;
+  const matches = items.filter((r) =>
+    `${r.title ?? ""} ${r.description ?? ""}`.toLowerCase().includes(q),
+  );
+  if (matches.length === 0) return `No resources match "${query}".`;
+  return matches.map(formatResource).join("\n\n");
 }
 
 async function preview(resourceId: string): Promise<string> {
@@ -154,7 +226,22 @@ async function publish(args: {
   if (!createRes.ok) throw new Error(`Publish failed: ${JSON.stringify(createRes.data)}`);
   const resource = createRes.data;
 
-  // Step 2: Agent wallet signs the x402 payment for verification.
+  // Step 2: Agent wallet signs the x402 payment for verification. Check funds
+  // first so a shortfall returns an actionable message rather than a created-
+  // but-unverifiable resource with an opaque payment error.
+  const statusRes = await jsonFetch(`${BASE_URL}/agent/status`);
+  const verificationPrice = statusRes.ok ? statusRes.data?.agent?.pricePerVerification : null;
+  if (verificationPrice != null) {
+    const shortMsg = await insufficientFundsMessage(
+      wallet,
+      verificationPrice,
+      "pay the content verification fee",
+    );
+    if (shortMsg) {
+      return `${shortMsg}\n(Resource created with id ${resource.id}; verify it later once funded.)`;
+    }
+  }
+
   const paidFetch = makePaidFetch(wallet);
 
   const verifyRes = await paidFetch(`${BASE_URL}/verify-content`, {
@@ -219,6 +306,19 @@ async function publish(args: {
 
 async function buy(resourceId: string): Promise<string> {
   const wallet = requireWallet();
+
+  // Check the wallet can cover the price before attempting payment so a
+  // shortfall returns an actionable message instead of an opaque payment error.
+  const meta = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
+  if (meta.ok && meta.data?.price != null) {
+    const shortMsg = await insufficientFundsMessage(
+      wallet,
+      meta.data.price,
+      `buy "${meta.data.title ?? resourceId}"`,
+    );
+    if (shortMsg) return shortMsg;
+  }
+
   const paidFetch = makePaidFetch(wallet);
   const res = await paidFetch(`${BASE_URL}/resources/${resourceId}`);
   if (!res.ok) {
@@ -243,7 +343,7 @@ function registryInfo(): string {
   } = {
     contractId: REGISTRY_CONTRACT_ID,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
-    rpcUrl: "https://soroban-testnet.stellar.org",
+    rpcUrl: SOROBAN_RPC_URL,
     resourceFields: ["id", "creator", "price", "metadata", "listed"],
   };
   return JSON.stringify(info, null, 2);
@@ -269,6 +369,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "mindvault_browse",
       description: "List all available resources in the MindVault catalog.",
       inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    {
+      name: "mindvault_search",
+      description:
+        "Search the MindVault catalog by keyword and return matching resources (title or description match). Use this to find resources without browsing the full list.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Keyword(s) to match against resources." },
+        },
+        required: ["query"],
+      },
     },
     {
       name: "mindvault_preview",
@@ -327,6 +439,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Return the on-chain vault-registry contract ID and network so you can query ownership, price, and listing state directly from Stellar without trusting the MindVault API.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
+    {
+      name: "mindvault_tx_status",
+      description:
+        "Look up the status of a Stellar transaction by hash via Soroban RPC. Returns SUCCESS, FAILED, or NOT_FOUND along with ledger details and XDR.",
+      inputSchema: {
+        type: "object",
+        properties: { txHash: { type: "string" } },
+        required: ["txHash"],
+      },
+    },
   ],
 }));
 
@@ -343,6 +465,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "mindvault_browse":
         result = await browse();
+        break;
+      case "mindvault_search":
+        result = await search(args.query as string);
         break;
       case "mindvault_preview":
         result = await preview(args.resourceId as string);
@@ -370,6 +495,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "mindvault_registry_info":
         result = registryInfo();
+        break;
+      case "mindvault_tx_status":
+        result = await txStatus(args.txHash as string);
         break;
       default:
         throw new Error(`Unknown tool: ${name}`);

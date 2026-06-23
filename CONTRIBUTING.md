@@ -106,34 +106,7 @@ in each value:
 cp server/.env.example server/.env
 ```
 
-| Variable | Required | Description |
-|---|---|---|
-| `PORT` | no | HTTP port, default `4021` |
-| `BASE_URL` | no | Public base URL, default `http://localhost:4021` |
-| `NETWORK` | no | `stellar:testnet` (default) or `stellar:mainnet` |
-| `FACILITATOR_URL` | no | x402 facilitator, default `https://www.x402.org/facilitator` |
-| `PAY_TO` | **yes** | Platform Stellar wallet address — receives verification fees |
-| `AGENT_SECRET_KEY` | **yes** | Platform agent secret key — pays for content verification |
-| `SOROBAN_RPC_URL` | no | Soroban RPC endpoint, default `https://soroban-testnet.stellar.org` |
-| `VAULT_REGISTRY_CONTRACT_ID` | **yes** | Deployed vault-registry contract ID (from deploy step above) |
-| `REGISTRY_CONTRACT_ID` | **yes** | Same contract ID (alias used by the registry client) |
-| `REGISTRY_SECRET_KEY` | **yes** | Secret key of the deployer / registry owner account |
-| `OPENROUTER_API_KEY` | **yes** | OpenRouter API key for the AI verification agent |
-| `OPENROUTER_MODEL` | no | Model slug, default `anthropic/claude-sonnet-4` |
-| `DATABASE_URL` | **yes** | Supabase Postgres connection string (pooler URL) |
-| `SUPABASE_URL` | **yes** | Supabase project URL |
-| `SUPABASE_SERVICE_KEY` | **yes** | Supabase service role key |
-| `SUPABASE_STORAGE_BUCKET` | no | Storage bucket name, default `resources` |
-| `MAX_FILE_SIZE_MB` | no | Upload limit in MB, default `50` |
-| `VERIFICATION_PRICE` | no | USDC fee charged per verification, default `0.10` |
-| `RATE_LIMIT_VERIFY_IP_MAX` | no | Max verify requests per IP per window, default `10` |
-| `RATE_LIMIT_VERIFY_IP_WINDOW_MS` | no | Verify IP window in ms, default `60000` |
-| `RATE_LIMIT_VERIFY_WALLET_MAX` | no | Max verify requests per payer wallet per window, default `5` |
-| `RATE_LIMIT_VERIFY_WALLET_WINDOW_MS` | no | Verify wallet window in ms, default `3600000` |
-| `RATE_LIMIT_PUBLISH_IP_MAX` | no | Max publish requests per IP per window, default `20` |
-| `RATE_LIMIT_PUBLISH_IP_WINDOW_MS` | no | Publish IP window in ms, default `60000` |
-| `RATE_LIMIT_PUBLISH_WALLET_MAX` | no | Max publish requests per publisher wallet per window, default `10` |
-| `RATE_LIMIT_PUBLISH_WALLET_WINDOW_MS` | no | Publish wallet window in ms, default `3600000` |
+See the full reference table at **[docs/server-env.md](docs/server-env.md)** — it covers every variable, whether it is required, its default value, and a description.
 
 Generate the two Stellar wallets (platform + agent) with:
 
@@ -205,7 +178,8 @@ curl -s -X POST http://localhost:4021/resources/<id>/ownership \
    - Contract: `pnpm contract:test`
    - Docs: `pnpm docs:links` (checks repo-local Markdown links; external URLs are skipped in CI to avoid flaky third-party failures — set `DOCS_LINKS_CHECK_EXTERNAL=1` to include them locally)
 4. Use clear commit messages (e.g. `feat: add catalog search`, `fix: cors header`).
-5. Open a PR against `main` describing **what** changed and **why**, and how you
+5. Use Conventional Commits formatting for your PR titles (e.g., `feat: add catalog search` or `fix(auth): cors header`). PR titles are automatically linted, and non-conforming titles will fail CI.
+6. Open a PR against `main` describing **what** changed and **why**, and how you
    tested it.
 
 ## Good first issues

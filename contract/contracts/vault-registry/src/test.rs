@@ -1,7 +1,18 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, Env, String};
+use proptest::prelude::*;
+use soroban_sdk::{
+    testutils::{storage::Persistent as _, Address as _, Ledger as _},
+    Address, Env, String,
+};
+
+const DAY_IN_LEDGERS: u32 = 17_280;
+
+fn resource_storage_ttl(env: &Env, contract: &soroban_sdk::Address, id: &String) -> u32 {
+    let key = DataKey::Resource(id.clone());
+    env.as_contract(contract, || env.storage().persistent().get_ttl(&key))
+}
 
 fn setup<'a>() -> (Env, Address, VaultRegistryClient<'a>) {
     let env = Env::default();
@@ -29,6 +40,31 @@ fn register_then_read() {
     assert_eq!(r.price, 1_000_000i128);
     assert_eq!(r.metadata, metadata);
     assert_eq!(r.listed, true); // Resources are listed by default
+}
+
+#[test]
+fn count_tracks_multiple_successful_registrations() {
+    let (env, creator, client) = setup();
+    assert_eq!(client.count(), 0);
+
+    let ids = ["c1", "c2", "c3", "c4"];
+    for id in &ids {
+        client.register(
+            &creator,
+            &String::from_str(&env, id),
+            &100i128,
+            &String::from_str(&env, "m"),
+        );
+    }
+    assert_eq!(client.count(), 4);
+
+    // Failed duplicate must not increment count.
+    let dup = String::from_str(&env, "c2");
+    assert_eq!(
+        client.try_register(&creator, &dup, &100i128, &String::from_str(&env, "m")),
+        Err(Ok(Error::AlreadyRegistered))
+    );
+    assert_eq!(client.count(), 4);
 }
 
 #[test]
@@ -238,6 +274,55 @@ fn list_returns_all_in_insertion_order() {
     assert_eq!(page.get(2).unwrap().id, String::from_str(&env, "c"));
 }
 
+fn metadata_of_len(env: &Env, len: u32) -> String {
+    let s = "a".repeat(len as usize);
+    String::from_str(env, &s)
+}
+
+#[test]
+fn register_accepts_metadata_at_max_length() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "meta-max");
+    let metadata = metadata_of_len(&env, MAX_METADATA_POINTER_LEN);
+    client.register(&creator, &id, &100i128, &metadata);
+    assert_eq!(client.get(&id).metadata.len(), MAX_METADATA_POINTER_LEN);
+}
+
+#[test]
+fn register_rejects_metadata_over_max_length() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "meta-long");
+    let metadata = metadata_of_len(&env, MAX_METADATA_POINTER_LEN + 1);
+    assert_eq!(
+        client.try_register(&creator, &id, &100i128, &metadata),
+        Err(Ok(Error::MetadataTooLong))
+    );
+    assert!(!client.exists(&id));
+}
+
+#[test]
+fn update_metadata_accepts_at_max_length() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "meta-upd-ok");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "short"));
+    let metadata = metadata_of_len(&env, MAX_METADATA_POINTER_LEN);
+    client.update_metadata(&id, &metadata);
+    assert_eq!(client.get(&id).metadata.len(), MAX_METADATA_POINTER_LEN);
+}
+
+#[test]
+fn update_metadata_rejects_over_max_length() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "meta-upd-bad");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "short"));
+    let metadata = metadata_of_len(&env, MAX_METADATA_POINTER_LEN + 1);
+    assert_eq!(
+        client.try_update_metadata(&id, &metadata),
+        Err(Ok(Error::MetadataTooLong))
+    );
+    assert_eq!(client.get(&id).metadata, String::from_str(&env, "short"));
+}
+
 fn register_n(env: &Env, creator: &Address, client: &VaultRegistryClient<'_>, ids: &[&str]) {
     for id in ids {
         client.register(
@@ -286,16 +371,131 @@ fn list_start_beyond_count_returns_empty() {
 }
 
 #[test]
+fn register_extends_resource_storage_ttl() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "ttl-register");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+    assert_eq!(
+        resource_storage_ttl(&env, &client.address, &id),
+        TTL_BUMP_AMOUNT
+    );
+}
+
+#[test]
+fn set_price_reextends_resource_ttl() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "ttl-price");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + DAY_IN_LEDGERS);
+    assert_eq!(
+        resource_storage_ttl(&env, &client.address, &id),
+        TTL_BUMP_AMOUNT - DAY_IN_LEDGERS
+    );
+
+    client.set_price(&id, &200i128);
+    assert_eq!(
+        resource_storage_ttl(&env, &client.address, &id),
+        TTL_BUMP_AMOUNT
+    );
+}
+
+#[test]
+fn update_metadata_reextends_resource_ttl() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "ttl-meta");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "old"));
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + DAY_IN_LEDGERS);
+
+    client.update_metadata(&id, &String::from_str(&env, "new"));
+    assert_eq!(
+        resource_storage_ttl(&env, &client.address, &id),
+        TTL_BUMP_AMOUNT
+    );
+}
+
+#[test]
+fn transfer_ownership_reextends_resource_ttl() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "ttl-xfer");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + DAY_IN_LEDGERS);
+
+    let new_owner = Address::generate(&env);
+    client.transfer_ownership(&id, &new_owner);
+    assert_eq!(
+        resource_storage_ttl(&env, &client.address, &id),
+        TTL_BUMP_AMOUNT
+    );
+}
+
+#[test]
 fn list_limit_capped_at_20() {
     let (env, creator, client) = setup();
     let ids = [
-        "i00","i01","i02","i03","i04","i05","i06","i07","i08","i09",
-        "i10","i11","i12","i13","i14","i15","i16","i17","i18","i19",
-        "i20","i21","i22","i23","i24",
+        "i00", "i01", "i02", "i03", "i04", "i05", "i06", "i07", "i08", "i09", "i10", "i11", "i12",
+        "i13", "i14", "i15", "i16", "i17", "i18", "i19", "i20", "i21", "i22", "i23", "i24",
     ];
     register_n(&env, &creator, &client, &ids);
 
     // Requesting 25 items should be silently capped to 20.
     let page = client.list(&0u32, &25u32);
     assert_eq!(page.len(), 20);
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+    #[test]
+    fn test_metadata_pointer_roundtrip_property(
+        id_str in r"[a-zA-Z0-9_-]{1,32}",
+        price in 1..1000000000000i128,
+        price_2 in 1..1000000000000i128,
+        meta_str in r"[a-zA-Z0-9:/\\._-]{0,512}",
+        meta_str_2 in r"[a-zA-Z0-9:/\\._-]{0,512}",
+        listed in any::<bool>(),
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(VaultRegistry, ());
+        let client = VaultRegistryClient::new(&env, &contract_id);
+        let creator = Address::generate(&env);
+
+        let id = String::from_str(&env, &id_str);
+        let metadata = String::from_str(&env, &meta_str);
+        let metadata_2 = String::from_str(&env, &meta_str_2);
+
+        // 1. Register resource with initial metadata
+        client.register(&creator, &id, &price, &metadata);
+
+        // 2. Get and verify metadata is identical
+        let r = client.get(&id);
+        assert_eq!(r.metadata, metadata);
+        assert_eq!(r.price, price);
+        assert_eq!(r.creator, creator);
+        assert_eq!(r.listed, true);
+
+        // 3. Update metadata
+        client.update_metadata(&id, &metadata_2);
+
+        // 4. Verify updated metadata is identical and other fields preserved
+        let r2 = client.get(&id);
+        assert_eq!(r2.metadata, metadata_2);
+        assert_eq!(r2.price, price);
+        assert_eq!(r2.creator, creator);
+        assert_eq!(r2.listed, true);
+
+        // 5. Update price and verify metadata is unaffected
+        client.set_price(&id, &price_2);
+        let r3 = client.get(&id);
+        assert_eq!(r3.metadata, metadata_2);
+        assert_eq!(r3.price, price_2);
+
+        // 6. Update listing status and verify metadata is unaffected
+        client.set_listed(&id, &listed);
+        let r4 = client.get(&id);
+        assert_eq!(r4.metadata, metadata_2);
+        assert_eq!(r4.listed, listed);
+    }
 }

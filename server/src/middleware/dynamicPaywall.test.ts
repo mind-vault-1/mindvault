@@ -1,45 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockPaymentMiddleware = vi.fn(() => (req: any, res: any, next: any) => next());
+const mockPaymentMiddleware = vi.fn(() => (_req: unknown, _res: unknown, next: () => void) => next());
 const mockGetOnChainPrice = vi.fn();
 const mockNormalizeUsdcPrice = vi.fn((value: string) => value);
 
+class MockOnChainLookupError extends Error {
+  readonly cause?: unknown;
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "OnChainLookupError";
+    this.cause = cause;
+  }
+}
+
 vi.mock("@x402/express", () => ({
   paymentMiddleware: mockPaymentMiddleware,
-  x402ResourceServer: class {
-    register() {
-      return this;
-    }
-  },
-}));
-vi.mock("@x402/core/server", () => ({
-  HTTPFacilitatorClient: class {
-    constructor() {}
-  },
-}));
-vi.mock("@x402/stellar/exact/server", () => ({
-  ExactStellarScheme: class {
-    constructor() {}
-  },
 }));
 vi.mock("../lib/x402.js", () => ({
   network: "stellar:testnet",
   sharedX402ResourceServer: {},
 }));
-vi.mock("../config.ts", () => ({
-  config: {
-    NETWORK: "stellar:testnet",
-    FACILITATOR_URL: "https://www.x402.org/facilitator",
-    PAY_TO: "GTEST",
-    OPENROUTER_API_KEY: "dummy",
-    VAULT_REGISTRY_CONTRACT_ID: "GREGISTRY",
-    DATABASE_URL: "postgres://user:pass@localhost:5432/db",
-    SUPABASE_URL: "https://example.supabase.co",
-    SUPABASE_SERVICE_KEY: "supabase-service-key",
-    REGISTRY_CONTRACT_ID: "GREGISTRYID",
-    REGISTRY_SECRET_KEY: "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-    VERIFICATION_PRICE: "0.10",
-  },
+vi.mock("../lib/logger.js", () => ({
+  getLogger: () => ({
+    error: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
+  }),
 }));
 vi.mock("../services/registryClient.js", () => ({
   getResource: vi.fn(),
@@ -47,7 +33,7 @@ vi.mock("../services/registryClient.js", () => ({
 vi.mock("../lib/stellarRegistry.js", () => ({
   getOnChainPrice: mockGetOnChainPrice,
   normalizeUsdcPrice: mockNormalizeUsdcPrice,
-  OnChainLookupError: class OnChainLookupError extends Error {},
+  OnChainLookupError: MockOnChainLookupError,
 }));
 vi.mock("../db/client.js", () => ({
   db: {
@@ -63,6 +49,18 @@ function makeDbSelect(resource: unknown) {
   const from = vi.fn(() => ({ where }));
   return {
     select: vi.fn(() => ({ from })),
+  };
+}
+
+function listedResource(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "r1",
+    listed: true,
+    price: "1.00",
+    walletAddress: "GABC",
+    title: "Test resource",
+    onchainStatus: "registered",
+    ...overrides,
   };
 }
 
@@ -87,6 +85,7 @@ function createNext() {
 
 describe("dynamicPaywall middleware", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     mockPaymentMiddleware.mockReset();
     mockGetOnChainPrice.mockReset();
     mockNormalizeUsdcPrice.mockReset();
@@ -97,6 +96,7 @@ describe("dynamicPaywall middleware", () => {
     const { db } = await import("../db/client.js");
     const { dynamicPaywall } = await import("./dynamicPaywall.js");
     (db as any).select = dbMock.select;
+
     const req = createRequest("missing");
     const res = createResponse();
     const next = createNext();
@@ -114,11 +114,13 @@ describe("dynamicPaywall middleware", () => {
       listed: false,
       price: "1.00",
       walletAddress: "GABC",
+      title: "Test resource",
       onchainStatus: "none",
     });
     const { db } = await import("../db/client.js");
     const { dynamicPaywall } = await import("./dynamicPaywall.js");
     (db as any).select = dbMock.select;
+
     const req = createRequest("r1");
     const res = createResponse();
     const next = createNext();
@@ -130,18 +132,16 @@ describe("dynamicPaywall middleware", () => {
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("returns 503 when on-chain price lookup fails", async () => {
-    const dbMock = makeDbSelect({
-      id: "r2",
-      listed: true,
-      price: "1.00",
-      walletAddress: "GABC",
-      onchainStatus: "none",
-    });
+  it("returns 503 when Soroban RPC lookup fails", async () => {
+    const dbMock = makeDbSelect(listedResource({ id: "r2", onchainStatus: "none" }));
     const { db } = await import("../db/client.js");
     const { dynamicPaywall } = await import("./dynamicPaywall.js");
     (db as any).select = dbMock.select;
-    mockGetOnChainPrice.mockRejectedValue(new Error("chain unavailable"));
+
+    const rpcError = new Error("Soroban RPC unavailable");
+    mockGetOnChainPrice.mockRejectedValue(
+      new MockOnChainLookupError("Failed to read on-chain record for resource r2", rpcError),
+    );
 
     const req = createRequest("r2");
     const res = createResponse();
@@ -150,23 +150,45 @@ describe("dynamicPaywall middleware", () => {
     await dynamicPaywall(req, res, next);
 
     expect(res.status).toHaveBeenCalledWith(503);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "chain_unavailable" }));
+    expect(res.json).toHaveBeenCalledWith({
+      error: "chain_unavailable",
+      message: "Unable to verify resource price. Please try again later.",
+      resourceId: "r2",
+    });
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("returns 409 when on-chain and DB prices mismatch", async () => {
-    const dbMock = makeDbSelect({
-      id: "r3",
-      listed: true,
-      price: "1.00",
-      walletAddress: "GABC",
-      onchainStatus: "none",
-    });
+  it("returns 503 when the registry has no on-chain record", async () => {
+    const dbMock = makeDbSelect(listedResource({ id: "r-missing" }));
     const { db } = await import("../db/client.js");
     const { dynamicPaywall } = await import("./dynamicPaywall.js");
     (db as any).select = dbMock.select;
-    mockGetOnChainPrice.mockResolvedValue({ price: "1.50", creator: "GABC" });
-    mockNormalizeUsdcPrice.mockReturnValue("1.00");
+
+    mockGetOnChainPrice.mockRejectedValue(
+      new MockOnChainLookupError("Resource r-missing not found on-chain"),
+    );
+
+    const req = createRequest("r-missing");
+    const res = createResponse();
+    const next = createNext();
+
+    await dynamicPaywall(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "chain_unavailable", resourceId: "r-missing" }),
+    );
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when DB and on-chain prices mismatch", async () => {
+    const dbMock = makeDbSelect(listedResource({ id: "r3", price: "1.00" }));
+    const { db } = await import("../db/client.js");
+    const { dynamicPaywall } = await import("./dynamicPaywall.js");
+    (db as any).select = dbMock.select;
+
+    mockGetOnChainPrice.mockResolvedValue({ price: "1.5000000", creator: "GABC" });
+    mockNormalizeUsdcPrice.mockReturnValue("1.0000000");
 
     const req = createRequest("r3");
     const res = createResponse();
@@ -174,25 +196,27 @@ describe("dynamicPaywall middleware", () => {
 
     await dynamicPaywall(req, res, next);
 
+    expect(mockNormalizeUsdcPrice).toHaveBeenCalledWith("1.00");
     expect(res.status).toHaveBeenCalledWith(409);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: "price_mismatch" }));
+    expect(res.json).toHaveBeenCalledWith({
+      error: "price_mismatch",
+      message:
+        "Resource price is temporarily unavailable due to a configuration issue. Please try again later.",
+      resourceId: "r3",
+    });
     expect(next).not.toHaveBeenCalled();
   });
 
-  it("delegates to payment middleware when prices match and resource is listed", async () => {
-    const dbMock = makeDbSelect({
-      id: "r4",
-      listed: true,
-      price: "1.00",
-      walletAddress: "GABC",
-      onchainStatus: "none",
-    });
+  it("delegates to payment middleware when prices match", async () => {
+    const resource = listedResource({ id: "r4", price: "0.50", onchainStatus: "none" });
+    const dbMock = makeDbSelect(resource);
     const { db } = await import("../db/client.js");
     const { dynamicPaywall } = await import("./dynamicPaywall.js");
     (db as any).select = dbMock.select;
-    mockGetOnChainPrice.mockResolvedValue({ price: "1.00", creator: "GABC" });
-    mockNormalizeUsdcPrice.mockReturnValue("1.00");
-    mockPaymentMiddleware.mockReturnValue((req: any, res: any, next: any) => next());
+
+    mockGetOnChainPrice.mockResolvedValue({ price: "0.5000000", creator: "GABC" });
+    mockNormalizeUsdcPrice.mockReturnValue("0.5000000");
+    mockPaymentMiddleware.mockReturnValue((_req, _res, next) => next());
 
     const req = createRequest("r4");
     const res = createResponse();

@@ -28,6 +28,7 @@ import { eq } from "drizzle-orm";
 import { config } from "../config.js";
 import { getLogger } from "../lib/logger.js";
 import { publishIpRateLimit, publishWalletRateLimit } from "../middleware/rateLimiters.js";
+import { getIdempotencyStore, idempotencyCacheKey } from "../lib/idempotency.js";
 import {
   NETWORK_PASSPHRASE,
   registryClient,
@@ -54,54 +55,92 @@ router.post(
   async (req, res) => {
     const publisher = req.publisher!;
 
-    // File upload
-    if (req.file) {
-      const parsed = validateFields(filePublishBodySchema, req.body);
+    // Idempotency (#114): if the client supplies an Idempotency-Key, a retry
+    // with the same key returns the original result instead of creating a
+    // duplicate. Keys are scoped per publisher.
+    const idemKey = req.header("Idempotency-Key");
+    const store = getIdempotencyStore();
+    const scopedKey = idemKey ? idempotencyCacheKey(publisher.id, idemKey) : null;
+
+    if (scopedKey) {
+      const existing = store.get(scopedKey);
+      if (existing) {
+        if (existing.inProgress) {
+          // A concurrent request with the same key is still running.
+          res.status(409).json({ error: "Idempotent request already in progress" });
+          return;
+        }
+        res.status(existing.result.status).json(existing.result.body);
+        return;
+      }
+      store.set(scopedKey, { inProgress: true });
+    }
+
+    // Records the final result under the idempotency key (when keyed), then responds.
+    const sendResult = (status: number, body: unknown) => {
+      if (scopedKey) store.set(scopedKey, { inProgress: false, result: { status, body } });
+      res.status(status).json(body);
+    };
+
+    try {
+      // File upload
+      if (req.file) {
+        const parsed = validateFields(filePublishBodySchema, req.body);
+        if (!parsed.success) {
+          // Validation failures aren't a committed result — release the key so
+          // a corrected retry can proceed.
+          if (scopedKey) store.delete(scopedKey);
+          res.status(400).json({ error: parsed.error.format() });
+          return;
+        }
+
+        const { title, description, price, walletAddress } = parsed.data;
+
+        const resource = await createFileResource({
+          publisherId: publisher.id,
+          title,
+          description,
+          price,
+          walletAddress: walletAddress || publisher.walletAddress,
+          fileBuffer: req.file.buffer,
+          filename: req.file.originalname,
+          mimeType: req.file.mimetype,
+        });
+
+        sendResult(201, {
+          ...resource,
+          accessUrl: `${config.BASE_URL}/resources/${resource.id}`,
+        });
+        return;
+      }
+
+      // Link resource
+      const parsed = linkPublishSchema.safeParse(req.body);
       if (!parsed.success) {
+        if (scopedKey) store.delete(scopedKey);
         res.status(400).json({ error: parsed.error.format() });
         return;
       }
 
-      const { title, description, price, walletAddress } = parsed.data;
-
-      const resource = await createFileResource({
+      const resource = await createLinkResource({
         publisherId: publisher.id,
-        title,
-        description,
-        price,
-        walletAddress: walletAddress || publisher.walletAddress,
-        fileBuffer: req.file.buffer,
-        filename: req.file.originalname,
-        mimeType: req.file.mimetype,
+        title: parsed.data.title,
+        description: parsed.data.description,
+        price: parsed.data.price,
+        walletAddress: parsed.data.walletAddress || publisher.walletAddress,
+        externalUrl: parsed.data.externalUrl,
       });
 
-      res.status(201).json({
+      sendResult(201, {
         ...resource,
         accessUrl: `${config.BASE_URL}/resources/${resource.id}`,
       });
-      return;
+    } catch (err) {
+      // Publish failed — release the key so the client can retry rather than
+      // being stuck behind a stale in-progress marker.
+      if (scopedKey) store.delete(scopedKey);
+      throw err;
     }
-
-    // Link resource
-    const parsed = linkPublishSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.format() });
-      return;
-    }
-
-    const resource = await createLinkResource({
-      publisherId: publisher.id,
-      title: parsed.data.title,
-      description: parsed.data.description,
-      price: parsed.data.price,
-      walletAddress: parsed.data.walletAddress || publisher.walletAddress,
-      externalUrl: parsed.data.externalUrl,
-    });
-
-    res.status(201).json({
-      ...resource,
-      accessUrl: `${config.BASE_URL}/resources/${resource.id}`,
-    });
   },
 );
 

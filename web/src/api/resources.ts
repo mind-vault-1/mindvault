@@ -5,6 +5,30 @@ export { networks as registryNetworks };
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
+export interface CatalogFilters {
+  search?: string;
+  minPrice?: string;
+  maxPrice?: string;
+  verificationStatus?: "all" | "verified" | "pending" | "rejected";
+  resourceType?: "all" | "file" | "link";
+}
+
+export async function fetchCatalog(filters?: CatalogFilters): Promise<any[]> {
+  const params = new URLSearchParams();
+  if (filters?.search) params.set("search", filters.search);
+  if (filters?.minPrice) params.set("minPrice", filters.minPrice);
+  if (filters?.maxPrice) params.set("maxPrice", filters.maxPrice);
+  if (filters?.verificationStatus && filters.verificationStatus !== "all")
+    params.set("verificationStatus", filters.verificationStatus);
+  if (filters?.resourceType && filters.resourceType !== "all")
+    params.set("resourceType", filters.resourceType);
+
+  const qs = params.toString();
+  const res = await fetch(`${API_BASE}/resources${qs ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error("Failed to fetch catalog");
+  return res.json();
+}
+
 export async function fetchMyResources(apiKey: string): Promise<any[]> {
   const res = await fetch(`${API_BASE}/publishers/me/resources`, {
     headers: { "x-api-key": apiKey },
