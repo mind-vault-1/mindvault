@@ -18,7 +18,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
                 {
-                  "string": "r2"
+                  "string": "r-tags"
                 },
                 {
                   "i128": {
@@ -27,10 +27,14 @@
                   }
                 },
                 {
-                  "string": "old"
+                  "string": "ipfs://QmAnchor"
                 },
                 {
-                  "vec": []
+                  "vec": [
+                    {
+                      "string": "alpha"
+                    }
+                  ]
                 }
               ]
             }
@@ -46,13 +50,20 @@
           "function": {
             "contract_fn": {
               "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "update_metadata",
+              "function_name": "set_tags",
               "args": [
                 {
-                  "string": "r2"
+                  "string": "r-tags"
                 },
                 {
-                  "string": "ipfs://QmNew"
+                  "vec": [
+                    {
+                      "string": "beta"
+                    },
+                    {
+                      "string": "gamma"
+                    }
+                  ]
                 }
               ]
             }
@@ -109,7 +120,7 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "string": "r2"
+                  "string": "r-tags"
                 }
               }
             },
@@ -128,7 +139,7 @@
                   "symbol": "Resource"
                 },
                 {
-                  "string": "r2"
+                  "string": "r-tags"
                 }
               ]
             },
@@ -148,7 +159,7 @@
                       "symbol": "Resource"
                     },
                     {
-                      "string": "r2"
+                      "string": "r-tags"
                     }
                   ]
                 },
@@ -168,7 +179,7 @@
                         "symbol": "id"
                       },
                       "val": {
-                        "string": "r2"
+                        "string": "r-tags"
                       }
                     },
                     {
@@ -184,7 +195,7 @@
                         "symbol": "metadata"
                       },
                       "val": {
-                        "string": "ipfs://QmNew"
+                        "string": "ipfs://QmAnchor"
                       }
                     },
                     {
@@ -203,7 +214,14 @@
                         "symbol": "tags"
                       },
                       "val": {
-                        "vec": []
+                        "vec": [
+                          {
+                            "string": "beta"
+                          },
+                          {
+                            "string": "gamma"
+                          }
+                        ]
                       }
                     }
                   ]

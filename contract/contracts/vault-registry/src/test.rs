@@ -12,13 +12,25 @@ fn setup<'a>() -> (Env, Address, VaultRegistryClient<'a>) {
     (env, creator, client)
 }
 
+fn empty_tags(env: &Env) -> Vec<String> {
+    Vec::new(env)
+}
+
+fn tags(env: &Env, items: &[&str]) -> Vec<String> {
+    let mut v = Vec::new(env);
+    for item in items {
+        v.push_back(String::from_str(env, item));
+    }
+    v
+}
+
 #[test]
 fn register_then_read() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "swcn98besxpp6t1u8e77fqz3");
     let metadata = String::from_str(&env, "ipfs://QmResourceMetadata");
 
-    client.register(&creator, &id, &1_000_000i128, &metadata);
+    client.register(&creator, &id, &1_000_000i128, &metadata, &empty_tags(&env));
 
     assert_eq!(client.count(), 1);
     assert!(client.exists(&id));
@@ -28,7 +40,78 @@ fn register_then_read() {
     assert_eq!(r.creator, creator);
     assert_eq!(r.price, 1_000_000i128);
     assert_eq!(r.metadata, metadata);
-    assert_eq!(r.listed, true); // Resources are listed by default
+    assert_eq!(r.listed, true);
+    assert_eq!(r.tags.len(), 0);
+}
+
+#[test]
+fn register_with_tags_then_read() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "tagged-resource");
+    let metadata = String::from_str(&env, "ipfs://QmTagged");
+    let resource_tags = tags(&env, &["dataset", "research"]);
+
+    client.register(
+        &creator,
+        &id,
+        &1_000_000i128,
+        &metadata,
+        &resource_tags,
+    );
+
+    let r = client.get(&id);
+    assert_eq!(r.tags.len(), 2);
+    assert_eq!(r.tags.get(0).unwrap(), String::from_str(&env, "dataset"));
+    assert_eq!(r.tags.get(1).unwrap(), String::from_str(&env, "research"));
+}
+
+#[test]
+fn set_tags_updates_value() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "r-tags");
+    let metadata = String::from_str(&env, "ipfs://QmAnchor");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &metadata,
+        &tags(&env, &["alpha"]),
+    );
+
+    let new_tags = tags(&env, &["beta", "gamma"]);
+    client.set_tags(&id, &new_tags);
+
+    let r = client.get(&id);
+    assert_eq!(r.metadata, metadata);
+    assert_eq!(r.tags.len(), 2);
+    assert_eq!(r.tags.get(0).unwrap(), String::from_str(&env, "beta"));
+    assert_eq!(r.tags.get(1).unwrap(), String::from_str(&env, "gamma"));
+}
+
+#[test]
+fn invalid_tag_rejected() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "bad-tag");
+    let metadata = String::from_str(&env, "m");
+
+    assert_eq!(
+        client.try_register(
+            &creator,
+            &id,
+            &100i128,
+            &metadata,
+            &tags(&env, &[""]),
+        ),
+        Err(Ok(Error::InvalidTag))
+    );
+
+    let long_tag = String::from_str(&env, "abcdefghijklmnopqrstuvwxyz123456789");
+    let mut too_long = Vec::new(&env);
+    too_long.push_back(long_tag);
+    assert_eq!(
+        client.try_register(&creator, &id, &100i128, &metadata, &too_long),
+        Err(Ok(Error::InvalidTag))
+    );
 }
 
 #[test]
@@ -36,9 +119,10 @@ fn duplicate_registration_fails() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "dup");
     let metadata = String::from_str(&env, "x");
-    client.register(&creator, &id, &100i128, &metadata);
+    let resource_tags = empty_tags(&env);
+    client.register(&creator, &id, &100i128, &metadata, &resource_tags);
 
-    let res = client.try_register(&creator, &id, &100i128, &metadata);
+    let res = client.try_register(&creator, &id, &100i128, &metadata, &resource_tags);
     assert_eq!(res, Err(Ok(Error::AlreadyRegistered)));
     assert_eq!(client.count(), 1);
 }
@@ -48,13 +132,14 @@ fn zero_or_negative_price_rejected() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "free");
     let metadata = String::from_str(&env, "x");
+    let resource_tags = empty_tags(&env);
 
     assert_eq!(
-        client.try_register(&creator, &id, &0i128, &metadata),
+        client.try_register(&creator, &id, &0i128, &metadata, &resource_tags),
         Err(Ok(Error::InvalidPrice))
     );
     assert_eq!(
-        client.try_register(&creator, &id, &-5i128, &metadata),
+        client.try_register(&creator, &id, &-5i128, &metadata, &resource_tags),
         Err(Ok(Error::InvalidPrice))
     );
 }
@@ -70,7 +155,13 @@ fn get_missing_fails() {
 fn set_price_updates_value() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r1");
-    client.register(&creator, &id, &1_000_000i128, &String::from_str(&env, "m"));
+    client.register(
+        &creator,
+        &id,
+        &1_000_000i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
 
     client.set_price(&id, &2_500_000i128);
     assert_eq!(client.get(&id).price, 2_500_000i128);
@@ -85,7 +176,13 @@ fn set_price_updates_value() {
 fn update_metadata_changes_pointer() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r2");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "old"));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "old"),
+        &empty_tags(&env),
+    );
 
     let new_meta = String::from_str(&env, "ipfs://QmNew");
     client.update_metadata(&id, &new_meta);
@@ -96,7 +193,13 @@ fn update_metadata_changes_pointer() {
 fn ownership_can_transfer() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r3");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
 
     let new_owner = Address::generate(&env);
     client.transfer_ownership(&id, &new_owner);
@@ -107,7 +210,13 @@ fn ownership_can_transfer() {
 fn set_listed_toggles_listing_state() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r4");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
 
     // Initially listed
     assert_eq!(client.get(&id).listed, true);
@@ -125,7 +234,13 @@ fn set_listed_toggles_listing_state() {
 fn delist_convenience_method() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r5");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
 
     // Initially listed
     assert_eq!(client.get(&id).listed, true);
@@ -140,7 +255,7 @@ fn set_price_preserves_other_fields() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r7");
     let metadata = String::from_str(&env, "ipfs://QmPreserve");
-    client.register(&creator, &id, &100i128, &metadata);
+    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
 
     client.set_price(&id, &250i128);
     let resource = client.get(&id);
@@ -161,6 +276,7 @@ fn transfer_ownership_keeps_count_and_order() {
             &String::from_str(&env, id),
             &100i128,
             &String::from_str(&env, "m"),
+            &empty_tags(&env),
         );
     }
 
@@ -180,7 +296,7 @@ fn update_metadata_preserves_price_and_creator() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r8");
     let original_metadata = String::from_str(&env, "ipfs://QmOriginal");
-    client.register(&creator, &id, &500i128, &original_metadata);
+    client.register(&creator, &id, &500i128, &original_metadata, &empty_tags(&env));
 
     let new_metadata = String::from_str(&env, "ipfs://QmUpdated");
     client.update_metadata(&id, &new_metadata);
@@ -195,7 +311,13 @@ fn update_metadata_preserves_price_and_creator() {
 fn set_listed_requires_creator_auth() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r6");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
 
     // This should work fine since we mock all auths
     client.set_listed(&id, &false);
@@ -228,6 +350,7 @@ fn list_returns_all_in_insertion_order() {
             &String::from_str(&env, id),
             &100i128,
             &String::from_str(&env, "m"),
+            &empty_tags(&env),
         );
     }
 
@@ -245,6 +368,7 @@ fn register_n(env: &Env, creator: &Address, client: &VaultRegistryClient<'_>, id
             &String::from_str(env, id),
             &100i128,
             &String::from_str(env, "m"),
+            &empty_tags(env),
         );
     }
 }
@@ -279,6 +403,7 @@ fn list_start_beyond_count_returns_empty() {
         &String::from_str(&env, "x"),
         &100i128,
         &String::from_str(&env, "m"),
+        &empty_tags(&env),
     );
 
     let page = client.list(&99u32, &10u32);

@@ -28,6 +28,9 @@
                 },
                 {
                   "string": "ipfs://QmResourceMetadata"
+                },
+                {
+                  "vec": []
                 }
               ]
             }
@@ -173,6 +176,14 @@
                           "hi": 0,
                           "lo": 1000000
                         }
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "tags"
+                      },
+                      "val": {
+                        "vec": []
                       }
                     }
                   ]
