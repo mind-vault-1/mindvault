@@ -13,6 +13,31 @@ export interface CatalogFilters {
   resourceType?: "all" | "file" | "link";
 }
 
+export interface ResourceMeta {
+  id: string;
+  title: string;
+  description?: string | null;
+  price: string;
+  resourceType: string;
+  mimeType?: string | null;
+  verificationStatus: string;
+  publisherName?: string;
+  publisherWallet: string;
+  onchainStatus: string;
+  onchainTxHash?: string | null;
+  createdAt: string;
+  accessUrl: string;
+}
+
+export async function fetchResourceMeta(id: string, signal?: AbortSignal): Promise<ResourceMeta> {
+  const res = await fetch(`${API_BASE}/resources/${id}/meta`, { signal });
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: undefined }));
+    throw new Error(error ?? "Failed to load resource preview");
+  }
+  return res.json();
+}
+
 export async function fetchCatalog(filters?: CatalogFilters): Promise<any[]> {
   const params = new URLSearchParams();
   if (filters?.search) params.set("search", filters.search);

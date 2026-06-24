@@ -85,6 +85,16 @@ claude mcp add mindvault node /path/to/mindvault/mcp/dist/index.js
 codex mcp add mindvault -- node /path/to/mindvault/mcp/dist/index.js
 ```
 
+All env vars are optional — the defaults point to the hosted testnet backend:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MINDVAULT_URL` | `https://mindvault-hyr3.onrender.com` | MindVault API base URL |
+| `SPONSORED_ACCOUNT_URL` | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service |
+| `VAULT_REGISTRY_CONTRACT_ID` | testnet contract ID | On-chain vault-registry contract |
+| `HORIZON_URL` | `https://horizon-testnet.stellar.org` | Stellar Horizon endpoint (for USDC balance checks) |
+| `SOROBAN_RPC_URL` | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint (for tx status and payments) |
+
 An agent can set up a wallet, register as a publisher, publish a resource (paying for verification), and then another agent can discover and buy that resource. The full agent-to-agent economy runs through x402.
 
 For a copy-pasteable, end-to-end agent session — wallet setup → register → publish → browse → buy — see **[docs/mcp-quickstart.md](docs/mcp-quickstart.md)**.
@@ -104,30 +114,7 @@ Requires Node.js 20+, pnpm, and a Supabase project (free tier). Stellar testnet 
 
 ### Quick start
 
-```bash
-# 1. Install dependencies
-make install          # or: pnpm install
-
-# 2. Configure environment
-cp server/.env.example server/.env
-# Fill in Supabase, Stellar contract IDs, and OpenRouter credentials (see the full reference table at [docs/server-env.md](docs/server-env.md)).
-
-# 3. One-time setup (DB migrations + wallet generation)
-make setup
-
-# 4. After setting AGENT_SECRET_KEY in server/.env, prepare USDC trustline
-make setup-usdc
-
-# 5. Run API (:4021) and web app (:5173)
-make dev
-```
-
-To populate the catalog with sample resources for local browsing:
-
-```bash
-make seed                # DB only (idempotent, safe to re-run)
-make seed ONCHAIN=1      # also registers each resource on Stellar testnet
-```
+See the complete **[Local Setup Guide](docs/local-setup.md)** to get from a fresh clone to a running server and web app.
 
 Set `VITE_API_URL=http://localhost:4021` when running the web app separately (e.g. in a `web/.env` file).
 

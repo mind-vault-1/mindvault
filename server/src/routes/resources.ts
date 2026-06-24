@@ -39,6 +39,7 @@ import {
   submitSignedTx,
   registryKeypair,
 } from "../services/registryClient.js";
+import { parsePayerFromXPayment } from "../lib/parseXPayment.js";
 
 const router: RouterType = Router();
 const upload = multer({
@@ -147,16 +148,14 @@ router.post(
 
 // GET /resources — browse catalog (public)
 router.get("/resources", async (req, res) => {
-  const parsed = validateFields(catalogQuerySchema, req.query);
+  const parsed = catalogQuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid query params" });
     return;
   }
-
-  // Pass undefined (not an empty object) when no filters are supplied so the
-  // service skips filtering entirely and serves the cached set as-is.
-  const filters = Object.keys(parsed.data).length > 0 ? parsed.data : undefined;
-  const catalog = await listCatalog(filters);
+  const catalog = await listCatalog(
+    Object.values(parsed.data).some((v) => v !== undefined) ? parsed.data : undefined,
+  );
   res.json(
     catalog.map((r) => ({
       ...r,
@@ -192,17 +191,19 @@ router.get("/resources/:id/verification", async (req, res) => {
 router.get("/resources/:id", dynamicPaywall, async (req, res) => {
   const resource = (req as any).resource;
 
-  // Record payment
+  // Record payment — best-effort payer extraction, never blocks delivery
   let payerAddress = "unknown";
-  try {
-    const paymentHeader = req.headers["x-payment"] as string;
-    if (paymentHeader) {
-      const decoded = JSON.parse(Buffer.from(paymentHeader, "base64").toString());
-      payerAddress =
-        decoded?.payload?.authorization?.address || decoded?.clientAddress || "unknown";
+  const paymentHeader = req.headers["x-payment"];
+  if (paymentHeader && typeof paymentHeader === "string") {
+    const { payer, parseError } = parsePayerFromXPayment(paymentHeader);
+    if (payer) {
+      payerAddress = payer;
+    } else if (parseError) {
+      getLogger().warn(
+        { event: "x_payment_parse_error", resourceId: resource.id, error: parseError },
+        "failed to parse X-Payment header; payer recorded as unknown",
+      );
     }
-  } catch {
-    // Best effort — don't fail delivery if we can't parse
   }
 
   const [payment] = await db

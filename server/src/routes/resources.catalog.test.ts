@@ -128,3 +128,67 @@ describe("GET /resources catalog API — verificationStatus query param (#204)",
     expect(mockListCatalog).not.toHaveBeenCalled();
   });
 });
+
+describe("GET /resources catalog API — price filters (#203)", () => {
+  beforeEach(() => {
+    mockListCatalog.mockReset();
+    mockListCatalog.mockResolvedValue([]);
+  });
+
+  it("passes minPrice to listCatalog", async () => {
+    await request(createTestApp()).get("/resources").query({ minPrice: "1.00" });
+
+    expect(mockListCatalog).toHaveBeenCalledWith({ minPrice: "1.00" });
+  });
+
+  it("passes maxPrice to listCatalog", async () => {
+    await request(createTestApp()).get("/resources").query({ maxPrice: "5.00" });
+
+    expect(mockListCatalog).toHaveBeenCalledWith({ maxPrice: "5.00" });
+  });
+
+  it("passes combined minPrice and maxPrice to listCatalog", async () => {
+    await request(createTestApp()).get("/resources").query({ minPrice: "1.00", maxPrice: "3.00" });
+
+    expect(mockListCatalog).toHaveBeenCalledWith({ minPrice: "1.00", maxPrice: "3.00" });
+  });
+
+  it("passes price filters alongside verificationStatus", async () => {
+    await request(createTestApp())
+      .get("/resources")
+      .query({ minPrice: "0.50", verificationStatus: "verified" });
+
+    expect(mockListCatalog).toHaveBeenCalledWith({
+      minPrice: "0.50",
+      verificationStatus: "verified",
+    });
+  });
+
+  it("returns 400 for a non-numeric minPrice", async () => {
+    const res = await request(createTestApp()).get("/resources").query({ minPrice: "free" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBeDefined();
+    expect(mockListCatalog).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for a non-numeric maxPrice", async () => {
+    const res = await request(createTestApp()).get("/resources").query({ maxPrice: "expensive" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBeDefined();
+    expect(mockListCatalog).not.toHaveBeenCalled();
+  });
+
+  it("accepts boundary value minPrice=0", async () => {
+    await request(createTestApp()).get("/resources").query({ minPrice: "0" });
+
+    expect(mockListCatalog).toHaveBeenCalledWith({ minPrice: "0" });
+  });
+
+  it("accepts decimal boundary values", async () => {
+    await request(createTestApp()).get("/resources").query({ minPrice: "0.01", maxPrice: "9999.99" });
+
+    expect(mockListCatalog).toHaveBeenCalledWith({ minPrice: "0.01", maxPrice: "9999.99" });
+  });
+});

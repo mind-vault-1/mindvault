@@ -6,14 +6,6 @@ import { hashFileResource, hashLinkResource } from "../utils/crypto.js";
 import { createTtlCache } from "../lib/ttlCache.js";
 import { config } from "../config.js";
 
-export type CatalogFilters = {
-  search?: string;
-  minPrice?: string;
-  maxPrice?: string;
-  verificationStatus?: "pending" | "verified" | "rejected" | "skipped";
-  resourceType?: "file" | "link";
-};
-
 // Short-lived cache for catalog/preview reads (issue #115). These endpoints are
 // hit far more often than resources change, so a small TTL cuts repeated DB
 // work while keeping newly published/delisted items fresh within seconds.
@@ -105,7 +97,46 @@ export async function getResourceById(id: string) {
     .then((rows) => rows[0] ?? null);
 }
 
-async function queryCatalog() {
+export type CatalogListFilters = {
+  verificationStatus?: "verified" | "pending" | "rejected";
+  minPrice?: string;
+  maxPrice?: string;
+  search?: string;
+  resourceType?: "file" | "link";
+};
+
+function catalogCacheKey(filters?: CatalogListFilters): string {
+  if (!filters) return CATALOG_KEY;
+  const parts: string[] = [];
+  if (filters.verificationStatus) parts.push(`verificationStatus=${filters.verificationStatus}`);
+  if (filters.minPrice) parts.push(`minPrice=${filters.minPrice}`);
+  if (filters.maxPrice) parts.push(`maxPrice=${filters.maxPrice}`);
+  if (filters.search) parts.push(`search=${filters.search}`);
+  if (filters.resourceType) parts.push(`resourceType=${filters.resourceType}`);
+  return parts.length ? `${CATALOG_KEY}:${parts.join(":")}` : CATALOG_KEY;
+}
+
+async function queryCatalog(filters?: CatalogListFilters) {
+  const conditions = [eq(resources.listed, true)];
+  if (filters?.verificationStatus) {
+    conditions.push(eq(resources.verificationStatus, filters.verificationStatus));
+  }
+  if (filters?.minPrice?.trim()) {
+    conditions.push(sql<boolean>`CAST(${resources.price} AS numeric) >= ${filters.minPrice.trim()}`);
+  }
+  if (filters?.maxPrice?.trim()) {
+    conditions.push(sql<boolean>`CAST(${resources.price} AS numeric) <= ${filters.maxPrice.trim()}`);
+  }
+  if (filters?.search?.trim()) {
+    const pattern = `%${filters.search.trim()}%`;
+    conditions.push(
+      sql<boolean>`(${resources.title} ILIKE ${pattern} OR COALESCE(${resources.description}, '') ILIKE ${pattern})`,
+    );
+  }
+  if (filters?.resourceType) {
+    conditions.push(eq(resources.resourceType, filters.resourceType));
+  }
+
   return db
     .select({
       id: resources.id,
@@ -128,41 +159,17 @@ async function queryCatalog() {
 // cardinality; filtering after a single cached read keeps the cache correct and
 // mirrors how the search filter already works (issue #159).
 export async function listCatalog(
-  filters?: CatalogFilters,
+  filters?: CatalogListFilters,
 ): Promise<Awaited<ReturnType<typeof queryCatalog>>> {
-  let rows: Awaited<ReturnType<typeof queryCatalog>>;
-
-  const cached = readCache.get(CATALOG_KEY);
+  const cacheKey = catalogCacheKey(filters);
+  const cached = readCache.get(cacheKey);
   if (cached !== undefined) {
-    rows = cached as Awaited<ReturnType<typeof queryCatalog>>;
-  } else {
-    rows = await queryCatalog();
-    readCache.set(CATALOG_KEY, rows);
+    return cached as Awaited<ReturnType<typeof queryCatalog>>;
   }
 
-  if (!filters) return rows;
-
-  const search = filters.search?.toLowerCase();
-  // Prices are stored as decimal strings (e.g. "0.50"); compare numerically and
-  // inclusively, parsing only at the point of comparison.
-  const min = filters.minPrice !== undefined ? parseFloat(filters.minPrice) : undefined;
-  const max = filters.maxPrice !== undefined ? parseFloat(filters.maxPrice) : undefined;
-
-  return rows.filter((r) => {
-    if (
-      search &&
-      !(r.title?.toLowerCase().includes(search) || r.description?.toLowerCase().includes(search))
-    ) {
-      return false;
-    }
-    if (min !== undefined && parseFloat(r.price) < min) return false;
-    if (max !== undefined && parseFloat(r.price) > max) return false;
-    if (filters.verificationStatus && r.verificationStatus !== filters.verificationStatus) {
-      return false;
-    }
-    if (filters.resourceType && r.resourceType !== filters.resourceType) return false;
-    return true;
-  });
+  const rows = await queryCatalog(filters);
+  readCache.set(cacheKey, rows);
+  return rows;
 }
 
 async function queryResourceMeta(id: string) {
