@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { EditPriceModal } from "./components/EditPriceModal.js";
 import { TransferOwnershipModal } from "./components/TransferOwnershipModal.js";
 import { RegisterModal } from "./components/RegisterModal.js";
+import { ResourcePreviewModal } from "./components/ResourcePreviewModal.js";
 import { ExplorerLink } from "./components/ExplorerLink.js";
 import { Toast } from "./components/Toast.js";
 import { CatalogSearch } from "./components/CatalogSearch.js";
@@ -33,6 +34,7 @@ type ActiveModal =
   | { kind: "editPrice"; resource: Resource }
   | { kind: "transferOwnership"; resource: Resource }
   | { kind: "register"; resource: Resource }
+  | { kind: "preview"; resource: Resource }
   | null;
 
 type Tab = "catalog" | "analytics";
@@ -358,6 +360,12 @@ export default function App() {
                       </span>
                       <div className="flex gap-1">
                         <button
+                          onClick={() => setActiveModal({ kind: "preview", resource: r })}
+                          className="rounded-lg bg-indigo-100 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-300 dark:hover:bg-indigo-900/75"
+                        >
+                          Preview
+                        </button>
+                        <button
                           onClick={() => handleCopyUrl(r.accessUrl)}
                           className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
                         >
@@ -400,6 +408,14 @@ export default function App() {
       )}
 
       {/* ── Modals ──────────────────────────────────────────────────────────── */}
+      {activeModal?.kind === "preview" && (
+        <ResourcePreviewModal
+          resourceId={activeModal.resource.id}
+          onClose={() => setActiveModal(null)}
+          onCopyUrl={handleCopyUrl}
+        />
+      )}
+
       {activeModal?.kind === "editPrice" && (
         <EditPriceModal
           resourceId={activeModal.resource.id}
