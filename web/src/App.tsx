@@ -68,7 +68,12 @@ export default function App() {
   );
 
   // ── Registry status fetch ─────────────────────────────────────────────────
-  const { data: registryData } = useAsync<{ resourceCount: number }>(
+  const {
+    status: registryStatus,
+    data: registryData,
+    error: registryError,
+    retry: retryRegistry,
+  } = useAsync<{ resourceCount: number }>(
     (_signal) => fetchRegistryStatus(),
     [],
   );
@@ -118,7 +123,32 @@ export default function App() {
       <div className="mb-6 flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">MindVault</h1>
-          {registryCount !== null && (
+          {registryStatus === "error" ? (
+            <div className="flex items-center gap-1.5 text-sm text-amber-600 dark:text-amber-400">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4 shrink-0"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
+                />
+              </svg>
+              <span>Registry status unavailable</span>
+              <button
+                onClick={retryRegistry}
+                className="ml-1 text-xs font-medium underline hover:no-underline"
+              >
+                Retry
+              </button>
+            </div>
+          ) : registryCount !== null ? (
             <p className="text-sm text-gray-500 dark:text-gray-400">
               Registry:{" "}
               <span className="font-semibold text-indigo-600 dark:text-indigo-400">
@@ -126,7 +156,7 @@ export default function App() {
               </span>{" "}
               resource{registryCount !== 1 ? "s" : ""} registered on-chain
             </p>
-          )}
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           {API_KEY && (
