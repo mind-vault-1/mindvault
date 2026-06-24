@@ -122,7 +122,37 @@ Lists all resources in the catalog with their IDs, titles, prices, and access UR
   https://mindvault-hyr3.onrender.com/r/abc123
 ```
 
-### 9. `mindvault_preview` (optional)
+### 9. `mindvault_search` (optional)
+
+Search the catalog by keyword plus filters. The MCP server forwards the filters to the backend, so the result set is narrowed before it reaches the agent.
+
+**Input:**
+
+```json
+{
+  "query": "forecast",
+  "minPrice": "0.01",
+  "maxPrice": "1.00",
+  "verificationStatus": "verified",
+  "resourceType": "link"
+}
+```
+
+**Example output:**
+
+```
+[abc123] Sample weather forecast feed — $0.05 USDC
+  Hourly forecast JSON for SF
+  https://mindvault-hyr3.onrender.com/r/abc123
+```
+
+If no resource matches, the error message includes the applied filters, for example:
+
+```
+No resources match query "forecast", min $0.01, max $1.00, status verified, type link.
+```
+
+### 10. `mindvault_preview` (optional)
 
 Show full metadata and verification status before paying.
 
@@ -132,7 +162,7 @@ Show full metadata and verification status before paying.
 { "resourceId": "abc123" }
 ```
 
-### 10. `mindvault_buy`
+### 11. `mindvault_buy`
 
 Pays the resource price in USDC via x402 and returns the protected content.
 

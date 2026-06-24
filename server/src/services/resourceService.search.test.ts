@@ -1,0 +1,104 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// Mutable state the db mock serves
+let currentRows: unknown[] = [];
+
+const builder = {
+  from: () => builder,
+  innerJoin: () => builder,
+  where: () => Promise.resolve(currentRows),
+};
+
+vi.mock("../db/client.js", () => ({
+  db: {
+    select: () => builder,
+    insert: () => ({ values: () => ({ returning: () => Promise.resolve([{ id: "newId" }]) }) }),
+  },
+}));
+
+vi.mock("../storage/supabaseStorage.js", () => ({
+  uploadFile: vi.fn(),
+  deleteFile: vi.fn(),
+}));
+
+vi.mock("../config.js", () => ({ config: { CATALOG_CACHE_TTL_MS: 60_000 } }));
+
+import { listCatalog, __resetCatalogCache } from "./resourceService.js";
+
+describe("catalog search", () => {
+  const resources = [
+    {
+      id: "1",
+      title: "Atlas of Stellar Networks",
+      description: "A detailed map of stellar connections",
+      price: "5.00",
+      resourceType: "file",
+      mimeType: "application/pdf",
+      publisherName: "Pub1",
+      createdAt: new Date("2025-01-01"),
+    },
+    {
+      id: "2",
+      title: "Quantum Computing Basics",
+      description: "Introduction to quantum algorithms",
+      price: "3.00",
+      resourceType: "link",
+      mimeType: null,
+      publisherName: "Pub2",
+      createdAt: new Date("2025-02-01"),
+    },
+    {
+      id: "3",
+      title: "Stellar Development Guide",
+      description: "Build on the Stellar network",
+      price: "10.00",
+      resourceType: "file",
+      mimeType: "text/markdown",
+      publisherName: "Pub3",
+      createdAt: new Date("2025-03-01"),
+    },
+    {
+      id: "4",
+      title: "Machine Learning 101",
+      description: "ML fundamentals with Python",
+      price: "7.50",
+      resourceType: "link",
+      mimeType: null,
+      publisherName: "Pub4",
+      createdAt: new Date("2025-04-01"),
+    },
+  ];
+
+  beforeEach(() => {
+    __resetCatalogCache();
+    currentRows = resources;
+  });
+
+  it("returns all resources when no search term is given", async () => {
+    const result = await listCatalog();
+    expect(result).toHaveLength(4);
+  });
+
+  it("filters resources matching the search term in the title", async () => {
+    const result = await listCatalog("Stellar");
+    expect(result).toHaveLength(2);
+    expect(result.map((r) => r.id)).toEqual(expect.arrayContaining(["1", "3"]));
+  });
+
+  it("filters resources matching the search term in the description", async () => {
+    const result = await listCatalog("quantum");
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("2");
+  });
+
+  it("performs case-insensitive matching", async () => {
+    const result = await listCatalog("stellar");
+    expect(result).toHaveLength(2);
+    expect(result.map((r) => r.id)).toEqual(expect.arrayContaining(["1", "3"]));
+  });
+
+  it("returns an empty array when no resources match", async () => {
+    const result = await listCatalog("nonexistent");
+    expect(result).toHaveLength(0);
+  });
+});

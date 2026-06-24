@@ -66,6 +66,7 @@ sequenceDiagram
 
 ## See also
 
+- [x402 browser payment walkthrough](x402-browser-payment-walkthrough.md) — step-by-step buyer path from the web catalog through wallet signing to delivery
 - [Architecture overview](architecture.md) — system diagram and layer design
 - [x402 payment troubleshooting](x402-payment-troubleshooting.md) — common failures and fixes
 - [x402 protocol spec](https://www.x402.org/)

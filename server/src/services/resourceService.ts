@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { resources, publishers, verifications } from "../db/schema.js";
 import { uploadFile, deleteFile } from "../storage/supabaseStorage.js";
@@ -6,12 +6,60 @@ import { hashFileResource, hashLinkResource } from "../utils/crypto.js";
 import { createTtlCache } from "../lib/ttlCache.js";
 import { config } from "../config.js";
 
+export type CatalogFilters = {
+  search?: string;
+  minPrice?: string;
+  maxPrice?: string;
+  verificationStatus?: "pending" | "verified" | "rejected" | "skipped";
+  resourceType?: "file" | "link";
+};
+
 // Short-lived cache for catalog/preview reads (issue #115). These endpoints are
 // hit far more often than resources change, so a small TTL cuts repeated DB
 // work while keeping newly published/delisted items fresh within seconds.
 const CATALOG_KEY = "catalog";
 const metaKey = (id: string) => `meta:${id}`;
 const readCache = createTtlCache<unknown>({ defaultTtlMs: config.CATALOG_CACHE_TTL_MS });
+
+export interface CatalogFilters {
+  search?: string;
+  minPrice?: string;
+  maxPrice?: string;
+  verificationStatus?: "pending" | "verified" | "rejected" | "skipped";
+  resourceType?: "file" | "link";
+}
+
+function buildCatalogWhereClause(filters?: CatalogFilters) {
+  const clauses: any[] = [eq(resources.listed, true)];
+
+  const search = filters?.search?.trim();
+  if (search) {
+    const pattern = `%${search}%`;
+    clauses.push(
+      sql<boolean>`(${resources.title} ILIKE ${pattern} OR COALESCE(${resources.description}, '') ILIKE ${pattern})`,
+    );
+  }
+
+  if (filters?.minPrice?.trim()) {
+    const minPrice = filters.minPrice.trim();
+    clauses.push(sql<boolean>`CAST(${resources.price} AS numeric) >= ${minPrice}`);
+  }
+
+  if (filters?.maxPrice?.trim()) {
+    const maxPrice = filters.maxPrice.trim();
+    clauses.push(sql<boolean>`CAST(${resources.price} AS numeric) <= ${maxPrice}`);
+  }
+
+  if (filters?.verificationStatus) {
+    clauses.push(eq(resources.verificationStatus, filters.verificationStatus));
+  }
+
+  if (filters?.resourceType) {
+    clauses.push(eq(resources.resourceType, filters.resourceType));
+  }
+
+  return and(...clauses);
+}
 
 // Drop cached reads affected by a write. The catalog (the listed set) is always
 // invalidated; the specific resource's preview is dropped too when known.
@@ -97,7 +145,21 @@ export async function getResourceById(id: string) {
     .then((rows) => rows[0] ?? null);
 }
 
-async function queryCatalog() {
+export type CatalogListFilters = {
+  verificationStatus?: "verified" | "pending" | "rejected";
+};
+
+function catalogCacheKey(filters?: CatalogListFilters): string {
+  if (!filters?.verificationStatus) return CATALOG_KEY;
+  return `${CATALOG_KEY}:verificationStatus=${filters.verificationStatus}`;
+}
+
+async function queryCatalog(filters?: CatalogListFilters) {
+  const conditions = [eq(resources.listed, true)];
+  if (filters?.verificationStatus) {
+    conditions.push(eq(resources.verificationStatus, filters.verificationStatus));
+  }
+
   return db
     .select({
       id: resources.id,
@@ -106,20 +168,35 @@ async function queryCatalog() {
       price: resources.price,
       resourceType: resources.resourceType,
       mimeType: resources.mimeType,
+      verificationStatus: resources.verificationStatus,
       publisherName: publishers.name,
       createdAt: resources.createdAt,
     })
     .from(resources)
     .innerJoin(publishers, eq(resources.publisherId, publishers.id))
-    .where(eq(resources.listed, true));
+    .where(and(...conditions));
 }
 
-export async function listCatalog(): Promise<Awaited<ReturnType<typeof queryCatalog>>> {
-  const cached = readCache.get(CATALOG_KEY);
-  if (cached !== undefined) return cached as Awaited<ReturnType<typeof queryCatalog>>;
+export async function listCatalog(
+  searchTerm?: string,
+): Promise<Awaited<ReturnType<typeof queryCatalog>>> {
+  let rows: Awaited<ReturnType<typeof queryCatalog>>;
 
-  const rows = await queryCatalog();
-  readCache.set(CATALOG_KEY, rows);
+  const cached = readCache.get(CATALOG_KEY);
+  if (cached !== undefined) {
+    rows = cached as Awaited<ReturnType<typeof queryCatalog>>;
+  } else {
+    rows = await queryCatalog();
+    readCache.set(CATALOG_KEY, rows);
+  }
+
+  if (searchTerm) {
+    const q = searchTerm.toLowerCase();
+    return rows.filter(
+      (r) => r.title?.toLowerCase().includes(q) || r.description?.toLowerCase().includes(q),
+    );
+  }
+
   return rows;
 }
 

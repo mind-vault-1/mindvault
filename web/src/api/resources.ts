@@ -1,7 +1,7 @@
-import { type Resource, networks } from "@mindvault/registry-client";
+import { type Resource, Networks } from "@mindvault/registry-client";
 
 export type { Resource };
-export { networks as registryNetworks };
+export { Networks as registryNetworks };
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 

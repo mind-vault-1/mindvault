@@ -6,7 +6,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@mindvault/registry-client": "workspace:*",
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@types/node": "^25.9.1",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.7"
   }
 }

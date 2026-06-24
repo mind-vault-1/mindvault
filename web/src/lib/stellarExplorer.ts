@@ -1,8 +1,19 @@
-export type StellarNetwork = "testnet" | "public";
+import { networks, type ExplorerNetwork } from "@mindvault/registry-client";
 
-// Defaults to testnet; override with VITE_STELLAR_NETWORK="public" for mainnet.
-const NETWORK: StellarNetwork =
-  (import.meta.env.VITE_STELLAR_NETWORK as StellarNetwork) ?? "testnet";
+export type StellarNetwork = ExplorerNetwork;
+
+function resolveExplorerNetwork(): StellarNetwork {
+  const raw = (import.meta.env.VITE_STELLAR_NETWORK as string | undefined)?.trim().toLowerCase();
+  if (!raw) return networks.testnet.explorerNetwork;
+  if (raw === "public" || raw === "mainnet" || raw === "pubnet") {
+    return networks.mainnet.explorerNetwork;
+  }
+  if (raw === "testnet") return networks.testnet.explorerNetwork;
+  return networks.testnet.explorerNetwork;
+}
+
+// Defaults to testnet; set VITE_STELLAR_NETWORK=testnet|mainnet|public for explorer links.
+const NETWORK: StellarNetwork = resolveExplorerNetwork();
 
 const EXPLORER_BASE = `https://stellar.expert/explorer/${NETWORK}`;
 

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockPaymentMiddleware = vi.fn(() => (_req: unknown, _res: unknown, next: () => void) => next());
+const mockPaymentMiddleware = vi.fn(
+  () => (_req: unknown, _res: unknown, next: () => void) => next(),
+);
 const mockGetOnChainPrice = vi.fn();
 const mockNormalizeUsdcPrice = vi.fn((value: string) => value);
 
@@ -42,10 +44,7 @@ vi.mock("../db/client.js", () => ({
 }));
 
 function makeDbSelect(resource: unknown) {
-  const then = vi.fn(async (callback: (rows: unknown[]) => unknown) =>
-    callback(resource ? [resource] : []),
-  );
-  const where = vi.fn(() => ({ then }));
+  const where = vi.fn(() => Promise.resolve(resource ? [resource] : []));
   const from = vi.fn(() => ({ where }));
   return {
     select: vi.fn(() => ({ from })),

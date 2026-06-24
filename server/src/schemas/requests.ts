@@ -65,3 +65,8 @@ export const transferOwnershipSchema = z
     newCreator: z.string().min(1),
   })
   .strict();
+
+/** Query params for GET /resources (public catalog). */
+export const catalogQuerySchema = z.object({
+  verificationStatus: z.enum(["verified", "pending", "rejected"]).optional(),
+});

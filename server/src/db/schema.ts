@@ -48,8 +48,6 @@ export const resources = pgTable("resources", {
   mimeType: text("mime_type"),
   verificationStatus: verificationStatusEnum("verification_status").notNull().default("pending"),
   verificationId: text("verification_id"),
-  onchainStatus: onchainStatusEnum("onchain_status").notNull().default("pending"),
-  onchainTxHash: text("onchain_tx_hash"),
   listed: boolean("listed").notNull().default(false),
   onchainStatus: onchainStatusEnum("onchain_status").notNull().default("none"),
   onchainTxHash: text("onchain_tx_hash"),

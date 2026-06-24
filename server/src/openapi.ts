@@ -182,7 +182,10 @@ export const openApiSpec = {
       UnsignedTxResponse: {
         type: "object",
         properties: {
-          unsignedXdr: { type: "string", description: "Base64-encoded unsigned Stellar transaction" },
+          unsignedXdr: {
+            type: "string",
+            description: "Base64-encoded unsigned Stellar transaction",
+          },
           networkPassphrase: { type: "string" },
         },
       },
@@ -251,7 +254,10 @@ export const openApiSpec = {
               },
             },
           },
-          "409": { description: "Email already registered", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "409": {
+            description: "Email already registered",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -261,11 +267,23 @@ export const openApiSpec = {
         summary: "Look up publisher by wallet address",
         operationId: "getPublisherByWallet",
         parameters: [
-          { name: "address", in: "path", required: true, schema: { type: "string" }, description: "Stellar wallet address" },
+          {
+            name: "address",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+            description: "Stellar wallet address",
+          },
         ],
         responses: {
-          "200": { description: "Publisher found", content: { "application/json": { schema: { $ref: "#/components/schemas/Publisher" } } } },
-          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "200": {
+            description: "Publisher found",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Publisher" } } },
+          },
+          "404": {
+            description: "Not found",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -276,8 +294,14 @@ export const openApiSpec = {
         operationId: "getMyProfile",
         security: [{ ApiKeyAuth: [] }],
         responses: {
-          "200": { description: "Own profile", content: { "application/json": { schema: { $ref: "#/components/schemas/Publisher" } } } },
-          "401": { description: "Missing or invalid API key", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "200": {
+            description: "Own profile",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Publisher" } } },
+          },
+          "401": {
+            description: "Missing or invalid API key",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -288,8 +312,18 @@ export const openApiSpec = {
         operationId: "getMyResources",
         security: [{ ApiKeyAuth: [] }],
         responses: {
-          "200": { description: "Array of resources", content: { "application/json": { schema: { type: "array", items: { $ref: "#/components/schemas/Resource" } } } } },
-          "401": { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "200": {
+            description: "Array of resources",
+            content: {
+              "application/json": {
+                schema: { type: "array", items: { $ref: "#/components/schemas/Resource" } },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -331,7 +365,10 @@ export const openApiSpec = {
               },
             },
           },
-          "401": { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "401": {
+            description: "Unauthorized",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -375,8 +412,24 @@ export const openApiSpec = {
         tags: ["Resources"],
         summary: "Browse public resource catalog",
         operationId: "listResources",
+        parameters: [
+          {
+            name: "search",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Filter resources by title or description (case-insensitive)",
+          },
+        ],
         responses: {
-          "200": { description: "Array of listed resources", content: { "application/json": { schema: { type: "array", items: { $ref: "#/components/schemas/Resource" } } } } },
+          "200": {
+            description: "Array of listed resources",
+            content: {
+              "application/json": {
+                schema: { type: "array", items: { $ref: "#/components/schemas/Resource" } },
+              },
+            },
+          },
         },
       },
       post: {
@@ -396,8 +449,16 @@ export const openApiSpec = {
                   description: { type: "string" },
                   price: { type: "string", example: "0.50", description: "USDC price" },
                   walletAddress: { type: "string", description: "Override publisher wallet" },
-                  file: { type: "string", format: "binary", description: "File upload (omit for link resource)" },
-                  externalUrl: { type: "string", format: "uri", description: "Required when not uploading a file" },
+                  file: {
+                    type: "string",
+                    format: "binary",
+                    description: "File upload (omit for link resource)",
+                  },
+                  externalUrl: {
+                    type: "string",
+                    format: "uri",
+                    description: "Required when not uploading a file",
+                  },
                 },
               },
             },
@@ -417,10 +478,22 @@ export const openApiSpec = {
           },
         },
         responses: {
-          "201": { description: "Resource created", content: { "application/json": { schema: { $ref: "#/components/schemas/Resource" } } } },
-          "400": { description: "Validation error", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "401": { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "429": { description: "Rate limit exceeded", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "201": {
+            description: "Resource created",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Resource" } } },
+          },
+          "400": {
+            description: "Validation error",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "429": {
+            description: "Rate limit exceeded",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -431,8 +504,14 @@ export const openApiSpec = {
         operationId: "getResourceMeta",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
-          "200": { description: "Resource metadata", content: { "application/json": { schema: { $ref: "#/components/schemas/Resource" } } } },
-          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "200": {
+            description: "Resource metadata",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Resource" } } },
+          },
+          "404": {
+            description: "Not found",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -443,8 +522,16 @@ export const openApiSpec = {
         operationId: "getResourceVerification",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
-          "200": { description: "Verification details", content: { "application/json": { schema: { $ref: "#/components/schemas/VerificationResult" } } } },
-          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "200": {
+            description: "Verification details",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/VerificationResult" } },
+            },
+          },
+          "404": {
+            description: "Not found",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -453,15 +540,25 @@ export const openApiSpec = {
         tags: ["Resources"],
         summary: "Access a resource (x402 paywalled)",
         operationId: "accessResource",
-        description: "Returns the resource content or a redirect URL after x402 payment. Responds with HTTP 402 if payment is missing.",
+        description:
+          "Returns the resource content or a redirect URL after x402 payment. Responds with HTTP 402 if payment is missing.",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         security: [{ X402Payment: [] }],
         responses: {
           "200": { description: "Resource content or link URL delivered" },
           "402": { description: "Payment required (x402)" },
-          "404": { description: "Not found or not listed", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "409": { description: "Price mismatch between DB and on-chain registry", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "503": { description: "On-chain price lookup failed", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "404": {
+            description: "Not found or not listed",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "409": {
+            description: "Price mismatch between DB and on-chain registry",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "503": {
+            description: "On-chain price lookup failed",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
       delete: {
@@ -472,8 +569,14 @@ export const openApiSpec = {
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
           "200": { description: "Resource delisted" },
-          "401": { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "404": { description: "Not found or not owned", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "401": {
+            description: "Unauthorized",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "404": {
+            description: "Not found or not owned",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -485,12 +588,32 @@ export const openApiSpec = {
         security: [{ ApiKeyAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
-          "200": { description: "Unsigned XDR + metadata", content: { "application/json": { schema: { $ref: "#/components/schemas/UnsignedTxResponse" } } } },
-          "400": { description: "Resource not verified", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "401": { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "403": { description: "Forbidden", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "409": { description: "Already registered", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "200": {
+            description: "Unsigned XDR + metadata",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/UnsignedTxResponse" } },
+            },
+          },
+          "400": {
+            description: "Resource not verified",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "403": {
+            description: "Forbidden",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "404": {
+            description: "Not found",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "409": {
+            description: "Already registered",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -507,18 +630,48 @@ export const openApiSpec = {
               schema: {
                 type: "object",
                 properties: {
-                  signedXdr: { type: "string", description: "Signed Stellar transaction XDR (omit to use legacy server-signed flow)" },
+                  signedXdr: {
+                    type: "string",
+                    description:
+                      "Signed Stellar transaction XDR (omit to use legacy server-signed flow)",
+                  },
                 },
               },
             },
           },
         },
         responses: {
-          "200": { description: "Registration result", content: { "application/json": { schema: { type: "object", properties: { id: { type: "string" }, onchainStatus: { type: "string" }, txHash: { type: "string" } } } } } },
-          "400": { description: "Not verified", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "401": { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "409": { description: "Already registered or pending", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "502": { description: "On-chain submission failed", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "200": {
+            description: "Registration result",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    onchainStatus: { type: "string" },
+                    txHash: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Not verified",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "409": {
+            description: "Already registered or pending",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "502": {
+            description: "On-chain submission failed",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -533,15 +686,33 @@ export const openApiSpec = {
           required: true,
           content: {
             "application/json": {
-              schema: { type: "object", required: ["price"], properties: { price: { type: "string", example: "1.00" } } },
+              schema: {
+                type: "object",
+                required: ["price"],
+                properties: { price: { type: "string", example: "1.00" } },
+              },
             },
           },
         },
         responses: {
-          "200": { description: "Unsigned XDR", content: { "application/json": { schema: { $ref: "#/components/schemas/UnsignedTxResponse" } } } },
-          "401": { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "403": { description: "Forbidden", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "200": {
+            description: "Unsigned XDR",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/UnsignedTxResponse" } },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "403": {
+            description: "Forbidden",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "404": {
+            description: "Not found",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -568,10 +739,33 @@ export const openApiSpec = {
           },
         },
         responses: {
-          "200": { description: "Price updated", content: { "application/json": { schema: { type: "object", properties: { id: { type: "string" }, price: { type: "string" }, status: { type: "string" } } } } } },
-          "401": { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "502": { description: "Transaction failed", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "504": { description: "Confirmation timeout", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "200": {
+            description: "Price updated",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    price: { type: "string" },
+                    status: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "502": {
+            description: "Transaction failed",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "504": {
+            description: "Confirmation timeout",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -586,15 +780,35 @@ export const openApiSpec = {
           required: true,
           content: {
             "application/json": {
-              schema: { type: "object", required: ["newCreator"], properties: { newCreator: { type: "string", description: "New owner Stellar address" } } },
+              schema: {
+                type: "object",
+                required: ["newCreator"],
+                properties: {
+                  newCreator: { type: "string", description: "New owner Stellar address" },
+                },
+              },
             },
           },
         },
         responses: {
-          "200": { description: "Unsigned XDR", content: { "application/json": { schema: { $ref: "#/components/schemas/UnsignedTxResponse" } } } },
-          "401": { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "403": { description: "Forbidden", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "404": { description: "Not found", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "200": {
+            description: "Unsigned XDR",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/UnsignedTxResponse" } },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "403": {
+            description: "Forbidden",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "404": {
+            description: "Not found",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -621,10 +835,33 @@ export const openApiSpec = {
           },
         },
         responses: {
-          "200": { description: "Ownership transferred", content: { "application/json": { schema: { type: "object", properties: { id: { type: "string" }, newCreator: { type: "string" }, status: { type: "string" } } } } } },
-          "401": { description: "Unauthorized", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "502": { description: "Transaction failed", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-          "504": { description: "Confirmation timeout", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "200": {
+            description: "Ownership transferred",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    newCreator: { type: "string" },
+                    status: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "502": {
+            description: "Transaction failed",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "504": {
+            description: "Confirmation timeout",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -638,9 +875,16 @@ export const openApiSpec = {
         responses: {
           "200": {
             description: "Registry status",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/RegistryStatusResponse" } } },
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/RegistryStatusResponse" },
+              },
+            },
           },
-          "503": { description: "Registry unavailable", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "503": {
+            description: "Registry unavailable",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -651,7 +895,7 @@ export const openApiSpec = {
         tags: ["Verify"],
         summary: "AI originality check (x402 paywalled)",
         operationId: "verifyContent",
-        description: `Requires an x402 payment of $${0.10} USDC. Returns originality analysis.`,
+        description: `Requires an x402 payment of $${0.1} USDC. Returns originality analysis.`,
         security: [{ X402Payment: [] }],
         requestBody: {
           required: true,
@@ -662,16 +906,27 @@ export const openApiSpec = {
                 required: ["content"],
                 properties: {
                   content: { type: "string", description: "Text content to verify" },
-                  resourceId: { type: "string", description: "Optional — saves result to this resource" },
+                  resourceId: {
+                    type: "string",
+                    description: "Optional — saves result to this resource",
+                  },
                 },
               },
             },
           },
         },
         responses: {
-          "200": { description: "Verification result", content: { "application/json": { schema: { $ref: "#/components/schemas/VerificationResult" } } } },
+          "200": {
+            description: "Verification result",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/VerificationResult" } },
+            },
+          },
           "402": { description: "Payment required (x402)" },
-          "429": { description: "Rate limit exceeded", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "429": {
+            description: "Rate limit exceeded",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
         },
       },
     },
@@ -681,7 +936,12 @@ export const openApiSpec = {
         summary: "Public agent stats and recent verification activity",
         operationId: "getAgentStatus",
         responses: {
-          "200": { description: "Agent status", content: { "application/json": { schema: { $ref: "#/components/schemas/AgentStatusResponse" } } } },
+          "200": {
+            description: "Agent status",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/AgentStatusResponse" } },
+            },
+          },
         },
       },
     },
