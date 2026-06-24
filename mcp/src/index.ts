@@ -5,6 +5,8 @@
  */
 
 import {
+  createRegistryClient,
+  Errors as RegistryErrors,
   networks as registryNetworks,
   normalizeX402Network,
   resolveStellarNetwork,
@@ -479,6 +481,86 @@ async function agentStatus(): Promise<string> {
   return JSON.stringify(res.data, null, 2);
 }
 
+function stroopsToUsdc(stroops: bigint): string {
+  const STROOPS_PER_USDC = 10_000_000n;
+  const negative = stroops < 0n;
+  const abs = negative ? -stroops : stroops;
+  const whole = abs / STROOPS_PER_USDC;
+  const frac = abs % STROOPS_PER_USDC;
+  return `${negative ? "-" : ""}${whole}.${frac.toString().padStart(7, "0")}`;
+}
+
+async function registryLookup(resourceId: string): Promise<string> {
+  const client = createRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  });
+
+  let tx: Awaited<ReturnType<typeof client.get>>;
+  try {
+    tx = await client.get({ id: resourceId });
+  } catch (err: any) {
+    throw new Error(
+      [
+        `On-chain lookup failed for resource "${resourceId}".`,
+        `Contract: ${REGISTRY_CONTRACT_ID}`,
+        `Network: ${REGISTRY_NETWORK_PASSPHRASE}`,
+        `RPC: ${SOROBAN_RPC_URL}`,
+        `Details: ${err.message}`,
+      ].join("\n"),
+    );
+  }
+
+  const result = tx.result;
+  if (result.isErr()) {
+    const err = result.unwrapErr();
+    if (err.message === RegistryErrors[2].message) {
+      return JSON.stringify(
+        {
+          source: "on-chain",
+          found: false,
+          resourceId,
+          message: `Resource "${resourceId}" is not registered on-chain. It may not have been listed yet or the ID may be incorrect.`,
+          contract: REGISTRY_CONTRACT_ID,
+          network: REGISTRY_NETWORK_PASSPHRASE,
+          rpc: SOROBAN_RPC_URL,
+        },
+        null,
+        2,
+      );
+    }
+    throw new Error(
+      [
+        `Contract error for resource "${resourceId}": ${err.message}`,
+        `Contract: ${REGISTRY_CONTRACT_ID}`,
+        `Network: ${REGISTRY_NETWORK_PASSPHRASE}`,
+      ].join("\n"),
+    );
+  }
+
+  const resource = result.unwrap();
+  const priceUsdc = stroopsToUsdc(BigInt(resource.price as unknown as bigint));
+
+  return JSON.stringify(
+    {
+      source: "on-chain",
+      found: true,
+      id: resource.id,
+      creator: resource.creator,
+      price: `${priceUsdc} USDC`,
+      metadata: resource.metadata,
+      listed: resource.listed,
+      tags: resource.tags,
+      contract: REGISTRY_CONTRACT_ID,
+      network: REGISTRY_NETWORK_PASSPHRASE,
+      rpc: SOROBAN_RPC_URL,
+    },
+    null,
+    2,
+  );
+}
+
 function registryInfo(): string {
   const info: {
     contractId: string;
@@ -599,6 +681,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     {
+      name: "mindvault_registry_lookup",
+      description:
+        "Look up a resource directly from the on-chain vault registry by its ID. Returns creator, price (USDC), metadata, listed state, tags, contract ID, and network. Data comes from Stellar/Soroban, not the MindVault API. Returns an actionable message when the resource is not registered on-chain.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          resourceId: {
+            type: "string",
+            description: "The resource ID to look up on-chain.",
+          },
+        },
+        required: ["resourceId"],
+      },
+    },
+    {
       name: "mindvault_tx_status",
       description:
         "Look up the status of a Stellar transaction by hash via Soroban RPC. Returns SUCCESS, FAILED, or NOT_FOUND along with ledger details and XDR.",
@@ -666,6 +763,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "mindvault_registry_info":
         result = registryInfo();
+        break;
+      case "mindvault_registry_lookup":
+        result = await registryLookup(args.resourceId as string);
         break;
       case "mindvault_tx_status":
         result = await txStatus(args.txHash as string);
