@@ -42,6 +42,15 @@ export const openApiSpec = {
         },
         required: ["error"],
       },
+      RateLimitError: {
+        type: "object",
+        properties: {
+          error: { type: "string", example: "Too many requests" },
+          code: { type: "string", example: "RATE_LIMITED" },
+          retryAfterSeconds: { type: "integer", example: 60 },
+        },
+        required: ["error", "code", "retryAfterSeconds"],
+      },
       HealthResponse: {
         type: "object",
         properties: {
@@ -492,7 +501,9 @@ export const openApiSpec = {
           },
           "429": {
             description: "Rate limit exceeded",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/RateLimitError" } },
+            },
           },
         },
       },
@@ -925,7 +936,9 @@ export const openApiSpec = {
           "402": { description: "Payment required (x402)" },
           "429": {
             description: "Rate limit exceeded",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/RateLimitError" } },
+            },
           },
         },
       },
