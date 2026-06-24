@@ -254,7 +254,7 @@ export default function App() {
                     </p>
                   </div>
                   <a
-                    href="https://docs.mindvault.app/publishing"
+                    href="https://github.com/mind-vault-1/mindvault/blob/main/docs/mcp-quickstart.md"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:bg-indigo-500 dark:hover:bg-indigo-600"
