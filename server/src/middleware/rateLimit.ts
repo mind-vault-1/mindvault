@@ -1,11 +1,14 @@
 import rateLimit, { type Options } from "express-rate-limit";
 import type { Request, Response } from "express";
 
+export const RATE_LIMITED = "RATE_LIMITED";
+
 function rateLimitHandler(_req: Request, res: Response, _next: () => void, options: Options): void {
   const retryAfterSeconds = Math.ceil(options.windowMs / 1000);
   res.setHeader("Retry-After", String(retryAfterSeconds));
   res.status(429).json({
     error: "Too many requests",
+    code: RATE_LIMITED,
     retryAfterSeconds,
   });
 }
