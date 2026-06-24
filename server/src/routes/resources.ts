@@ -38,7 +38,6 @@ import {
   transferOwnership,
   buildRegisterTx,
   submitSignedTx,
-  registryKeypair,
 } from "../services/registryClient.js";
 import { parsePayerFromXPayment } from "../lib/parseXPayment.js";
 

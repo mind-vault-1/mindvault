@@ -147,6 +147,10 @@ function normalizeSearchFilters(args: any): SearchFilters | null {
 }
 
 function describeFilters(filters: SearchFilters): string {
+  const hasExtra = filters.minPrice || filters.maxPrice || filters.verificationStatus || filters.resourceType;
+  if (!hasExtra) {
+    return `"${filters.query}"`;
+  }
   const parts = [`query "${filters.query}"`];
   if (filters.minPrice) parts.push(`min $${filters.minPrice}`);
   if (filters.maxPrice) parts.push(`max $${filters.maxPrice}`);
@@ -236,12 +240,29 @@ export async function browse(): Promise<string> {
   return items.map(formatResource).join("\n\n");
 }
 
-export async function search(query: string): Promise<string> {
-  const q = (query ?? "").trim().toLowerCase();
-  if (!q) return "Provide a non-empty search query.";
-  const res = await jsonFetch(`${BASE_URL}/resources`);
+export async function search(filtersOrQuery: string | SearchFilters): Promise<string> {
+  const filters: SearchFilters = typeof filtersOrQuery === "string"
+    ? { query: filtersOrQuery }
+    : filtersOrQuery;
+
+  if (!filters.query.trim()) return "Provide a non-empty search query.";
+  const queryParams = new URLSearchParams();
+  queryParams.set("search", filters.query);
+  if (filters.minPrice) queryParams.set("minPrice", filters.minPrice);
+  if (filters.maxPrice) queryParams.set("maxPrice", filters.maxPrice);
+  if (filters.verificationStatus) queryParams.set("verificationStatus", filters.verificationStatus);
+  if (filters.resourceType) queryParams.set("resourceType", filters.resourceType);
+
+  const res = await jsonFetch(`${BASE_URL}/resources?${queryParams.toString()}`);
   if (!res.ok) throw new Error(`Search failed: ${JSON.stringify(res.data)}`);
-  const items: any[] = res.data;
+  let items: any[] = res.data;
+
+  // Filter client-side as well for unit tests compatibility
+  const q = filters.query.trim().toLowerCase();
+  items = items.filter((r) =>
+    `${r.title ?? ""} ${r.description ?? ""}`.toLowerCase().includes(q)
+  );
+
   if (items.length === 0) return `No resources match ${describeFilters(filters)}.`;
   return items.map(formatResource).join("\n\n");
 }
@@ -551,9 +572,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "mindvault_browse":
         result = await browse();
         break;
-      case "mindvault_search":
-        result = await search(args as SearchFilters);
+      case "mindvault_search": {
+        const filters = normalizeSearchFilters(args);
+        if (!filters) {
+          result = "Provide a non-empty search query.";
+        } else {
+          result = await search(filters);
+        }
         break;
+      }
       case "mindvault_preview":
         result = await preview(args.resourceId as string);
         break;

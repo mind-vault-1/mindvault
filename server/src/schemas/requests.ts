@@ -75,4 +75,16 @@ export const catalogQuerySchema = z
     search: z.string().optional(),
     resourceType: z.enum(["file", "link"]).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (data) => {
+      if (data.minPrice !== undefined && data.maxPrice !== undefined) {
+        return parseFloat(data.minPrice) <= parseFloat(data.maxPrice);
+      }
+      return true;
+    },
+    {
+      message: "minPrice cannot be greater than maxPrice",
+      path: ["minPrice"],
+    },
+  );

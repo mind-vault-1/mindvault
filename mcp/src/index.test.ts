@@ -27,9 +27,20 @@ vi.mock("@x402/fetch", () => ({
   x402Client: vi.fn().mockImplementation(() => ({ register: vi.fn() })),
 }));
 
-vi.mock("@mindvault/registry-client", () => ({
-  networks: { testnet: { contractId: "test", networkPassphrase: "test" } },
-}));
+vi.mock("@mindvault/registry-client", async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    networks: {
+      ...actual.networks,
+      testnet: {
+        ...actual.networks.testnet,
+        contractId: "test",
+        networkPassphrase: "test",
+      },
+    },
+  };
+});
 
 import { browse, search, preview } from "./index.js";
 
