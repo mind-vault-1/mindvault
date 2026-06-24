@@ -10,6 +10,8 @@ import { ResourceGridSkeleton } from "./components/ResourceCardSkeleton.js";
 import { ErrorBanner } from "./components/ErrorBanner.js";
 import { WalletButton } from "./components/WalletButton.js";
 import { AnalyticsDashboard } from "./components/AnalyticsDashboard.js";
+import { Leaderboard } from "./components/Leaderboard.js";
+import { PublishModal } from "./components/PublishModal.js";
 import { useTheme } from "./hooks/useTheme.js";
 import { useAsync } from "./hooks/useAsync.js";
 import { useWalletConnection } from "./hooks/useWalletConnection.js";
@@ -37,7 +39,7 @@ type ActiveModal =
   | { kind: "preview"; resource: Resource }
   | null;
 
-type Tab = "catalog" | "analytics";
+type Tab = "catalog" | "analytics" | "leaderboard";
 
 const API_KEY = import.meta.env.VITE_API_KEY ?? "";
 
@@ -55,6 +57,7 @@ export default function App() {
   const [filters, setFilters] = useState<CatalogFilters>(DEFAULT_FILTERS);
   const [overrides, setOverrides] = useState<Record<string, Partial<Resource>>>({});
   const [tab, setTab] = useState<Tab>("catalog");
+  const [showPublish, setShowPublish] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const wallet = useWalletConnection();
 
@@ -158,14 +161,23 @@ export default function App() {
           ) : null}
         </div>
         <div className="flex items-center gap-2">
+          <TabButton active={tab === "catalog"} onClick={() => setTab("catalog")}>
+            Catalog
+          </TabButton>
+          <TabButton active={tab === "leaderboard"} onClick={() => setTab("leaderboard")}>
+            Leaderboard
+          </TabButton>
           {API_KEY && (
             <>
-              <TabButton active={tab === "catalog"} onClick={() => setTab("catalog")}>
-                Catalog
-              </TabButton>
               <TabButton active={tab === "analytics"} onClick={() => setTab("analytics")}>
                 My Analytics
               </TabButton>
+              <button
+                onClick={() => setShowPublish(true)}
+                className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                Publish
+              </button>
             </>
           )}
           <WalletButton wallet={wallet} />
@@ -473,6 +485,14 @@ export default function App() {
           apiKey={API_KEY}
           onClose={() => setActiveModal(null)}
           onConfirmed={(txHash) => handleRegistrationConfirmed(activeModal.resource.id, txHash)}
+        />
+      )}
+
+      {showPublish && API_KEY && (
+        <PublishModal
+          apiKey={API_KEY}
+          onClose={() => setShowPublish(false)}
+          onPublished={() => retryResources()}
         />
       )}
 

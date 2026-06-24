@@ -56,7 +56,6 @@ and `mcp/` consume the bindings.
 See [`contract/README.md`](contract/README.md) for the registry interface and
 deployment steps.
 
-
 ## Running the integrated flow locally
 
 This walks through the full publish → verify → buy cycle on your local machine.
@@ -114,10 +113,13 @@ curl -s -X POST http://localhost:4021/resources/<id>/ownership \
 
 1. **Fork** and create a branch: `git checkout -b feat/short-description`
 2. Keep changes focused — one logical change per PR.
-3. Make sure things build/pass before pushing:
-   - Backend: `pnpm build:server`
-   - Contract: `pnpm contract:test`
-   - Docs: `pnpm docs:links` (checks repo-local Markdown links; external URLs are skipped in CI to avoid flaky third-party failures — set `DOCS_LINKS_CHECK_EXTERNAL=1` to include them locally)
+3. Run the full validation suite before pushing:
+   ```bash
+   make validate
+   ```
+   This builds the registry client and server, runs tests, checks formatting/linting,
+   and verifies doc links — all without requiring live secrets. If you only changed
+   contracts, run `pnpm contract:test` separately (requires Rust + Stellar CLI).
 4. Use clear commit messages (e.g. `feat: add catalog search`, `fix: cors header`).
 5. Use Conventional Commits formatting for your PR titles (e.g., `feat: add catalog search` or `fix(auth): cors header`). PR titles are automatically linted, and non-conforming titles will fail CI.
 6. Open a PR against `main` describing **what** changed and **why**, and how you

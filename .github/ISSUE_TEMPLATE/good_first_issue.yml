@@ -1,0 +1,50 @@
+name: Good First Issue
+description: A beginner-friendly task for new contributors
+labels: ["good first issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Welcome! This template is for maintainers to create well-scoped tasks for newcomers.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: A concise description of the task.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why is this needed? Link to related issues or code if helpful.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What files or areas are involved? Keep the scope small.
+      placeholder: |
+        - `server/src/routes/resources.ts` — add query param
+        - `web/src/components/...` — wire up the UI
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How will we know when this is done?
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true
+  - type: textarea
+    id: hints
+    attributes:
+      label: Getting started hints
+      description: Pointers to help a newcomer get oriented.
+      placeholder: |
+        - Read `CONTRIBUTING.md` for setup
+        - Look at how `listCatalog` works in `server/src/services/resourceService.ts`

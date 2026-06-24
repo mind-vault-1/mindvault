@@ -211,6 +211,60 @@ export async function submitTransferOwnership(
   return res.json();
 }
 
+export interface LeaderboardEntry {
+  id: string;
+  name: string;
+  walletAddress: string;
+  joinedAt: string;
+  totalResources: number;
+  listedResources: number;
+  verifiedResources: number;
+  totalSales: number;
+  totalEarned: string;
+}
+
+export async function fetchLeaderboard(signal?: AbortSignal): Promise<LeaderboardEntry[]> {
+  const res = await fetch(`${API_BASE}/publishers/leaderboard`, { signal });
+  if (!res.ok) throw new Error("Failed to fetch leaderboard");
+  return res.json();
+}
+
+export async function publishLinkResource(
+  data: { title: string; description?: string; price: string; externalUrl: string },
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/resources`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey },
+    body: JSON.stringify(data),
+    signal,
+  });
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: undefined }));
+    throw new Error(error ?? "Failed to publish resource");
+  }
+  return res.json();
+}
+
+export async function publishFileResource(
+  formData: FormData,
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/resources`, {
+    method: "POST",
+    headers: { "x-api-key": apiKey },
+    body: formData,
+    signal,
+  });
+  if (!res.ok) {
+    const { error } = await res.json().catch(() => ({ error: undefined }));
+    throw new Error(error ?? "Failed to publish resource");
+  }
+  return res.json();
+}
+
 export async function submitSetPrice(
   resourceId: string,
   signedXdr: string,

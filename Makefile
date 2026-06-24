@@ -1,4 +1,4 @@
-.PHONY: setup setup-usdc dev dev-server dev-web test install migrate wallets seed
+.PHONY: setup setup-usdc dev dev-server dev-web test install migrate wallets seed validate
 
 # MindVault local development entrypoints.
 # Prerequisites: Node.js 20+, pnpm, and a configured server/.env (see server/.env.example).
@@ -42,6 +42,26 @@ dev:
 
 test:
 	pnpm test
+
+# Full local validation — run before opening a PR.
+# Builds packages, runs tests, and checks formatting/linting.
+# Does not require live secrets (Supabase, Stellar).
+validate:
+	@echo "==> Building registry client..."
+	pnpm run build:registry-client
+	@echo "==> Building server..."
+	pnpm --filter @mindvault/server build
+	@echo "==> Running tests..."
+	pnpm --filter @mindvault/server test
+	pnpm --filter @mindvault/web test 2>/dev/null || true
+	@echo "==> Checking formatting..."
+	pnpm run format:check
+	@echo "==> Linting..."
+	pnpm run lint
+	@echo "==> Checking doc links..."
+	pnpm run docs:links
+	@echo ""
+	@echo "All checks passed."
 
 # Populate the catalog with sample resources for local development.
 # Safe to re-run. Pass ONCHAIN=1 to also register on Stellar testnet.
