@@ -48,6 +48,8 @@ To verify the correct network after switching, connect your wallet and check the
 
 See also: [x402 payment troubleshooting — Wrong network](x402-payment-troubleshooting.md#wrong-network-testnet-vs-mainnet).
 
+For the full browser buyer flow (catalog → 402 → sign → delivery), see [x402 browser payment walkthrough](x402-browser-payment-walkthrough.md).
+
 ---
 
 ### Rejected signature
