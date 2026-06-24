@@ -128,7 +128,7 @@ pnpm --filter @mindvault/server setup-usdc
 
 For mainnet, replace the USDC contract ID with the mainnet SAC ID:
 - Testnet: `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`
-- Mainnet: Use the canonical USDC SAC contract ID for Stellar mainnet
+- Mainnet: `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`
 
 ### 2.3 Fund the agent wallet
 
@@ -218,13 +218,14 @@ curl -i $BASE_URL/resources
 
 ### 4.1 Configure
 
-Create `web/.env`:
+Create `web/.env` (see `web/.env.example`):
 
 ```bash
 echo "VITE_API_URL=$BASE_URL" > web/.env
+echo "VITE_STELLAR_NETWORK=testnet" >> web/.env
 ```
 
-Optional: set `VITE_NETWORK=testnet` or `VITE_NETWORK=pubnet` to control the Stellar network the wallet kit connects to.
+Set `VITE_STELLAR_NETWORK=testnet` or `VITE_STELLAR_NETWORK=mainnet` to control Stellar Explorer links.
 
 ### 4.2 Build
 
@@ -242,7 +243,7 @@ Deploy `web/dist/` to any static host (Vercel, Netlify, Cloudflare Pages, S3+Clo
 Configure the static host to:
 - Serve `index.html` for all routes (SPA fallback)
 - Set `VITE_API_URL` as an env var pointing to the deployed server
-- Set `VITE_NETWORK` to `testnet` or `pubnet`
+- Set `VITE_STELLAR_NETWORK` to `testnet` or `mainnet`
 
 ### 4.4 Verify the frontend
 
@@ -262,16 +263,16 @@ Open the web app URL in a browser:
 cd mcp
 ```
 
-Create or update `mcp/.env`:
+Create or update `mcp/.env` (see `mcp/.env.example`):
 
 ```bash
 MINDVAULT_URL=$BASE_URL
+STELLAR_NETWORK=testnet
 VAULT_REGISTRY_CONTRACT_ID=$CONTRACT_ID
-NETWORK_PASSPHRASE="$NETWORK_PASSPHRASE"
 SPONSORED_ACCOUNT_URL=https://stellar-sponsored-agent-account.onrender.com
-HORIZON_URL=...  # https://horizon-testnet.stellar.org or https://horizon.stellar.org
-SOROBAN_RPC_URL=$SOROBAN_RPC
 ```
+
+For mainnet, set `STELLAR_NETWORK=mainnet`. Optional overrides: `NETWORK`, `HORIZON_URL`, `SOROBAN_RPC_URL`, `USDC_CONTRACT_ID`.
 
 ### 5.2 Build
 

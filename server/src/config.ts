@@ -1,6 +1,13 @@
 import "dotenv/config";
 import { z } from "zod/v4";
+import {
+  applyNetworkEnvDefaults,
+  resolveStellarNetwork,
+  validateNetworkConfig,
+} from "@mindvault/registry-client";
 import { rootLogger } from "./lib/logger.js";
+
+const envWithDefaults = applyNetworkEnvDefaults(process.env);
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
@@ -9,21 +16,16 @@ const envSchema = z.object({
   WEB_APP_URL: z.string().url().default("http://localhost:5173"),
   ALLOWED_ORIGINS: z.string().optional(),
 
-  // Stellar / x402
-  NETWORK: z.string().default("stellar:testnet"),
+  // Stellar / x402 — STELLAR_NETWORK selects preset defaults; individual vars may override.
+  STELLAR_NETWORK: z.enum(["testnet", "mainnet"]).default("testnet"),
+  NETWORK: z.string().min(1),
   FACILITATOR_URL: z.string().default("https://www.x402.org/facilitator"),
   PAY_TO: z.string().min(1, "PAY_TO (platform wallet address) is required"),
   AGENT_SECRET_KEY: z.string().min(1, "AGENT_SECRET_KEY (platform agent secret) is required"),
+  USDC_CONTRACT_ID: z.string().min(1),
 
   // Soroban / vault-registry
-  // RPC endpoint used to read/write the on-chain registry. Default is the
-  // public Stellar testnet RPC; override for mainnet or a self-hosted node.
-  SOROBAN_RPC_URL: z
-    .string()
-    .url("SOROBAN_RPC_URL must be a valid URL")
-    .default("https://soroban-testnet.stellar.org"),
-  // Deployed contract ID for the vault-registry. Required so the server can
-  // record/read canonical resource entries on-chain.
+  SOROBAN_RPC_URL: z.string().url("SOROBAN_RPC_URL must be a valid URL"),
   VAULT_REGISTRY_CONTRACT_ID: z.string().min(1, "VAULT_REGISTRY_CONTRACT_ID is required"),
 
   // OpenRouter
@@ -71,13 +73,33 @@ const envSchema = z.object({
   CATALOG_CACHE_TTL_MS: z.coerce.number().default(10_000),
 });
 
-const parsed = envSchema.safeParse(process.env);
+const parsed = envSchema.safeParse(envWithDefaults);
 
 if (!parsed.success) {
   rootLogger.error(
     { event: "config_invalid", issues: parsed.error.format() },
     "invalid environment variables",
   );
+  process.exit(1);
+}
+
+const stellarNetwork = resolveStellarNetwork(parsed.data.STELLAR_NETWORK);
+const networkIssues = validateNetworkConfig({
+  stellarNetwork,
+  x402Network: parsed.data.NETWORK,
+  sorobanRpcUrl: parsed.data.SOROBAN_RPC_URL,
+  usdcSacContractId: parsed.data.USDC_CONTRACT_ID,
+  registryContractId: parsed.data.VAULT_REGISTRY_CONTRACT_ID,
+});
+
+if (networkIssues.length > 0) {
+  rootLogger.error(
+    { event: "config_network_mismatch", issues: networkIssues },
+    "inconsistent Stellar network configuration",
+  );
+  for (const issue of networkIssues) {
+    rootLogger.error({ field: issue.field }, issue.message);
+  }
   process.exit(1);
 }
 

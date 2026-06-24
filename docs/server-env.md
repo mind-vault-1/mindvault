@@ -10,11 +10,13 @@ and fill in each value.
 | `BASE_URL` | no | `http://localhost:4021` | Public base URL of the server |
 | `WEB_APP_URL` | no | `http://localhost:5173` | Web app URL (used for CORS / redirects) |
 | `ALLOWED_ORIGINS` | no | — | Comma-separated browser origins allowed in production (defaults to `WEB_APP_URL`) |
-| `NETWORK` | no | `stellar:testnet` | Stellar network passphrase (`stellar:testnet` or `stellar:mainnet`) |
+| `STELLAR_NETWORK` | no | `testnet` | Deployment network selector (`testnet` or `mainnet`). Fills defaults for RPC, USDC, and x402 network when individual vars are omitted |
+| `NETWORK` | no | from `STELLAR_NETWORK` | x402 network id (`stellar:testnet` or `stellar:pubnet`; `stellar:mainnet` is accepted as an alias for pubnet) |
 | `FACILITATOR_URL` | no | `https://www.x402.org/facilitator` | x402 facilitator endpoint for payment verification/settlement |
 | `PAY_TO` | **yes** | — | Platform Stellar wallet address — receives verification fees |
 | `AGENT_SECRET_KEY` | **yes** | — | Platform agent secret key — pays for content verification |
-| `SOROBAN_RPC_URL` | no | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint for on-chain registry reads/writes |
+| `USDC_CONTRACT_ID` | no | from `STELLAR_NETWORK` | Soroban USDC Stellar Asset Contract for the selected network |
+| `SOROBAN_RPC_URL` | no | from `STELLAR_NETWORK` | Soroban RPC endpoint for on-chain registry reads/writes |
 | `VAULT_REGISTRY_CONTRACT_ID` | **yes** | — | Deployed vault-registry contract ID |
 | `OPENROUTER_API_KEY` | **yes** | — | OpenRouter API key for the AI verification agent |
 | `OPENROUTER_MODEL` | no | `anthropic/claude-sonnet-4` | Model slug for verification LLM calls |
@@ -38,3 +40,18 @@ and fill in each value.
 | `GRACEFUL_SHUTDOWN_TIMEOUT_MS` | no | `10000` | Max time to drain in-flight requests on SIGTERM/SIGINT |
 | `IDEMPOTENCY_TTL_MS` | no | `86400000` | How long a publish Idempotency-Key is remembered (24h) |
 | `CATALOG_CACHE_TTL_MS` | no | `10000` | Short-lived cache TTL for catalog/preview reads |
+
+## Mainnet values
+
+Set `STELLAR_NETWORK=mainnet` (or set each variable explicitly). Required mainnet values:
+
+| Variable | Mainnet value |
+|---|---|
+| `STELLAR_NETWORK` | `mainnet` |
+| `NETWORK` | `stellar:pubnet` |
+| `SOROBAN_RPC_URL` | `https://soroban.stellar.org` |
+| `USDC_CONTRACT_ID` | `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` |
+| `VAULT_REGISTRY_CONTRACT_ID` | Your deployed mainnet vault-registry contract ID |
+| `REGISTRY_CONTRACT_ID` | Same as `VAULT_REGISTRY_CONTRACT_ID` |
+
+Startup validation rejects mixed settings (for example, `STELLAR_NETWORK=testnet` with a mainnet Soroban RPC URL or USDC contract).

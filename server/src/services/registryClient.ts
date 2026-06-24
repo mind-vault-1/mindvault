@@ -1,10 +1,15 @@
-import { Keypair, Networks, TransactionBuilder } from "@stellar/stellar-sdk";
-import { Client, Errors, listResources, type Resource } from "@mindvault/registry-client";
+import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
+import {
+  Client,
+  Errors,
+  listResources,
+  networkPassphraseForX402,
+  type Resource,
+} from "@mindvault/registry-client";
 import { config } from "../config.js";
 import { getLogger } from "../lib/logger.js";
 
-const NETWORK_PASSPHRASE =
-  config.NETWORK === "stellar:testnet" ? Networks.TESTNET : Networks.PUBLIC;
+const NETWORK_PASSPHRASE = networkPassphraseForX402(config.NETWORK);
 
 const keypair = Keypair.fromSecret(config.REGISTRY_SECRET_KEY);
 
