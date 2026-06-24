@@ -11,6 +11,8 @@ Before diving into a specific error, confirm:
 3. **USDC trustline** — Classic Stellar accounts must trust the testnet USDC issuer before they can hold or send USDC.
 4. **x402-aware client** — Plain `curl` without payment handling will stop at HTTP 402. Use an x402 client (`@x402/fetch`, the MCP server, or a wallet-integrated browser flow).
 
+For a step-by-step browser buyer walkthrough, see [x402 browser payment walkthrough](x402-browser-payment-walkthrough.md).
+
 ---
 
 ## Symptom → cause → fix
