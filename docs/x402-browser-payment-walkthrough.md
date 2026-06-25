@@ -21,15 +21,15 @@ Before buying a resource from the browser:
 
 1. Open the MindVault web app (local: `http://localhost:5173`, or your deployed URL).
 2. Browse the catalog grid. Each card shows the title, price in USDC, verification status, and owner wallet.
-3. Click **Copy URL** on the resource you want to buy.
+3. Click **Buy** on the resource you want — or **Copy URL** to pay from another x402 client.
 
-The copied URL is the resource's `accessUrl` — a direct link to the server's paywalled endpoint:
+The `accessUrl` behind both paths is a direct link to the server's paywalled endpoint:
 
 ```
 https://<server>/resources/<resource-id>
 ```
 
-> **Web implementation note:** The catalog (`web/src/App.tsx`) does not embed an in-app purchase button. Buyers pay by opening this `accessUrl`. The server enforces the x402 paywall on `GET /resources/:id` (`server/src/routes/resources.ts`).
+> **Web implementation note (issue #219):** The catalog (`web/src/App.tsx`) now embeds a one-click **Buy** button on every card and in the preview modal. It runs the full x402 sign-and-retry loop in the browser via `web/src/lib/x402Buy.ts` (Freighter-signed `BuyModal`), so buyers no longer need an external client. **Copy URL** remains as a fallback. The server enforces the x402 paywall on `GET /resources/:id` (`server/src/routes/resources.ts`).
 
 ---
 
@@ -48,13 +48,13 @@ PAYMENT-REQUIRED: eyJ4NDAy...   (base64-encoded JSON)
 
 The `@x402/express` middleware (`server/src/middleware/dynamicPaywall.ts`) builds payment instructions from the on-chain vault-registry price and the resource owner's wallet. After decoding the header, the payload includes:
 
-| Field | Meaning |
-|-------|---------|
-| `price` | USDC amount to pay (read from chain when registered) |
-| `payTo` / destination | Creator's Stellar G-address (`walletAddress`) |
-| `network` | Stellar network id (e.g. `stellar:testnet`) |
-| `asset` | Soroban USDC Stellar Asset Contract id |
-| `scheme` | `exact` — pay the listed price exactly |
+| Field                 | Meaning                                              |
+| --------------------- | ---------------------------------------------------- |
+| `price`               | USDC amount to pay (read from chain when registered) |
+| `payTo` / destination | Creator's Stellar G-address (`walletAddress`)        |
+| `network`             | Stellar network id (e.g. `stellar:testnet`)          |
+| `asset`               | Soroban USDC Stellar Asset Contract id               |
+| `scheme`              | `exact` — pay the listed price exactly               |
 
 The server validates the database price against the on-chain registry **before** returning 402. If they disagree, you get `409 price_mismatch` instead of a payment prompt.
 
@@ -144,14 +144,14 @@ The file downloads to your browser; check response headers for the receipt.
 
 ## End-to-end flow summary
 
-| Step | Where | What happens |
-|------|-------|--------------|
-| 1 | Web catalog | Browse resources, click **Copy URL** |
-| 2 | Browser → Server | `GET /resources/:id` → **402** + `PAYMENT-REQUIRED` |
-| 3 | Browser wallet | Decode header, sign Soroban USDC auth entry (Freighter) |
-| 4 | Browser → Server | Retry with `X-Payment` header |
-| 5 | Server → Facilitator | Verify signature, settle USDC on-chain |
-| 6 | Server → Browser | **200** + link JSON or file download + receipt |
+| Step | Where                | What happens                                                             |
+| ---- | -------------------- | ------------------------------------------------------------------------ |
+| 1    | Web catalog          | Browse resources, click **Buy** (or **Copy URL** for an external client) |
+| 2    | Browser → Server     | `GET /resources/:id` → **402** + `PAYMENT-REQUIRED`                      |
+| 3    | Browser wallet       | Decode header, sign Soroban USDC auth entry (Freighter)                  |
+| 4    | Browser → Server     | Retry with `X-Payment` header                                            |
+| 5    | Server → Facilitator | Verify signature, settle USDC on-chain                                   |
+| 6    | Server → Browser     | **200** + link JSON or file download + receipt                           |
 
 ```mermaid
 sequenceDiagram

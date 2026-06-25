@@ -8,12 +8,15 @@ interface ResourcePreviewModalProps {
   resourceId: string;
   onClose: () => void;
   onCopyUrl?: (url: string) => void;
+  /** Open the in-browser purchase flow for this resource (issue #219). */
+  onBuy?: () => void;
 }
 
 export function ResourcePreviewModal({
   resourceId,
   onClose,
   onCopyUrl,
+  onBuy,
 }: ResourcePreviewModalProps) {
   const { status, data, error, retry } = useAsync(
     (signal) => fetchResourceMeta(resourceId, signal),
@@ -290,10 +293,18 @@ export function ResourcePreviewModal({
                   onClick={() => {
                     onCopyUrl?.(data.accessUrl);
                   }}
-                  className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:bg-indigo-500 dark:hover:bg-indigo-600"
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
                 >
                   Copy access URL
                 </button>
+                {onBuy && (
+                  <button
+                    onClick={onBuy}
+                    className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+                  >
+                    Buy {data.price} USDC
+                  </button>
+                )}
               </div>
             </div>
           )}

@@ -13,6 +13,8 @@
     "@mindvault/registry-client": "workspace:*",
     "@stellar/freighter-api": "^6.0.1",
     "@stellar/stellar-sdk": "^15.0.1",
+    "@x402/fetch": "^2.9.0",
+    "@x402/stellar": "^2.9.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
