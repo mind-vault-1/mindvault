@@ -18,6 +18,9 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -60,15 +63,61 @@ if (!REGISTRY_CONTRACT_ID) {
   process.exit(1);
 }
 
-// ── In-memory agent state ─────────────────────────────────────────────────────
+// ── State persistence ─────────────────────────────────────────────────────────
+
+const STATE_DIR = join(homedir(), ".mindvault");
+const STATE_FILE = join(STATE_DIR, "state.json");
 
 interface AgentWallet {
   publicKey: string;
   secretKey: string;
 }
 
+interface PersistedState {
+  wallet?: AgentWallet;
+  apiKey?: string;
+}
+
 let agentWallet: AgentWallet | null = null;
 let agentApiKey: string | null = null;
+
+function loadState(): void {
+  if (!existsSync(STATE_FILE)) return;
+  try {
+    const raw = readFileSync(STATE_FILE, "utf-8");
+    const state: PersistedState = JSON.parse(raw);
+    if (state.wallet?.publicKey && state.wallet?.secretKey) agentWallet = state.wallet;
+    if (state.apiKey) agentApiKey = state.apiKey;
+  } catch {
+    // Corrupted state — ignore and start fresh
+  }
+}
+
+function saveState(): void {
+  try {
+    mkdirSync(STATE_DIR, { recursive: true });
+    const state: PersistedState = {
+      ...(agentWallet && { wallet: agentWallet }),
+      ...(agentApiKey && { apiKey: agentApiKey }),
+    };
+    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
+  } catch (err) {
+    console.error("MindVault MCP: failed to persist state:", err);
+  }
+}
+
+function resetState(): string {
+  agentWallet = null;
+  agentApiKey = null;
+  try {
+    if (existsSync(STATE_FILE)) unlinkSync(STATE_FILE);
+  } catch (err) {
+    return `State cleared from memory. Warning: could not delete state file (${STATE_FILE}): ${err}`;
+  }
+  return `State reset. Wallet and publisher API key removed from memory and disk.\nState file: ${STATE_FILE}`;
+}
+
+loadState();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -223,7 +272,8 @@ async function setupWallet(): Promise<string> {
   const res = await jsonFetch(`${SPONSORED_ACCOUNT_URL}/create`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to create wallet: ${JSON.stringify(res.data)}`);
   agentWallet = { publicKey: res.data.publicKey, secretKey: res.data.secretKey };
-  return `Wallet created.\nAddress: ${agentWallet.publicKey}\nSecret key stored in memory (not persisted).`;
+  saveState();
+  return `Wallet created.\nAddress: ${agentWallet.publicKey}\nWallet persisted to ${STATE_FILE} (mode 0600).`;
 }
 
 async function walletInfo(): Promise<string> {
@@ -294,7 +344,8 @@ async function register(name: string, email: string, walletAddress?: string): Pr
   });
   if (!res.ok) throw new Error(`Register failed: ${JSON.stringify(res.data)}`);
   agentApiKey = res.data.apiKey;
-  return `Registered as publisher.\nID: ${res.data.id}\nAPI key stored in memory.`;
+  saveState();
+  return `Registered as publisher.\nID: ${res.data.id}\nAPI key persisted to ${STATE_FILE} (not shown). Run mindvault_reset to revoke.`;
 }
 
 async function publish(args: {
@@ -451,7 +502,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "mindvault_setup_wallet",
-      description: "Create a Stellar wallet using the sponsored account protocol.",
+      description:
+        "Create a Stellar wallet using the sponsored account protocol. The wallet (public key + secret key) is persisted to ~/.mindvault/state.json (mode 0600) and reloaded automatically on restart.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     {
@@ -499,7 +551,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "mindvault_register",
-      description: "Register as a publisher using the agent wallet.",
+      description:
+        "Register as a publisher using the agent wallet. The API key is persisted to ~/.mindvault/state.json (mode 0600, key not shown in output) and reloaded on restart so mindvault_publish works across sessions.",
       inputSchema: {
         type: "object",
         properties: {
@@ -554,6 +607,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: { txHash: { type: "string" } },
         required: ["txHash"],
       },
+    },
+    {
+      name: "mindvault_reset",
+      description:
+        "Clear the persisted wallet and publisher API key from both memory and disk (~/.mindvault/state.json). Use this to revoke credentials or start fresh. After reset, run mindvault_setup_wallet and mindvault_register again.",
+      inputSchema: { type: "object", properties: {}, required: [] },
     },
   ],
 }));
@@ -610,6 +669,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "mindvault_tx_status":
         result = await txStatus(args.txHash as string);
+        break;
+      case "mindvault_reset":
+        result = resetState();
         break;
       default:
         throw new Error(`Unknown tool: ${name}`);
