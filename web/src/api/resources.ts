@@ -124,6 +124,36 @@ export async function prepareRegisterTx(
   return res.json();
 }
 
+/**
+ * Error thrown when on-chain registration fails. Carries the structured
+ * recovery guidance the server returns (next steps, retry endpoint, and a
+ * transaction hash / explorer link when a transaction was broadcast) so the UI
+ * can show the creator exactly how to recover.
+ */
+export class RegistrationError extends Error {
+  txHash?: string;
+  txStatusUrl?: string;
+  nextSteps?: string[];
+  retryEndpoint?: string;
+
+  constructor(
+    message: string,
+    details: {
+      txHash?: string;
+      txStatusUrl?: string;
+      nextSteps?: string[];
+      retryEndpoint?: string;
+    } = {},
+  ) {
+    super(message);
+    this.name = "RegistrationError";
+    this.txHash = details.txHash;
+    this.txStatusUrl = details.txStatusUrl;
+    this.nextSteps = details.nextSteps;
+    this.retryEndpoint = details.retryEndpoint;
+  }
+}
+
 export async function submitRegisterTx(
   resourceId: string,
   signedXdr: string,
@@ -138,8 +168,16 @@ export async function submitRegisterTx(
     body: JSON.stringify({ signedXdr }),
   });
   if (!res.ok) {
-    const { error } = await res.json();
-    throw new Error(error ?? "Failed to submit register transaction");
+    const body = await res.json().catch(() => ({}));
+    throw new RegistrationError(
+      body.message ?? body.error ?? "Failed to submit register transaction",
+      {
+        txHash: body.txHash,
+        txStatusUrl: body.txStatusUrl,
+        nextSteps: body.nextSteps,
+        retryEndpoint: body.retryEndpoint,
+      },
+    );
   }
   return res.json();
 }
