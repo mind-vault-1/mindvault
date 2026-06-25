@@ -18,6 +18,7 @@ export const openApiSpec = {
     { name: "Resources", description: "Resource publishing, browsing, and access" },
     { name: "Registry", description: "On-chain Soroban vault-registry" },
     { name: "Verify", description: "AI content originality verification (x402 paywalled)" },
+    { name: "Payments", description: "Payment receipts and buyer purchase history" },
   ],
   components: {
     securitySchemes: {
@@ -197,6 +198,20 @@ export const openApiSpec = {
           },
           networkPassphrase: { type: "string" },
         },
+      },
+      PaymentReceipt: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          resourceId: { type: "string" },
+          resourceTitle: { type: "string", nullable: true },
+          amount: { type: "string", example: "0.50" },
+          currency: { type: "string", example: "USDC" },
+          payerAddress: { type: "string" },
+          recipientAddress: { type: "string" },
+          paidAt: { type: "string", format: "date-time" },
+        },
+        required: ["id", "resourceId", "amount", "currency", "payerAddress", "recipientAddress", "paidAt"],
       },
     },
   },
@@ -954,6 +969,60 @@ export const openApiSpec = {
             content: {
               "application/json": { schema: { $ref: "#/components/schemas/AgentStatusResponse" } },
             },
+          },
+        },
+      },
+    },
+
+    // ── Payments ────────────────────────────────────────────────────────────
+    "/payments/{id}": {
+      get: {
+        tags: ["Payments"],
+        summary: "Get payment receipt by id",
+        operationId: "getPaymentReceipt",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          "200": {
+            description: "Payment receipt metadata",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PaymentReceipt" },
+              },
+            },
+          },
+          "404": {
+            description: "Receipt not found",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+        },
+      },
+    },
+    "/payments": {
+      get: {
+        tags: ["Payments"],
+        summary: "List payments for a buyer (by wallet address)",
+        operationId: "listPaymentsByPayer",
+        parameters: [
+          {
+            name: "payer",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "Buyer Stellar wallet address",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Array of payment receipts",
+            content: {
+              "application/json": {
+                schema: { type: "array", items: { $ref: "#/components/schemas/PaymentReceipt" } },
+              },
+            },
+          },
+          "400": {
+            description: "Missing payer query parameter",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
           },
         },
       },

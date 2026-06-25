@@ -10,6 +10,7 @@ import { ResourceGridSkeleton } from "./components/ResourceCardSkeleton.js";
 import { ErrorBanner } from "./components/ErrorBanner.js";
 import { WalletButton } from "./components/WalletButton.js";
 import { AnalyticsDashboard } from "./components/AnalyticsDashboard.js";
+import { PurchaseHistory } from "./components/PurchaseHistory.js";
 import { Leaderboard } from "./components/Leaderboard.js";
 import { PublishModal } from "./components/PublishModal.js";
 import { useTheme } from "./hooks/useTheme.js";
@@ -39,7 +40,7 @@ type ActiveModal =
   | { kind: "preview"; resource: Resource }
   | null;
 
-type Tab = "catalog" | "analytics" | "leaderboard";
+type Tab = "catalog" | "analytics" | "leaderboard" | "purchases";
 
 const API_KEY = import.meta.env.VITE_API_KEY ?? "";
 
@@ -175,6 +176,11 @@ export default function App() {
               <TabButton active={tab === "analytics"} onClick={() => setTab("analytics")}>
                 My Analytics
               </TabButton>
+              {wallet.status === "connected" && (
+                <TabButton active={tab === "purchases"} onClick={() => setTab("purchases")}>
+                  My Purchases
+                </TabButton>
+              )}
               <button
                 onClick={() => setShowPublish(true)}
                 className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
@@ -211,6 +217,23 @@ export default function App() {
       )}
       {/* ── Analytics tab ───────────────────────────────────────────────────── */}
       {tab === "analytics" && API_KEY && <AnalyticsDashboard apiKey={API_KEY} />}
+
+      {/* ── Purchases tab ────────────────────────────────────────────────────── */}
+      {tab === "purchases" && wallet.status === "connected" && wallet.address && (
+        <div className="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="border-b border-gray-200 px-6 py-4 dark:border-gray-700">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+              My Purchases
+            </h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Recent resources you have purchased via USDC micropayments
+            </p>
+          </div>
+          <div className="px-6 pb-4">
+            <PurchaseHistory walletAddress={wallet.address} />
+          </div>
+        </div>
+      )}
 
       {tab === "catalog" && (
         <>
