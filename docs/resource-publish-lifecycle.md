@@ -120,13 +120,24 @@ This returns the canonical verification view, including:
 After verification, two public read paths matter:
 
 - `GET /resources` returns only resources where `listed = true`.
-- `GET /resources/:id/meta` returns preview metadata including `verificationStatus` and `onchainStatus`.
+- `GET /resources/:id/meta` returns preview metadata including `verificationStatus`, `onchainStatus`, and `contentHash`.
 
 That means:
 
 - approval makes the resource discoverable in the public catalog
 - rejection keeps it out of the catalog
 - preview metadata is broader than catalog listing and should not be treated as proof that a resource is buyable
+
+### Content integrity anchor
+
+At publish time the server computes a SHA-256 `contentHash` over the canonical content (the URL for link resources, the title + file bytes for file resources — see `server/src/utils/crypto.ts`). This hash is the off-chain content integrity anchor and is embedded in the on-chain registry `metadata` JSON when the resource is registered.
+
+`GET /resources/:id/meta` now exposes `contentHash` (nullable). The web preview surfaces it under **Content integrity**:
+
+- When a hash is present, the UI shows the SHA-256 anchor and, for registered resources, links to the registration transaction on Stellar Explorer so anyone can confirm the anchor was committed on-chain.
+- When no hash is available, the UI shows "No integrity anchor available for this resource" and makes **no** claim of verification.
+
+The anchor identifies the exact content recorded at registration. It is not a live re-verification of delivered bytes — file bytes are only delivered after payment, so the preview deliberately does not imply that the delivered content has been re-hashed and checked.
 
 ## 5. On-chain registration
 

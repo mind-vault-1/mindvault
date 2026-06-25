@@ -25,6 +25,7 @@ export interface ResourceMeta {
   publisherWallet: string;
   onchainStatus: string;
   onchainTxHash?: string | null;
+  contentHash?: string | null;
   createdAt: string;
   accessUrl: string;
 }

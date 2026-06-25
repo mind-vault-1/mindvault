@@ -236,6 +236,49 @@ export function ResourcePreviewModal({
                 </div>
               </div>
 
+              <div>
+                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Content integrity
+                </h4>
+                {data.contentHash ? (
+                  <div className="mt-1 space-y-2">
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      SHA-256 integrity anchor recorded in the on-chain registry metadata when this
+                      resource was registered. It identifies the exact content but is not a live
+                      re-verification of the delivered bytes.
+                    </p>
+                    <div className="flex items-start gap-2 rounded-lg bg-gray-50 p-2 dark:bg-gray-900">
+                      <code className="break-all font-mono text-xs text-gray-800 dark:text-gray-200">
+                        {data.contentHash}
+                      </code>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(data.contentHash ?? "");
+                        }}
+                        aria-label="Copy content hash"
+                        className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-indigo-600 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-gray-800"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    {data.onchainStatus === "registered" && data.onchainTxHash && (
+                      <ExplorerLink
+                        type="tx"
+                        value={data.onchainTxHash}
+                        className="text-xs text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300"
+                      >
+                        View registration on Stellar Explorer ↗
+                      </ExplorerLink>
+                    )}
+                  </div>
+                ) : (
+                  <p className="mt-1 text-sm italic text-gray-400 dark:text-gray-500">
+                    No integrity anchor available for this resource.
+                  </p>
+                )}
+              </div>
+
               <div className="mt-6 flex justify-end gap-3 border-t border-gray-200 pt-4 dark:border-gray-700">
                 <button
                   onClick={onClose}

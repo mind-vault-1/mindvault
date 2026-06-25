@@ -124,6 +124,12 @@ export const openApiSpec = {
           listed: { type: "boolean" },
           onchainStatus: { type: "string", enum: ["none", "pending", "registered", "failed"] },
           onchainTxHash: { type: "string", nullable: true },
+          contentHash: {
+            type: "string",
+            nullable: true,
+            description:
+              "SHA-256 content integrity anchor recorded in the on-chain registry metadata; null when no anchor is available.",
+          },
           accessUrl: { type: "string", format: "uri" },
           createdAt: { type: "string", format: "date-time" },
         },
