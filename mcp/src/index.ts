@@ -5,6 +5,8 @@
  */
 
 import {
+  createRegistryClient,
+  Errors as RegistryErrors,
   networks as registryNetworks,
   normalizeX402Network,
   resolveStellarNetwork,
@@ -18,10 +20,9 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -64,56 +65,61 @@ if (!REGISTRY_CONTRACT_ID) {
   process.exit(1);
 }
 
-// ── Wallet persistence ────────────────────────────────────────────────────────
-// Enabled by setting MINDVAULT_PERSIST_WALLET=true.
-// The secret key is encrypted with AES-256-GCM before being written to disk.
-// The encryption key is derived from a per-installation random salt stored
-// alongside the ciphertext — the file is useless without the salt file.
-// To reset: delete ~/.mindvault/wallet.enc (and wallet.salt if desired).
+// ── State persistence ─────────────────────────────────────────────────────────
 
-const PERSIST = process.env.MINDVAULT_PERSIST_WALLET === "true";
-const WALLET_DIR = join(homedir(), ".mindvault");
-const WALLET_FILE = join(WALLET_DIR, "wallet.enc");
-const SALT_FILE = join(WALLET_DIR, "wallet.salt");
-
-function loadPersistedWallet(): AgentWallet | null {
-  if (!PERSIST || !existsSync(WALLET_FILE) || !existsSync(SALT_FILE)) return null;
-  try {
-    const salt = readFileSync(SALT_FILE);
-    const raw = readFileSync(WALLET_FILE, "utf8");
-    const { iv, auth, ct, pub } = JSON.parse(raw);
-    const key = scryptSync("mindvault-wallet", salt, 32);
-    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "hex"));
-    decipher.setAuthTag(Buffer.from(auth, "hex"));
-    const secretKey = decipher.update(ct, "hex", "utf8") + decipher.final("utf8");
-    return { publicKey: pub, secretKey };
-  } catch {
-    return null; // corrupted or tampered — treat as no wallet
-  }
-}
-
-function persistWallet(wallet: AgentWallet): void {
-  if (!PERSIST) return;
-  mkdirSync(WALLET_DIR, { recursive: true, mode: 0o700 });
-  const salt = existsSync(SALT_FILE) ? readFileSync(SALT_FILE) : randomBytes(32);
-  if (!existsSync(SALT_FILE)) writeFileSync(SALT_FILE, salt, { mode: 0o600 });
-  const key = scryptSync("mindvault-wallet", salt, 32);
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const ct = cipher.update(wallet.secretKey, "utf8", "hex") + cipher.final("hex");
-  const payload = JSON.stringify({ pub: wallet.publicKey, iv: iv.toString("hex"), auth: cipher.getAuthTag().toString("hex"), ct });
-  writeFileSync(WALLET_FILE, payload, { mode: 0o600 });
-}
-
-// ── In-memory agent state ─────────────────────────────────────────────────────
+const STATE_DIR = join(homedir(), ".mindvault");
+const STATE_FILE = join(STATE_DIR, "state.json");
 
 interface AgentWallet {
   publicKey: string;
   secretKey: string;
 }
 
-let agentWallet: AgentWallet | null = loadPersistedWallet();
+interface PersistedState {
+  wallet?: AgentWallet;
+  apiKey?: string;
+}
+
+let agentWallet: AgentWallet | null = null;
 let agentApiKey: string | null = null;
+
+function loadState(): void {
+  if (!existsSync(STATE_FILE)) return;
+  try {
+    const raw = readFileSync(STATE_FILE, "utf-8");
+    const state: PersistedState = JSON.parse(raw);
+    if (state.wallet?.publicKey && state.wallet?.secretKey) agentWallet = state.wallet;
+    if (state.apiKey) agentApiKey = state.apiKey;
+  } catch {
+    // Corrupted state — ignore and start fresh
+  }
+}
+
+function saveState(): void {
+  try {
+    mkdirSync(STATE_DIR, { recursive: true });
+    const state: PersistedState = {
+      ...(agentWallet && { wallet: agentWallet }),
+      ...(agentApiKey && { apiKey: agentApiKey }),
+    };
+    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
+  } catch (err) {
+    console.error("MindVault MCP: failed to persist state:", err);
+  }
+}
+
+function resetState(): string {
+  agentWallet = null;
+  agentApiKey = null;
+  try {
+    if (existsSync(STATE_FILE)) unlinkSync(STATE_FILE);
+  } catch (err) {
+    return `State cleared from memory. Warning: could not delete state file (${STATE_FILE}): ${err}`;
+  }
+  return `State reset. Wallet and publisher API key removed from memory and disk.\nState file: ${STATE_FILE}`;
+}
+
+loadState();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -268,9 +274,8 @@ async function setupWallet(): Promise<string> {
   const res = await jsonFetch(`${SPONSORED_ACCOUNT_URL}/create`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to create wallet: ${JSON.stringify(res.data)}`);
   agentWallet = { publicKey: res.data.publicKey, secretKey: res.data.secretKey };
-  persistWallet(agentWallet);
-  const persisted = PERSIST ? "Wallet saved to ~/.mindvault/wallet.enc (encrypted)." : "Wallet stored in memory only (set MINDVAULT_PERSIST_WALLET=true to persist).";
-  return `Wallet created.\nAddress: ${agentWallet.publicKey}\n${persisted}`;
+  saveState();
+  return `Wallet created.\nAddress: ${agentWallet.publicKey}\nWallet persisted to ${STATE_FILE} (mode 0600).`;
 }
 
 async function walletInfo(): Promise<string> {
@@ -341,7 +346,8 @@ async function register(name: string, email: string, walletAddress?: string): Pr
   });
   if (!res.ok) throw new Error(`Register failed: ${JSON.stringify(res.data)}`);
   agentApiKey = res.data.apiKey;
-  return `Registered as publisher.\nID: ${res.data.id}\nAPI key stored in memory.`;
+  saveState();
+  return `Registered as publisher.\nID: ${res.data.id}\nAPI key persisted to ${STATE_FILE} (not shown). Run mindvault_reset to revoke.`;
 }
 
 async function publish(args: {
@@ -475,14 +481,86 @@ async function agentStatus(): Promise<string> {
   return JSON.stringify(res.data, null, 2);
 }
 
-function resetWallet(): string {
-  agentWallet = null;
-  agentApiKey = null;
-  const removed: string[] = [];
-  if (existsSync(WALLET_FILE)) { writeFileSync(WALLET_FILE, "", { mode: 0o600 }); removed.push(WALLET_FILE); }
-  if (existsSync(SALT_FILE))   { writeFileSync(SALT_FILE,  Buffer.alloc(0), { mode: 0o600 }); removed.push(SALT_FILE); }
-  const note = removed.length ? `Cleared persisted files: ${removed.join(", ")}` : "No persisted files found.";
-  return `Wallet cleared from memory. ${note}\nRun mindvault_setup_wallet to create a new one.`;
+function stroopsToUsdc(stroops: bigint): string {
+  const STROOPS_PER_USDC = 10_000_000n;
+  const negative = stroops < 0n;
+  const abs = negative ? -stroops : stroops;
+  const whole = abs / STROOPS_PER_USDC;
+  const frac = abs % STROOPS_PER_USDC;
+  return `${negative ? "-" : ""}${whole}.${frac.toString().padStart(7, "0")}`;
+}
+
+async function registryLookup(resourceId: string): Promise<string> {
+  const client = createRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  });
+
+  let tx: Awaited<ReturnType<typeof client.get>>;
+  try {
+    tx = await client.get({ id: resourceId });
+  } catch (err: any) {
+    throw new Error(
+      [
+        `On-chain lookup failed for resource "${resourceId}".`,
+        `Contract: ${REGISTRY_CONTRACT_ID}`,
+        `Network: ${REGISTRY_NETWORK_PASSPHRASE}`,
+        `RPC: ${SOROBAN_RPC_URL}`,
+        `Details: ${err.message}`,
+      ].join("\n"),
+    );
+  }
+
+  const result = tx.result;
+  if (result.isErr()) {
+    const err = result.unwrapErr();
+    if (err.message === RegistryErrors[2].message) {
+      return JSON.stringify(
+        {
+          source: "on-chain",
+          found: false,
+          resourceId,
+          message: `Resource "${resourceId}" is not registered on-chain. It may not have been listed yet or the ID may be incorrect.`,
+          contract: REGISTRY_CONTRACT_ID,
+          network: REGISTRY_NETWORK_PASSPHRASE,
+          rpc: SOROBAN_RPC_URL,
+        },
+        null,
+        2,
+      );
+    }
+    throw new Error(
+      [
+        `Contract error for resource "${resourceId}": ${err.message}`,
+        `Contract: ${REGISTRY_CONTRACT_ID}`,
+        `Network: ${REGISTRY_NETWORK_PASSPHRASE}`,
+      ].join("\n"),
+    );
+  }
+
+  const resource = result.unwrap();
+  const priceUsdc = stroopsToUsdc(BigInt(resource.price as unknown as bigint));
+
+  return JSON.stringify(
+    {
+      source: "on-chain",
+      found: true,
+      id: resource.id,
+      creator: resource.creator,
+      price: `${priceUsdc} USDC`,
+      metadata: resource.metadata,
+      listed: resource.listed,
+      tags: resource.tags,
+      contract: REGISTRY_CONTRACT_ID,
+      network: REGISTRY_NETWORK_PASSPHRASE,
+      rpc: SOROBAN_RPC_URL,
+    },
+    null,
+    2,
+  );
+}
+
 function registryInfo(): string {
   const info: {
     contractId: string;
@@ -515,7 +593,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     { name: "mindvault_reset_wallet", description: "Clear the in-memory wallet and wipe any persisted wallet files. Use this to rotate or reset the agent wallet.", inputSchema: { type: "object", properties: {}, required: [] } },
     {
       name: "mindvault_setup_wallet",
-      description: "Create a Stellar wallet using the sponsored account protocol.",
+      description:
+        "Create a Stellar wallet using the sponsored account protocol. The wallet (public key + secret key) is persisted to ~/.mindvault/state.json (mode 0600) and reloaded automatically on restart.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     {
@@ -563,7 +642,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "mindvault_register",
-      description: "Register as a publisher using the agent wallet.",
+      description:
+        "Register as a publisher using the agent wallet. The API key is persisted to ~/.mindvault/state.json (mode 0600, key not shown in output) and reloaded on restart so mindvault_publish works across sessions.",
       inputSchema: {
         type: "object",
         properties: {
@@ -610,6 +690,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     {
+      name: "mindvault_registry_lookup",
+      description:
+        "Look up a resource directly from the on-chain vault registry by its ID. Returns creator, price (USDC), metadata, listed state, tags, contract ID, and network. Data comes from Stellar/Soroban, not the MindVault API. Returns an actionable message when the resource is not registered on-chain.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          resourceId: {
+            type: "string",
+            description: "The resource ID to look up on-chain.",
+          },
+        },
+        required: ["resourceId"],
+      },
+    },
+    {
       name: "mindvault_tx_status",
       description:
         "Look up the status of a Stellar transaction by hash via Soroban RPC. Returns SUCCESS, FAILED, or NOT_FOUND along with ledger details and XDR.",
@@ -618,6 +713,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: { txHash: { type: "string" } },
         required: ["txHash"],
       },
+    },
+    {
+      name: "mindvault_reset",
+      description:
+        "Clear the persisted wallet and publisher API key from both memory and disk (~/.mindvault/state.json). Use this to revoke credentials or start fresh. After reset, run mindvault_setup_wallet and mindvault_register again.",
+      inputSchema: { type: "object", properties: {}, required: [] },
     },
   ],
 }));
@@ -682,8 +783,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "mindvault_registry_info":
         result = registryInfo();
         break;
+      case "mindvault_registry_lookup":
+        result = await registryLookup(args.resourceId as string);
+        break;
       case "mindvault_tx_status":
         result = await txStatus(args.txHash as string);
+        break;
+      case "mindvault_reset":
+        result = resetState();
         break;
       default:
         throw new Error(`Unknown tool: ${name}`);
