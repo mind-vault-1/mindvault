@@ -11,7 +11,7 @@ Everything below uses the tools exposed by the MindVault MCP server (`mcp/`). Th
   - `https://mindvault-hyr3.onrender.com` (vault API)
   - `https://stellar-sponsored-agent-account.onrender.com` (sponsored wallet creation)
   - `https://horizon-testnet.stellar.org` (Stellar testnet Horizon)
-- Testnet USDC funding for the publisher agent — see [Funding the agent wallet](#funding-the-agent-wallet) below.
+- Testnet USDC funding for the publisher agent — see [Funding the agent wallet](#2-funding-the-agent-wallet) below.
 
 ## The Two Agents
 
