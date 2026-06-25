@@ -8,16 +8,14 @@ export async function uploadFile(
   resourceId: string,
   fileBuffer: Buffer,
   filename: string,
-  mimeType: string
+  mimeType: string,
 ): Promise<string> {
   const storagePath = `${resourceId}/${filename}`;
 
-  const { error } = await supabase.storage
-    .from(bucket)
-    .upload(storagePath, fileBuffer, {
-      contentType: mimeType,
-      upsert: false,
-    });
+  const { error } = await supabase.storage.from(bucket).upload(storagePath, fileBuffer, {
+    contentType: mimeType,
+    upsert: false,
+  });
 
   if (error) throw new Error(`Upload failed: ${error.message}`);
 
@@ -25,11 +23,9 @@ export async function uploadFile(
 }
 
 export async function downloadFile(
-  storagePath: string
+  storagePath: string,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
-  const { data, error } = await supabase.storage
-    .from(bucket)
-    .download(storagePath);
+  const { data, error } = await supabase.storage.from(bucket).download(storagePath);
 
   if (error) throw new Error(`Download failed: ${error.message}`);
 
@@ -40,9 +36,7 @@ export async function downloadFile(
 }
 
 export async function deleteFile(storagePath: string): Promise<void> {
-  const { error } = await supabase.storage
-    .from(bucket)
-    .remove([storagePath]);
+  const { error } = await supabase.storage.from(bucket).remove([storagePath]);
 
   if (error) throw new Error(`Delete failed: ${error.message}`);
 }

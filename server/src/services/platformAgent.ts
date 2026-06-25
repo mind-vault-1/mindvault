@@ -8,9 +8,6 @@ import { config } from "../config.js";
 const network = config.NETWORK as Network;
 const signer = createEd25519Signer(config.AGENT_SECRET_KEY, network);
 
-const client = new x402Client().register(
-  network,
-  new ExactStellarScheme(signer)
-);
+const client = new x402Client().register(network, new ExactStellarScheme(signer));
 
 export const paidFetch = wrapFetchWithPayment(fetch, client);

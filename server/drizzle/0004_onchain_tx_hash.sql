@@ -1,0 +1,1 @@
+ALTER TABLE "resources" ADD COLUMN "onchain_tx_hash" text;

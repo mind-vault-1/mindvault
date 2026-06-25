@@ -54,8 +54,7 @@ import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { createEd25519Signer } from "@x402/stellar";
 import type { Network } from "@x402/core/types";
 
-const BASE_URL =
-  process.env.E2E_BASE_URL || process.env.BASE_URL || "http://localhost:4021";
+const BASE_URL = process.env.E2E_BASE_URL || process.env.BASE_URL || "http://localhost:4021";
 const NETWORK_NAME = (process.env.E2E_NETWORK ||
   process.env.NETWORK ||
   "stellar:testnet") as Network;
@@ -65,8 +64,7 @@ const SOROBAN_RPC_URL =
   "https://soroban-testnet.stellar.org";
 const REGISTRY_CONTRACT_ID =
   process.env.E2E_REGISTRY_CONTRACT_ID || process.env.REGISTRY_CONTRACT_ID;
-const NETWORK_PASSPHRASE =
-  NETWORK_NAME === "stellar:testnet" ? Networks.TESTNET : Networks.PUBLIC;
+const NETWORK_PASSPHRASE = NETWORK_NAME === "stellar:testnet" ? Networks.TESTNET : Networks.PUBLIC;
 const SKIP_ONCHAIN = process.env.E2E_SKIP_ONCHAIN === "1";
 const SKIP_PAYWALL = process.env.E2E_SKIP_PAYWALL === "1";
 const VERIFY_TIMEOUT_MS = 60_000;
@@ -133,7 +131,7 @@ async function jsonRequest<T = unknown>(
   method: string,
   path: string,
   body?: unknown,
-  headers?: Record<string, string>
+  headers?: Record<string, string>,
 ): Promise<JsonResponse<T>> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
@@ -168,7 +166,7 @@ async function getOrCreateTestWallet(): Promise<TestWallet> {
     const expected = process.env.E2E_PUBLIC_KEY;
     if (expected && expected !== publicKey) {
       throw new Error(
-        `E2E_PUBLIC_KEY (${expected}) does not match the public key derived from E2E_SECRET_KEY (${publicKey})`
+        `E2E_PUBLIC_KEY (${expected}) does not match the public key derived from E2E_SECRET_KEY (${publicKey})`,
       );
     }
     info(`using wallet from E2E_SECRET_KEY: ${publicKey}`);
@@ -190,15 +188,13 @@ async function getOrCreateTestWallet(): Promise<TestWallet> {
   return { keypair, publicKey };
 }
 
-async function pollForVerification(
-  resourceId: string
-): Promise<VerificationResponse> {
+async function pollForVerification(resourceId: string): Promise<VerificationResponse> {
   const deadline = Date.now() + VERIFY_TIMEOUT_MS;
   let lastStatus = "pending";
   while (Date.now() < deadline) {
     const res = await jsonRequest<VerificationResponse>(
       "GET",
-      `/resources/${resourceId}/verification`
+      `/resources/${resourceId}/verification`,
     );
     if (res.ok && res.data) {
       lastStatus = res.data.status;
@@ -209,7 +205,7 @@ async function pollForVerification(
     await sleep(VERIFY_POLL_MS);
   }
   throw new Error(
-    `Verification did not settle within ${VERIFY_TIMEOUT_MS}ms (last status: ${lastStatus})`
+    `Verification did not settle within ${VERIFY_TIMEOUT_MS}ms (last status: ${lastStatus})`,
   );
 }
 
@@ -224,9 +220,7 @@ function usdcToStroops(price: string): bigint {
   return negative ? -result : result;
 }
 
-async function readOnChain(
-  resourceId: string
-): Promise<OnchainResource | null> {
+async function readOnChain(resourceId: string): Promise<OnchainResource | null> {
   if (!REGISTRY_CONTRACT_ID) {
     throw new Error("REGISTRY_CONTRACT_ID is not set");
   }
@@ -262,10 +256,7 @@ async function registerOnChain(args: {
     return;
   }
 
-  const { signTransaction, signAuthEntry } = basicNodeSigner(
-    args.keypair,
-    NETWORK_PASSPHRASE
-  );
+  const { signTransaction, signAuthEntry } = basicNodeSigner(args.keypair, NETWORK_PASSPHRASE);
 
   const client = new RegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
@@ -282,6 +273,7 @@ async function registerOnChain(args: {
     id: args.resourceId,
     price: priceStroops,
     metadata: args.metadata,
+    tags: [],
   });
 
   const sent = await tx.signAndSend();
@@ -292,36 +284,29 @@ async function registerOnChain(args: {
 
   const result = sent.result;
   if (result.isErr()) {
-    throw new Error(
-      `Register contract call returned error: ${result.unwrapErr().message}`
-    );
+    throw new Error(`Register contract call returned error: ${result.unwrapErr().message}`);
   }
 }
 
-function assertOnchainMatches(
-  onchain: OnchainResource,
-  published: PublishedResource
-): void {
+function assertOnchainMatches(onchain: OnchainResource, published: PublishedResource): void {
   if (onchain.id !== published.id) {
-    throw new Error(
-      `on-chain id mismatch: got "${onchain.id}", expected "${published.id}"`
-    );
+    throw new Error(`on-chain id mismatch: got "${onchain.id}", expected "${published.id}"`);
   }
   if (onchain.creator !== published.walletAddress) {
     throw new Error(
-      `on-chain creator mismatch: got "${onchain.creator}", expected "${published.walletAddress}"`
+      `on-chain creator mismatch: got "${onchain.creator}", expected "${published.walletAddress}"`,
     );
   }
   const expectedMetadata = published.contentHash ?? "";
   if (expectedMetadata && onchain.metadata !== expectedMetadata) {
     throw new Error(
-      `on-chain metadata mismatch: got "${onchain.metadata}", expected "${expectedMetadata}"`
+      `on-chain metadata mismatch: got "${onchain.metadata}", expected "${expectedMetadata}"`,
     );
   }
   const expectedPrice = usdcToStroops(published.price);
   if (BigInt(onchain.price) !== expectedPrice) {
     throw new Error(
-      `on-chain price mismatch: got ${onchain.price.toString()}, expected ${expectedPrice.toString()}`
+      `on-chain price mismatch: got ${onchain.price.toString()}, expected ${expectedPrice.toString()}`,
     );
   }
 }
@@ -358,15 +343,11 @@ export async function runE2E(): Promise<void> {
     walletAddress: wallet.publicKey,
   });
   if (register.status !== 201 || !register.data?.apiKey) {
-    throw new Error(
-      `Register failed: HTTP ${register.status}: ${JSON.stringify(register.data)}`
-    );
+    throw new Error(`Register failed: HTTP ${register.status}: ${JSON.stringify(register.data)}`);
   }
   const apiKey = register.data.apiKey;
   const authHeaders = { "x-api-key": apiKey };
-  passStep(
-    `publisher ${register.data.id} registered (wallet=${register.data.walletAddress})`
-  );
+  passStep(`publisher ${register.data.id} registered (wallet=${register.data.walletAddress})`);
 
   startStep("Publish resource");
   const externalUrl = `https://example.com/e2e-dataset-${Date.now()}.csv`;
@@ -384,29 +365,22 @@ export async function runE2E(): Promise<void> {
       price: publishPrice,
       externalUrl,
     },
-    authHeaders
+    authHeaders,
   );
   if (publish.status !== 201 || !publish.data?.id) {
-    throw new Error(
-      `Publish failed: HTTP ${publish.status}: ${JSON.stringify(publish.data)}`
-    );
+    throw new Error(`Publish failed: HTTP ${publish.status}: ${JSON.stringify(publish.data)}`);
   }
   const resource = publish.data;
   if (!resource.contentHash) {
     throw new Error(`Publish response is missing contentHash: ${JSON.stringify(resource)}`);
   }
-  passStep(
-    `resource ${resource.id} published (contentHash=${resource.contentHash.slice(0, 16)}…)`
-  );
+  passStep(`resource ${resource.id} published (contentHash=${resource.contentHash.slice(0, 16)}…)`);
 
   let cleanupRequired = true;
   try {
     startStep("Pay verification fee via x402 and verify content");
     const x402Signer = createEd25519Signer(wallet.keypair.secret(), NETWORK_NAME);
-    const x402 = new x402Client().register(
-      NETWORK_NAME,
-      new ExactStellarScheme(x402Signer)
-    );
+    const x402 = new x402Client().register(NETWORK_NAME, new ExactStellarScheme(x402Signer));
     const paidFetch = wrapFetchWithPayment(fetch, x402);
 
     const verifyBody = `${publishTitle}\n\n${publishDescription}\n\nSource URL: ${externalUrl}`;
@@ -417,9 +391,7 @@ export async function runE2E(): Promise<void> {
     });
     if (!verifyRes.ok) {
       const errBody = await verifyRes.text().catch(() => "");
-      throw new Error(
-        `verify-content failed: HTTP ${verifyRes.status}: ${errBody}`
-      );
+      throw new Error(`verify-content failed: HTTP ${verifyRes.status}: ${errBody}`);
     }
     const verifyJson = (await verifyRes.json()) as {
       isOriginal: boolean;
@@ -428,24 +400,22 @@ export async function runE2E(): Promise<void> {
     };
     if (!verifyJson.isOriginal) {
       throw new Error(
-        `verification rejected the content: flags=${JSON.stringify(verifyJson.flags)}`
+        `verification rejected the content: flags=${JSON.stringify(verifyJson.flags)}`,
       );
     }
-    passStep(
-      `verification approved (confidence=${verifyJson.confidence.toFixed(2)})`
-    );
+    passStep(`verification approved (confidence=${verifyJson.confidence.toFixed(2)})`);
 
     startStep("Poll resource verification status until settled");
     const verified = await pollForVerification(resource.id);
     if (verified.status !== "verified" || !verified.listed) {
       throw new Error(
-        `resource did not reach verified+listed within ${VERIFY_TIMEOUT_MS}ms: status=${verified.status}, listed=${verified.listed}`
+        `resource did not reach verified+listed within ${VERIFY_TIMEOUT_MS}ms: status=${verified.status}, listed=${verified.listed}`,
       );
     }
     passStep(
       `resource ${resource.id} is verified and listed (confidence=${
         verified.verification?.confidence ?? "n/a"
-      })`
+      })`,
     );
 
     if (SKIP_ONCHAIN) {
@@ -453,7 +423,7 @@ export async function runE2E(): Promise<void> {
     } else {
       if (!REGISTRY_CONTRACT_ID) {
         throw new Error(
-          "REGISTRY_CONTRACT_ID is required for on-chain steps; set it or pass E2E_SKIP_ONCHAIN=1"
+          "REGISTRY_CONTRACT_ID is required for on-chain steps; set it or pass E2E_SKIP_ONCHAIN=1",
         );
       }
       startStep("Register resource on-chain (creator-signed)");
@@ -473,7 +443,7 @@ export async function runE2E(): Promise<void> {
       }
       assertOnchainMatches(onchain, resource);
       passStep(
-        `on-chain Resource matches: id=${onchain.id}, creator=${onchain.creator}, price=${onchain.price.toString()} stroops`
+        `on-chain Resource matches: id=${onchain.id}, creator=${onchain.creator}, price=${onchain.price.toString()} stroops`,
       );
     }
 
@@ -484,7 +454,7 @@ export async function runE2E(): Promise<void> {
       const unpaid = await jsonRequest("GET", `/resources/${resource.id}`);
       if (unpaid.status !== 402) {
         throw new Error(
-          `expected 402 Payment Required for unpaid access, got HTTP ${unpaid.status}`
+          `expected 402 Payment Required for unpaid access, got HTTP ${unpaid.status}`,
         );
       }
       passStep("paywall returned 402 as expected");
@@ -500,23 +470,16 @@ export async function runE2E(): Promise<void> {
         receipt?: { amount?: string; paidTo?: string };
       };
       if (paidJson.url !== externalUrl) {
-        throw new Error(
-          `paid access returned url="${paidJson.url}", expected "${externalUrl}"`
-        );
+        throw new Error(`paid access returned url="${paidJson.url}", expected "${externalUrl}"`);
       }
       passStep(
-        `paid access returned expected url; receipt: ${paidJson.receipt?.amount} USDC -> ${paidJson.receipt?.paidTo}`
+        `paid access returned expected url; receipt: ${paidJson.receipt?.amount} USDC -> ${paidJson.receipt?.paidTo}`,
       );
     }
   } finally {
     if (cleanupRequired) {
       startStep("Cleanup: delist resource");
-      const del = await jsonRequest(
-        "DELETE",
-        `/resources/${resource.id}`,
-        undefined,
-        authHeaders
-      );
+      const del = await jsonRequest("DELETE", `/resources/${resource.id}`, undefined, authHeaders);
       if (del.ok) {
         passStep(`resource ${resource.id} delisted`);
       } else {

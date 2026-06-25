@@ -12,8 +12,11 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "generate-wallet": "tsx scripts/generate-wallet.ts",
+    "setup-usdc": "tsx scripts/setup-usdc.ts",
     "e2e": "tsx scripts/e2e-test.ts",
-    "reconcile": "tsx scripts/reconcile.ts"
+    "reconcile": "tsx scripts/reconcile.ts",
+    "seed": "tsx scripts/seed.ts",
+    "test": "vitest run"
   },
   "keywords": [
     "x402",
@@ -37,8 +40,10 @@
     "dotenv": "^17.4.1",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
     "multer": "^2.1.1",
     "openai": "^6.33.0",
+    "pino": "^9.6.0",
     "postgres": "^3.4.9",
     "x402-stellar": "^0.2.0",
     "zod": "^4.3.6"
@@ -47,8 +52,11 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.1.0",
+    "@types/supertest": "^6.0.2",
     "drizzle-kit": "^0.31.10",
+    "supertest": "^6.3.3",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.7"
   }
 }

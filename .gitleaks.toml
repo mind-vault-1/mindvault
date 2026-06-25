@@ -1,0 +1,23 @@
+title = "MindVault gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholder values in env examples and docs"
+paths = [
+  '''(?:^|/)server/\.env\.example$''',
+  '''(?:^|/)\.env\.example$''',
+]
+
+regexTarget = "match"
+regexes = [
+  '''G\.\.\.''',
+  '''S\.\.\.''',
+  '''C\.\.\.''',
+  '''sk-or-\.\.\.''',
+  '''eyJ\.\.\.''',
+  '''postgres\.xxx''',
+  '''password@aws''',
+  '''xxx\.supabase\.co''',
+]

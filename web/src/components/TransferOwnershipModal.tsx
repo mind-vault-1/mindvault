@@ -17,17 +17,13 @@ const STATUS_LABELS: Record<string, string> = {
   error: "",
 };
 
-export function TransferOwnershipModal({
-  resourceId,
-  apiKey,
-  onClose,
-  onConfirmed,
-}: Props) {
+export function TransferOwnershipModal({ resourceId, apiKey, onClose, onConfirmed }: Props) {
   const [newCreator, setNewCreator] = useState("");
   const { status, newOwner, error, networkWarning, transferOwnership } = useTransferOwnership(
     resourceId,
     apiKey
   );
+  const { status, newOwner, error, transferOwnership } = useTransferOwnership(resourceId, apiKey);
 
   const busy = ["preparing", "signing", "submitting"].includes(status);
 
@@ -43,16 +39,11 @@ export function TransferOwnershipModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-        <h2 className="mb-4 text-lg font-semibold text-gray-900">
-          Transfer Ownership
-        </h2>
+        <h2 className="mb-4 text-lg font-semibold text-gray-900">Transfer Ownership</h2>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label
-              htmlFor="new-creator"
-              className="block text-sm font-medium text-gray-700"
-            >
+            <label htmlFor="new-creator" className="block text-sm font-medium text-gray-700">
               New owner address (Stellar public key)
             </label>
             <input

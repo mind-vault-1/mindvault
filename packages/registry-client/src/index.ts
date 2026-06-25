@@ -14,11 +14,34 @@
 
 import { Networks } from "@stellar/stellar-sdk";
 
+export {
+  networks,
+  parseStellarNetwork,
+  resolveStellarNetwork,
+  getNetworkPreset,
+  type NetworkPreset,
+  type StellarDeploymentNetwork,
+  type ExplorerNetwork,
+} from "./networks.js";
+
+export {
+  X402_NETWORK_IDS,
+  normalizeX402Network,
+  inferNetworkFromX402,
+  inferNetworkFromRpcUrl,
+  inferNetworkFromHorizonUrl,
+  networkPassphraseForX402,
+  validateNetworkConfig,
+  applyNetworkEnvDefaults,
+  type NetworkConfigInput,
+  type NetworkValidationIssue,
+} from "./validateNetwork.js";
+
 // Re-export everything the bindings generator produced. The Client class,
 // the Resource type, error variants, and network defaults all flow through.
 export * from "./generated/index.js";
 
-import { Client } from "./generated/index.js";
+import { Client, type Resource } from "./generated/index.js";
 
 /** Options for creating a {@link VaultRegistryClient}. */
 export interface RegistryClientOptions {
@@ -53,3 +76,12 @@ export function createRegistryClient(opts: RegistryClientOptions): Client {
 
 /** Convenience alias so callers can write `VaultRegistryClient` if preferred. */
 export type VaultRegistryClient = Client;
+
+export async function listResources(
+  client: Client,
+  start: number,
+  limit: number,
+): Promise<Resource[]> {
+  const tx = await (client as any).list({ start, limit });
+  return tx.result as Resource[];
+}

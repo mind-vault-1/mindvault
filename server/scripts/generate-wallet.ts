@@ -16,9 +16,7 @@ async function main() {
   console.log(`Secret Key:  ${secret}`);
   console.log("\nFunding via Friendbot...");
 
-  const res = await fetch(
-    `https://friendbot.stellar.org?addr=${publicKey}`
-  );
+  const res = await fetch(`https://friendbot.stellar.org?addr=${publicKey}`);
 
   if (res.ok) {
     console.log("Funded with 10,000 XLM on testnet.\n");
@@ -30,9 +28,7 @@ async function main() {
   console.log("Add to your .env:");
   console.log(`  PAY_TO=${publicKey}`);
   console.log(`  AGENT_SECRET_KEY=${secret}`);
-  console.log(
-    "\nNote: For separate platform + agent wallets, run this script twice."
-  );
+  console.log("\nNote: For separate platform + agent wallets, run this script twice.");
 }
 
 main().catch(console.error);

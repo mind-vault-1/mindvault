@@ -1,7 +1,17 @@
 import { Router, type Router as RouterType } from "express";
 import multer from "multer";
-import { z } from "zod/v4";
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
+import { validate, validateFields } from "../middleware/validate.js";
+import {
+  filePublishBodySchema,
+  catalogQuerySchema,
+  linkPublishSchema,
+  registerResourceSchema,
+  preparePriceSchema,
+  setPriceSchema,
+  prepareOwnershipSchema,
+  transferOwnershipSchema,
+} from "../schemas/requests.js";
 import { dynamicPaywall } from "../middleware/dynamicPaywall.js";
 import {
   createFileResource,
@@ -17,11 +27,19 @@ import { db } from "../db/client.js";
 import { payments, resources } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { config } from "../config.js";
+import { getLogger } from "../lib/logger.js";
+import { publishIpRateLimit, publishWalletRateLimit } from "../middleware/rateLimiters.js";
+import { getIdempotencyStore, idempotencyCacheKey } from "../lib/idempotency.js";
 import {
   NETWORK_PASSPHRASE,
+  registryClient,
+  registryKeypair,
   setPrice,
   transferOwnership,
+  buildRegisterTx,
+  submitSignedTx,
 } from "../services/registryClient.js";
+import { parsePayerFromXPayment } from "../lib/parseXPayment.js";
 
 const router: RouterType = Router();
 const upload = multer({
@@ -29,75 +47,120 @@ const upload = multer({
   limits: { fileSize: config.MAX_FILE_SIZE_MB * 1024 * 1024 },
 });
 
-const linkSchema = z.object({
-  title: z.string().min(1),
-  description: z.string().optional(),
-  price: z.string().min(1),
-  walletAddress: z.string().optional(),
-  externalUrl: z.url(),
-});
-
 // POST /resources — publish a resource (authenticated)
-router.post("/resources", apiKeyAuth, upload.single("file"), async (req, res) => {
-  const publisher = req.publisher!;
+router.post(
+  "/resources",
+  apiKeyAuth,
+  publishIpRateLimit,
+  publishWalletRateLimit,
+  upload.single("file"),
+  async (req, res) => {
+    const publisher = req.publisher!;
 
-  // File upload
-  if (req.file) {
-    const { title, description, price, walletAddress } = req.body;
+    // Idempotency (#114): if the client supplies an Idempotency-Key, a retry
+    // with the same key returns the original result instead of creating a
+    // duplicate. Keys are scoped per publisher.
+    const idemKey = req.header("Idempotency-Key");
+    const store = getIdempotencyStore();
+    const scopedKey = idemKey ? idempotencyCacheKey(publisher.id, idemKey) : null;
 
-    if (!title || !price) {
-      res.status(400).json({ error: "title and price are required" });
-      return;
+    if (scopedKey) {
+      const existing = store.get(scopedKey);
+      if (existing) {
+        if (existing.inProgress) {
+          // A concurrent request with the same key is still running.
+          res.status(409).json({ error: "Idempotent request already in progress" });
+          return;
+        }
+        res.status(existing.result.status).json(existing.result.body);
+        return;
+      }
+      store.set(scopedKey, { inProgress: true });
     }
 
-    const resource = await createFileResource({
-      publisherId: publisher.id,
-      title,
-      description,
-      price,
-      walletAddress: walletAddress || publisher.walletAddress,
-      fileBuffer: req.file.buffer,
-      filename: req.file.originalname,
-      mimeType: req.file.mimetype,
-    });
+    // Records the final result under the idempotency key (when keyed), then responds.
+    const sendResult = (status: number, body: unknown) => {
+      if (scopedKey) store.set(scopedKey, { inProgress: false, result: { status, body } });
+      res.status(status).json(body);
+    };
 
-    res.status(201).json({
-      ...resource,
-      accessUrl: `${config.BASE_URL}/resources/${resource.id}`,
-    });
-    return;
-  }
+    try {
+      // File upload
+      if (req.file) {
+        const parsed = validateFields(filePublishBodySchema, req.body);
+        if (!parsed.success) {
+          // Validation failures aren't a committed result — release the key so
+          // a corrected retry can proceed.
+          if (scopedKey) store.delete(scopedKey);
+          res.status(400).json({ error: parsed.error.format() });
+          return;
+        }
 
-  // Link resource
-  const parsed = linkSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
-    return;
-  }
+        const { title, description, price, walletAddress } = parsed.data;
 
-  const resource = await createLinkResource({
-    publisherId: publisher.id,
-    title: parsed.data.title,
-    description: parsed.data.description,
-    price: parsed.data.price,
-    walletAddress: parsed.data.walletAddress || publisher.walletAddress,
-    externalUrl: parsed.data.externalUrl,
-  });
+        const resource = await createFileResource({
+          publisherId: publisher.id,
+          title,
+          description,
+          price,
+          walletAddress: walletAddress || publisher.walletAddress,
+          fileBuffer: req.file.buffer,
+          filename: req.file.originalname,
+          mimeType: req.file.mimetype,
+        });
 
-  res.status(201).json({
-    ...resource,
-    accessUrl: `${config.BASE_URL}/resources/${resource.id}`,
-  });
-});
+        sendResult(201, {
+          ...resource,
+          accessUrl: `${config.BASE_URL}/resources/${resource.id}`,
+        });
+        return;
+      }
+
+      // Link resource
+      const parsed = linkPublishSchema.safeParse(req.body);
+      if (!parsed.success) {
+        if (scopedKey) store.delete(scopedKey);
+        res.status(400).json({ error: parsed.error.format() });
+        return;
+      }
+
+      const resource = await createLinkResource({
+        publisherId: publisher.id,
+        title: parsed.data.title,
+        description: parsed.data.description,
+        price: parsed.data.price,
+        walletAddress: parsed.data.walletAddress || publisher.walletAddress,
+        externalUrl: parsed.data.externalUrl,
+      });
+
+      sendResult(201, {
+        ...resource,
+        accessUrl: `${config.BASE_URL}/resources/${resource.id}`,
+      });
+    } catch (err) {
+      // Publish failed — release the key so the client can retry rather than
+      // being stuck behind a stale in-progress marker.
+      if (scopedKey) store.delete(scopedKey);
+      throw err;
+    }
+  },
+);
 
 // GET /resources — browse catalog (public)
-router.get("/resources", async (_req, res) => {
-  const catalog = await listCatalog();
+router.get("/resources", async (req, res) => {
+  const parsed = catalogQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid query params" });
+    return;
+  }
+  const catalog = await listCatalog(
+    Object.values(parsed.data).some((v) => v !== undefined) ? parsed.data : undefined,
+  );
   res.json(
     catalog.map((r) => ({
       ...r,
       accessUrl: `${config.BASE_URL}/resources/${r.id}`,
-    }))
+    })),
   );
 });
 
@@ -128,18 +191,19 @@ router.get("/resources/:id/verification", async (req, res) => {
 router.get("/resources/:id", dynamicPaywall, async (req, res) => {
   const resource = (req as any).resource;
 
-  // Record payment
+  // Record payment — best-effort payer extraction, never blocks delivery
   let payerAddress = "unknown";
-  try {
-    const paymentHeader = req.headers["x-payment"] as string;
-    if (paymentHeader) {
-      const decoded = JSON.parse(
-        Buffer.from(paymentHeader, "base64").toString()
+  const paymentHeader = req.headers["x-payment"];
+  if (paymentHeader && typeof paymentHeader === "string") {
+    const { payer, parseError } = parsePayerFromXPayment(paymentHeader);
+    if (payer) {
+      payerAddress = payer;
+    } else if (parseError) {
+      getLogger().warn(
+        { event: "x_payment_parse_error", resourceId: resource.id, error: parseError },
+        "failed to parse X-Payment header; payer recorded as unknown",
       );
-      payerAddress = decoded?.payload?.authorization?.address || decoded?.clientAddress || "unknown";
     }
-  } catch {
-    // Best effort — don't fail delivery if we can't parse
   }
 
   const [payment] = await db
@@ -181,7 +245,7 @@ router.get("/resources/:id", dynamicPaywall, async (req, res) => {
   res.setHeader("Content-Type", mimeType);
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename="${resource.storagePath.split("/").pop()}"`
+    `attachment; filename="${resource.storagePath.split("/").pop()}"`,
   );
   res.send(buffer);
 });
@@ -196,8 +260,8 @@ router.delete("/resources/:id", apiKeyAuth, async (req, res) => {
   res.json({ message: "Resource delisted", id: resource.id });
 });
 
-// POST /resources/:id/register — register a verified resource on-chain (owner only)
-router.post("/resources/:id/register", apiKeyAuth, async (req, res) => {
+// GET /resources/:id/register/prepare — get unsigned register tx (owner only)
+router.get("/resources/:id/register/prepare", apiKeyAuth, async (req, res) => {
   const publisher = req.publisher!;
   const resourceId = req.params.id as string;
 
@@ -219,68 +283,229 @@ router.post("/resources/:id/register", apiKeyAuth, async (req, res) => {
     return;
   }
 
-  await db.update(resources).set({ onchainStatus: "pending" }).where(eq(resources.id, resourceId));
-
   try {
-    const priceStroops = BigInt(Math.round(parseFloat(resource.price) * 1_000_000_0));
-    const tx = await (registryClient as any).register(
-      {
-        creator: resource.walletAddress,
-        id: resourceId,
-        price: priceStroops,
-        metadata: JSON.stringify({ title: resource.title, description: resource.description ?? "" }),
-      },
-      { simulate: false }
+    // Build metadata from resource
+    const metadata = JSON.stringify({
+      title: resource.title,
+      description: resource.description ?? "",
+      contentHash: resource.contentHash,
+    });
+
+    const unsignedXdr = await buildRegisterTx(
+      resource.walletAddress,
+      resourceId,
+      resource.price,
+      metadata,
     );
 
-    await tx.signAndSend({ signTransaction: async (xdr: string) => {
-      const { Transaction, Networks } = await import("@stellar/stellar-sdk");
-      const stellarTx = new Transaction(xdr, NETWORK_PASSPHRASE);
-      stellarTx.sign(registryKeypair);
-      return stellarTx.toXDR();
-    }});
-
-    const [updated] = await db
-      .update(resources)
-      .set({ onchainStatus: "registered" })
-      .where(eq(resources.id, resourceId))
-      .returning();
-
-    res.json({ id: updated.id, onchainStatus: updated.onchainStatus });
+    res.json({
+      unsignedXdr,
+      networkPassphrase: NETWORK_PASSPHRASE,
+      metadata: {
+        resourceId,
+        creator: resource.walletAddress,
+        price: resource.price,
+        title: resource.title,
+        description: resource.description,
+      },
+    });
   } catch (err: any) {
-    await db.update(resources).set({ onchainStatus: "failed" }).where(eq(resources.id, resourceId));
-    res.status(502).json({ error: "On-chain registration failed", detail: err?.message });
+    res.status(500).json({ error: "Failed to build register transaction", detail: err?.message });
   }
 });
+
+// POST /resources/:id/register — register a verified resource on-chain (owner only)
+// Can be called again to retry if onchainStatus is "failed".
+router.post(
+  "/resources/:id/register",
+  apiKeyAuth,
+  validate(registerResourceSchema),
+  async (req, res) => {
+    const publisher = req.publisher!;
+    const resourceId = req.params.id as string;
+
+    const resource = await getResourceById(resourceId);
+    if (!resource) {
+      res.status(404).json({ error: "Resource not found" });
+      return;
+    }
+    if (resource.publisherId !== publisher.id) {
+      res.status(403).json({ error: "Forbidden: you do not own this resource" });
+      return;
+    }
+    if (resource.verificationStatus !== "verified") {
+      res.status(400).json({ error: "Resource must be verified before registering on-chain" });
+      return;
+    }
+    if (resource.onchainStatus === "registered") {
+      res.status(409).json({
+        error: "Resource is already registered on-chain",
+        onchainTxHash: resource.onchainTxHash,
+      });
+      return;
+    }
+    // "pending" means a registration is already in-flight — don't double-submit
+    if (resource.onchainStatus === "pending") {
+      res.status(409).json({ error: "Registration already in progress" });
+      return;
+    }
+    // "none" or "failed" → proceed (failed is retryable)
+
+    const { signedXdr } = req.body;
+
+    await db
+      .update(resources)
+      .set({ onchainStatus: "pending" })
+      .where(eq(resources.id, resourceId));
+
+    try {
+      if (signedXdr) {
+        // New flow: submit signed XDR
+        const result = await submitSignedTx(signedXdr);
+
+        if (result.success) {
+          getLogger().info(
+            {
+              event: "onchain_register",
+              resourceId,
+              txHash: result.txHash,
+              success: true,
+            },
+            "on-chain resource registration succeeded",
+          );
+          const [updated] = await db
+            .update(resources)
+            .set({ onchainStatus: "registered", onchainTxHash: result.txHash })
+            .where(eq(resources.id, resourceId))
+            .returning();
+
+          res.json({
+            id: updated.id,
+            onchainStatus: updated.onchainStatus,
+            txHash: result.txHash,
+          });
+        } else {
+          getLogger().warn(
+            {
+              event: "onchain_register",
+              resourceId,
+              txHash: result.txHash || undefined,
+              success: false,
+              error: result.error,
+            },
+            "on-chain resource registration failed",
+          );
+          await db
+            .update(resources)
+            .set({ onchainStatus: "failed" })
+            .where(eq(resources.id, resourceId));
+          res.status(502).json({
+            error: "On-chain registration failed",
+            detail: result.error,
+            txHash: result.txHash || undefined,
+          });
+        }
+      } else {
+        // Legacy flow: server signs and submits
+        const priceStroops = BigInt(Math.round(parseFloat(resource.price) * 1_000_000_0));
+        const tx = await (registryClient as any).register(
+          {
+            creator: resource.walletAddress,
+            id: resourceId,
+            price: priceStroops,
+            metadata: JSON.stringify({
+              title: resource.title,
+              description: resource.description ?? "",
+            }),
+            tags: [],
+          },
+          { simulate: false },
+        );
+
+        const sentTx = await tx.signAndSend({
+          signTransaction: async (xdr: string) => {
+            const { Transaction } = await import("@stellar/stellar-sdk");
+            const stellarTx = new Transaction(xdr, NETWORK_PASSPHRASE);
+            stellarTx.sign(registryKeypair);
+            return stellarTx.toXDR();
+          },
+        });
+
+        const legacyTxHash = sentTx?.sendTransactionResponse?.hash ?? "";
+        getLogger().info(
+          {
+            event: "onchain_register",
+            resourceId,
+            txHash: legacyTxHash,
+            success: true,
+            flow: "legacy",
+          },
+          "on-chain resource registration succeeded",
+        );
+
+        const [updated] = await db
+          .update(resources)
+          .set({
+            onchainStatus: "registered",
+            ...(legacyTxHash ? { onchainTxHash: legacyTxHash } : {}),
+          })
+          .where(eq(resources.id, resourceId))
+          .returning();
+
+        res.json({
+          id: updated.id,
+          onchainStatus: updated.onchainStatus,
+          ...(legacyTxHash ? { txHash: legacyTxHash } : {}),
+        });
+      }
+    } catch (err: any) {
+      getLogger().error(
+        { event: "onchain_register", resourceId, success: false, err },
+        "on-chain resource registration failed",
+      );
+      // Mark failed but do NOT touch `listed` — resource stays available for purchase
+      await db
+        .update(resources)
+        .set({ onchainStatus: "failed" })
+        .where(eq(resources.id, resourceId));
+      res.status(502).json({
+        error: "On-chain registration failed",
+        detail: err?.message,
+        retryable: true,
+      });
+    }
+  },
+);
 
 // POST /resources/:id/price/prepare — build unsigned set_price tx (owner only)
 // Returns the XDR of an unsigned transaction the owner must sign client-side.
-router.post("/resources/:id/price/prepare", apiKeyAuth, async (req, res) => {
-  const publisher = req.publisher!;
-  const resourceId = req.params.id as string;
+router.post(
+  "/resources/:id/price/prepare",
+  apiKeyAuth,
+  validate(preparePriceSchema),
+  async (req, res) => {
+    const publisher = req.publisher!;
+    const resourceId = req.params.id as string;
 
-  const resource = await getResourceById(resourceId);
-  if (!resource) {
-    res.status(404).json({ error: "Resource not found" });
-    return;
-  }
-  if (resource.publisherId !== publisher.id) {
-    res.status(403).json({ error: "Forbidden: you do not own this resource" });
-    return;
-  }
+    const resource = await getResourceById(resourceId);
+    if (!resource) {
+      res.status(404).json({ error: "Resource not found" });
+      return;
+    }
+    if (resource.publisherId !== publisher.id) {
+      res.status(403).json({ error: "Forbidden: you do not own this resource" });
+      return;
+    }
 
-  const parsed = z.object({ price: z.string().min(1) }).safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
-    return;
-  }
+    const { price } = req.body;
 
-  const unsignedXdr = await setPrice(resourceId, parsed.data.price);
-  res.json({ unsignedXdr, networkPassphrase: NETWORK_PASSPHRASE });
-});
+    const unsignedXdr = await setPrice(resourceId, price);
+    res.json({ unsignedXdr, networkPassphrase: NETWORK_PASSPHRASE });
+  },
+);
 
 // POST /resources/:id/price — submit signed set_price tx and sync DB price
-router.post("/resources/:id/price", apiKeyAuth, async (req, res) => {
+router.post("/resources/:id/price", apiKeyAuth, validate(setPriceSchema), async (req, res) => {
   const publisher = req.publisher!;
   const resourceId = req.params.id as string;
 
@@ -294,23 +519,12 @@ router.post("/resources/:id/price", apiKeyAuth, async (req, res) => {
     return;
   }
 
-  const parsed = z
-    .object({ signedXdr: z.string().min(1), price: z.string().min(1) })
-    .safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
-    return;
-  }
+  const { signedXdr, price } = req.body;
 
   // Submit the signed transaction via the registry client's underlying RPC server
-  const { rpc: StellarRpc, Transaction: StellarTransaction } = await import(
-    "@stellar/stellar-sdk"
-  );
+  const { rpc: StellarRpc, Transaction: StellarTransaction } = await import("@stellar/stellar-sdk");
   const rpcServer = new StellarRpc.Server(config.SOROBAN_RPC_URL);
-  const signedTx = new StellarTransaction(
-    parsed.data.signedXdr,
-    NETWORK_PASSPHRASE
-  );
+  const signedTx = new StellarTransaction(signedXdr, NETWORK_PASSPHRASE);
   const sendResult = await rpcServer.sendTransaction(signedTx);
 
   if (sendResult.status !== "PENDING") {
@@ -341,7 +555,7 @@ router.post("/resources/:id/price", apiKeyAuth, async (req, res) => {
   // Sync the DB price to match the on-chain value
   const [updated] = await db
     .update(resources)
-    .set({ price: parsed.data.price })
+    .set({ price })
     .where(eq(resources.id, resourceId))
     .returning();
 
@@ -349,93 +563,90 @@ router.post("/resources/:id/price", apiKeyAuth, async (req, res) => {
 });
 
 // POST /resources/:id/ownership/prepare — build unsigned transfer_ownership tx (owner only)
-router.post("/resources/:id/ownership/prepare", apiKeyAuth, async (req, res) => {
-  const publisher = req.publisher!;
-  const resourceId = req.params.id as string;
+router.post(
+  "/resources/:id/ownership/prepare",
+  apiKeyAuth,
+  validate(prepareOwnershipSchema),
+  async (req, res) => {
+    const publisher = req.publisher!;
+    const resourceId = req.params.id as string;
 
-  const resource = await getResourceById(resourceId);
-  if (!resource) {
-    res.status(404).json({ error: "Resource not found" });
-    return;
-  }
-  if (resource.publisherId !== publisher.id) {
-    res.status(403).json({ error: "Forbidden: you do not own this resource" });
-    return;
-  }
-
-  const parsed = z
-    .object({ newCreator: z.string().min(1) })
-    .safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
-    return;
-  }
-
-  const unsignedXdr = await transferOwnership(resourceId, parsed.data.newCreator);
-  res.json({ unsignedXdr, networkPassphrase: NETWORK_PASSPHRASE });
-});
-
-// POST /resources/:id/ownership — submit signed transfer_ownership tx and sync DB
-router.post("/resources/:id/ownership", apiKeyAuth, async (req, res) => {
-  const publisher = req.publisher!;
-  const resourceId = req.params.id as string;
-
-  const resource = await getResourceById(resourceId);
-  if (!resource) {
-    res.status(404).json({ error: "Resource not found" });
-    return;
-  }
-  if (resource.publisherId !== publisher.id) {
-    res.status(403).json({ error: "Forbidden: you do not own this resource" });
-    return;
-  }
-
-  const parsed = z
-    .object({ signedXdr: z.string().min(1), newCreator: z.string().min(1) })
-    .safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
-    return;
-  }
-
-  const { rpc: StellarRpc, Transaction: StellarTransaction } = await import(
-    "@stellar/stellar-sdk"
-  );
-  const rpcServer = new StellarRpc.Server(config.SOROBAN_RPC_URL);
-  const signedTx = new StellarTransaction(parsed.data.signedXdr, NETWORK_PASSPHRASE);
-  const sendResult = await rpcServer.sendTransaction(signedTx);
-
-  if (sendResult.status !== "PENDING") {
-    res.status(502).json({ error: "Transaction rejected", detail: sendResult.status });
-    return;
-  }
-
-  const txHash = sendResult.hash;
-  let confirmed = false;
-  for (let i = 0; i < 10; i++) {
-    await new Promise((r) => setTimeout(r, 3000));
-    const txResult = await rpcServer.getTransaction(txHash);
-    if (txResult.status === StellarRpc.Api.GetTransactionStatus.SUCCESS) {
-      confirmed = true;
-      break;
-    }
-    if (txResult.status === StellarRpc.Api.GetTransactionStatus.FAILED) {
-      res.status(502).json({ error: "Transaction failed on-chain" });
+    const resource = await getResourceById(resourceId);
+    if (!resource) {
+      res.status(404).json({ error: "Resource not found" });
       return;
     }
-  }
-  if (!confirmed) {
-    res.status(504).json({ error: "Transaction confirmation timed out" });
-    return;
-  }
+    if (resource.publisherId !== publisher.id) {
+      res.status(403).json({ error: "Forbidden: you do not own this resource" });
+      return;
+    }
 
-  const [updated] = await db
-    .update(resources)
-    .set({ walletAddress: parsed.data.newCreator })
-    .where(eq(resources.id, resourceId))
-    .returning();
+    const { newCreator } = req.body;
 
-  res.json({ id: updated.id, newCreator: updated.walletAddress, status: "confirmed" });
-});
+    const unsignedXdr = await transferOwnership(resourceId, newCreator);
+    res.json({ unsignedXdr, networkPassphrase: NETWORK_PASSPHRASE });
+  },
+);
+
+// POST /resources/:id/ownership — submit signed transfer_ownership tx and sync DB
+router.post(
+  "/resources/:id/ownership",
+  apiKeyAuth,
+  validate(transferOwnershipSchema),
+  async (req, res) => {
+    const publisher = req.publisher!;
+    const resourceId = req.params.id as string;
+
+    const resource = await getResourceById(resourceId);
+    if (!resource) {
+      res.status(404).json({ error: "Resource not found" });
+      return;
+    }
+    if (resource.publisherId !== publisher.id) {
+      res.status(403).json({ error: "Forbidden: you do not own this resource" });
+      return;
+    }
+
+    const { signedXdr, newCreator } = req.body;
+
+    const { rpc: StellarRpc, Transaction: StellarTransaction } =
+      await import("@stellar/stellar-sdk");
+    const rpcServer = new StellarRpc.Server(config.SOROBAN_RPC_URL);
+    const signedTx = new StellarTransaction(signedXdr, NETWORK_PASSPHRASE);
+    const sendResult = await rpcServer.sendTransaction(signedTx);
+
+    if (sendResult.status !== "PENDING") {
+      res.status(502).json({ error: "Transaction rejected", detail: sendResult.status });
+      return;
+    }
+
+    const txHash = sendResult.hash;
+    let confirmed = false;
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const txResult = await rpcServer.getTransaction(txHash);
+      if (txResult.status === StellarRpc.Api.GetTransactionStatus.SUCCESS) {
+        confirmed = true;
+        break;
+      }
+      if (txResult.status === StellarRpc.Api.GetTransactionStatus.FAILED) {
+        res.status(502).json({ error: "Transaction failed on-chain" });
+        return;
+      }
+    }
+    if (!confirmed) {
+      res.status(504).json({ error: "Transaction confirmation timed out" });
+      return;
+    }
+
+    const [updated] = await db
+      .update(resources)
+      .set({ walletAddress: newCreator })
+      .where(eq(resources.id, resourceId))
+      .returning();
+
+    res.json({ id: updated.id, newCreator: updated.walletAddress, status: "confirmed" });
+  },
+);
 
 export default router;

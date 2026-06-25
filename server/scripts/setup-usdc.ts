@@ -8,14 +8,11 @@ import "dotenv/config";
 import {
   Keypair,
   TransactionBuilder,
-  Networks,
   Operation,
   Asset,
   Horizon,
 } from "@stellar/stellar-sdk";
-
-const TESTNET_USDC_ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
-const HORIZON_URL = "https://horizon-testnet.stellar.org";
+import { getNetworkPreset, resolveStellarNetwork } from "@mindvault/registry-client";
 
 async function main() {
   const secretKey = process.env.AGENT_SECRET_KEY;
@@ -24,16 +21,21 @@ async function main() {
     process.exit(1);
   }
 
+  const stellarNetwork = resolveStellarNetwork(process.env.STELLAR_NETWORK);
+  const preset = getNetworkPreset(stellarNetwork);
+  const usdcIssuer = preset.usdcClassicIssuer;
+  const horizonUrl = preset.horizonUrl;
   const keypair = Keypair.fromSecret(secretKey);
   const publicKey = keypair.publicKey();
-  const server = new Horizon.Server(HORIZON_URL);
+  const server = new Horizon.Server(horizonUrl);
 
+  console.log(`Network: ${stellarNetwork}`);
   console.log(`Wallet: ${publicKey}\n`);
 
   // Check current balances
   const account = await server.loadAccount(publicKey);
   const usdcBalance = account.balances.find(
-    (b: any) => b.asset_code === "USDC" && b.asset_issuer === TESTNET_USDC_ISSUER
+    (b: any) => b.asset_code === "USDC" && b.asset_issuer === usdcIssuer,
   );
 
   if (usdcBalance) {
@@ -41,10 +43,10 @@ async function main() {
   } else {
     console.log("Adding USDC trustline...");
 
-    const usdc = new Asset("USDC", TESTNET_USDC_ISSUER);
+    const usdc = new Asset("USDC", usdcIssuer);
     const tx = new TransactionBuilder(account, {
       fee: "100",
-      networkPassphrase: Networks.TESTNET,
+      networkPassphrase: preset.networkPassphrase,
     })
       .addOperation(Operation.changeTrust({ asset: usdc }))
       .setTimeout(30)
@@ -55,36 +57,28 @@ async function main() {
     console.log("Trustline added.");
   }
 
-  // Get testnet USDC from friendbot-style faucet
-  console.log("\nRequesting testnet USDC...");
+  // Get testnet USDC from friendbot-style faucet (testnet only)
+  if (stellarNetwork === "testnet") {
+    console.log("\nRequesting testnet USDC...");
 
-  const faucetUrl = `https://friendbot.stellar.org?addr=${publicKey}`;
-  // Friendbot only gives XLM. For USDC we need to use the testnet USDC issuer's distribution.
-  // The standard approach is to use the Stellar Lab or a known testnet USDC faucet.
-  // Let's try the common testnet USDC distribution endpoint:
-
-  try {
-    const resp = await fetch(
-      `https://horizon-testnet.stellar.org/friendbot?addr=${publicKey}`
-    );
-    if (resp.ok) {
-      console.log("Friendbot: topped up XLM.");
+    try {
+      const resp = await fetch(`https://horizon-testnet.stellar.org/friendbot?addr=${publicKey}`);
+      if (resp.ok) {
+        console.log("Friendbot: topped up XLM.");
+      }
+    } catch {
+      console.log("Friendbot XLM top-up skipped (may already have XLM).");
     }
-  } catch {
-    console.log("Friendbot XLM top-up skipped (may already have XLM).");
+  } else {
+    console.log("\nMainnet: fund USDC manually from an exchange or Circle Mint.");
   }
-
-  // For testnet USDC, we can do a path payment from the issuer if we have a distribution account,
-  // or use the Stellar testnet token faucet. Let's check if there's a simpler way:
-  // The x402 testnet facilitator uses the Soroban USDC contract, not classic USDC.
-  // Contract address: CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
 
   console.log(`
 Note: x402 on Stellar uses the Soroban USDC token contract, not classic USDC.
 
-Testnet USDC contract: CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
+${stellarNetwork} USDC SAC contract: ${preset.usdcSacContractId}
 
-To get testnet USDC for x402:
+To get ${stellarNetwork} USDC for x402:
   1. Go to https://lab.stellar.org
   2. Switch to Testnet
   3. Go to "Fund account" or use the SAC (Stellar Asset Contract) mint

@@ -6,9 +6,11 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@mindvault/registry-client": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@stellar/stellar-sdk": "^15.0.1",
     "@x402/fetch": "^2.9.0",
@@ -18,6 +20,7 @@
   "devDependencies": {
     "@types/node": "^25.9.1",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.7"
   }
 }

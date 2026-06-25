@@ -1,0 +1,61 @@
+name: PR checks
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'server/**'
+      - 'web/**'
+      - 'packages/**'
+      - 'mcp/**'
+      - 'contract/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.eslintrc.cjs'
+      - '.prettierrc'
+      - 'prettier.config.js'
+
+jobs:
+  node-ci:
+    name: Typecheck, build, lint, and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec eslint "server/src/**/*.{ts,tsx}" "web/src/**/*.{ts,tsx}" "packages/**/*.{ts,tsx}" "mcp/src/**/*.{ts,tsx}"
+      - run: pnpm exec prettier --check "server/**/*.{ts,tsx,js,json,md}" "web/**/*.{ts,tsx,js,json,md}" "packages/**/*.{ts,tsx,js,json,md}" "mcp/**/*.{ts,tsx,js,json,md}"
+      - run: pnpm run build:registry-client
+      - run: pnpm --filter @mindvault/server build
+      - run: pnpm --filter @mindvault/web build
+      - run: pnpm test
+
+  contract-ci:
+    name: Contract formatting, lint, and tests
+    runs-on: ubuntu-latest
+    needs: node-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contract/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contract/Cargo.toml', 'contract/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - run: cd contract && cargo fmt --all -- --check
+      - run: cd contract && cargo clippy --all-targets --all-features -- -D warnings
+      - run: cd contract && cargo test

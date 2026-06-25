@@ -33,8 +33,5 @@ export async function getPublisherById(id: string) {
 }
 
 export async function getPublisherResources(publisherId: string) {
-  return db
-    .select()
-    .from(resources)
-    .where(eq(resources.publisherId, publisherId));
+  return db.select().from(resources).where(eq(resources.publisherId, publisherId));
 }

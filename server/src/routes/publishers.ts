@@ -1,10 +1,8 @@
 import { Router, type Router as RouterType } from "express";
-import { z } from "zod/v4";
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
-import {
-  registerPublisher,
-  getPublisherResources,
-} from "../services/publisherService.js";
+import { validate } from "../middleware/validate.js";
+import { publisherRegisterSchema } from "../schemas/requests.js";
+import { registerPublisher, getPublisherResources } from "../services/publisherService.js";
 import { eq, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { publishers, resources, payments } from "../db/schema.js";
@@ -12,22 +10,10 @@ import { config } from "../config.js";
 
 const router: RouterType = Router();
 
-const registerSchema = z.object({
-  name: z.string().min(1),
-  email: z.email(),
-  walletAddress: z.string().min(1),
-});
-
 // POST /publishers — register a new publisher (public)
-router.post("/publishers", async (req, res) => {
-  const parsed = registerSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.format() });
-    return;
-  }
-
+router.post("/publishers", validate(publisherRegisterSchema), async (req, res) => {
   try {
-    const { publisher, apiKey } = await registerPublisher(parsed.data);
+    const { publisher, apiKey } = await registerPublisher(req.body);
     res.status(201).json({
       id: publisher.id,
       name: publisher.name,
@@ -123,10 +109,7 @@ router.get("/publishers/me/analytics", apiKeyAuth, async (req, res) => {
   // Compute per-resource stats
   const resourceStats = pubResources.map((r) => {
     const resourcePayments = allPayments.filter((p) => p.resourceId === r.id);
-    const totalEarned = resourcePayments.reduce(
-      (sum, p) => sum + parseFloat(p.amount),
-      0
-    );
+    const totalEarned = resourcePayments.reduce((sum, p) => sum + parseFloat(p.amount), 0);
     return {
       id: r.id,
       title: r.title,
@@ -146,22 +129,13 @@ router.get("/publishers/me/analytics", apiKeyAuth, async (req, res) => {
   });
 
   // Summary
-  const totalEarned = allPayments.reduce(
-    (sum, p) => sum + parseFloat(p.amount),
-    0
-  );
+  const totalEarned = allPayments.reduce((sum, p) => sum + parseFloat(p.amount), 0);
   const totalSales = allPayments.length;
   const totalResources = pubResources.length;
   const listedResources = pubResources.filter((r) => r.listed).length;
-  const verifiedResources = pubResources.filter(
-    (r) => r.verificationStatus === "verified"
-  ).length;
-  const rejectedResources = pubResources.filter(
-    (r) => r.verificationStatus === "rejected"
-  ).length;
-  const pendingResources = pubResources.filter(
-    (r) => r.verificationStatus === "pending"
-  ).length;
+  const verifiedResources = pubResources.filter((r) => r.verificationStatus === "verified").length;
+  const rejectedResources = pubResources.filter((r) => r.verificationStatus === "rejected").length;
+  const pendingResources = pubResources.filter((r) => r.verificationStatus === "pending").length;
 
   res.json({
     summary: {
@@ -204,14 +178,9 @@ router.get("/publishers/leaderboard", async (_req, res) => {
   const leaderboard = allPublishers.map((pub) => {
     const pubResources = allResources.filter((r) => r.publisherId === pub.id);
     const pubResourceIds = pubResources.map((r) => r.id);
-    const pubPayments = allPayments.filter((p) =>
-      pubResourceIds.includes(p.resourceId)
-    );
+    const pubPayments = allPayments.filter((p) => pubResourceIds.includes(p.resourceId));
 
-    const totalEarned = pubPayments.reduce(
-      (sum, p) => sum + parseFloat(p.amount),
-      0
-    );
+    const totalEarned = pubPayments.reduce((sum, p) => sum + parseFloat(p.amount), 0);
 
     return {
       id: pub.id,
@@ -220,18 +189,14 @@ router.get("/publishers/leaderboard", async (_req, res) => {
       joinedAt: pub.createdAt,
       totalResources: pubResources.length,
       listedResources: pubResources.filter((r) => r.listed).length,
-      verifiedResources: pubResources.filter(
-        (r) => r.verificationStatus === "verified"
-      ).length,
+      verifiedResources: pubResources.filter((r) => r.verificationStatus === "verified").length,
       totalSales: pubPayments.length,
       totalEarned: totalEarned.toFixed(4),
     };
   });
 
   // Sort by earnings descending
-  leaderboard.sort(
-    (a, b) => parseFloat(b.totalEarned) - parseFloat(a.totalEarned)
-  );
+  leaderboard.sort((a, b) => parseFloat(b.totalEarned) - parseFloat(a.totalEarned));
 
   res.json(leaderboard);
 });

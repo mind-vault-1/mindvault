@@ -53,9 +53,7 @@
         "publishers_email_unique": {
           "name": "publishers_email_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "email"
-          ]
+          "columns": ["email"]
         }
       },
       "policies": {},
@@ -162,12 +160,8 @@
           "name": "resources_publisher_id_publishers_id_fk",
           "tableFrom": "resources",
           "tableTo": "publishers",
-          "columnsFrom": [
-            "publisher_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["publisher_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -226,12 +220,8 @@
           "name": "verifications_resource_id_resources_id_fk",
           "tableFrom": "verifications",
           "tableTo": "resources",
-          "columnsFrom": [
-            "resource_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["resource_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -247,20 +237,12 @@
     "public.resource_type": {
       "name": "resource_type",
       "schema": "public",
-      "values": [
-        "file",
-        "link"
-      ]
+      "values": ["file", "link"]
     },
     "public.verification_status": {
       "name": "verification_status",
       "schema": "public",
-      "values": [
-        "pending",
-        "verified",
-        "rejected",
-        "skipped"
-      ]
+      "values": ["pending", "verified", "rejected", "skipped"]
     }
   },
   "schemas": {},

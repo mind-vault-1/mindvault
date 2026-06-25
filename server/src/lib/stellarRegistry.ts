@@ -93,7 +93,7 @@ async function defaultFetcher(id: string) {
 
 export async function getOnChainPrice(
   resourceId: string,
-  options: GetOnChainPriceOptions = {}
+  options: GetOnChainPriceOptions = {},
 ): Promise<OnChainPrice> {
   const cache = options.cache ?? defaultCache;
   const now = options.now ?? Date.now;
@@ -109,15 +109,10 @@ export async function getOnChainPrice(
   try {
     record = await fetcher(resourceId);
   } catch (err) {
-    throw new OnChainLookupError(
-      `Failed to read on-chain record for resource ${resourceId}`,
-      err
-    );
+    throw new OnChainLookupError(`Failed to read on-chain record for resource ${resourceId}`, err);
   }
   if (!record) {
-    throw new OnChainLookupError(
-      `Resource ${resourceId} not found on-chain`
-    );
+    throw new OnChainLookupError(`Resource ${resourceId} not found on-chain`);
   }
 
   const price = stroopsToUsdc(record.price);

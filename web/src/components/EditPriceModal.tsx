@@ -18,13 +18,7 @@ const STATUS_LABELS: Record<string, string> = {
   error: "",
 };
 
-export function EditPriceModal({
-  resourceId,
-  currentPrice,
-  apiKey,
-  onClose,
-  onConfirmed,
-}: Props) {
+export function EditPriceModal({ resourceId, currentPrice, apiKey, onClose, onConfirmed }: Props) {
   const [price, setPrice] = useState(currentPrice);
   const { status, newPrice, error, networkWarning, editPrice } = useEditPrice(resourceId, apiKey);
 
@@ -46,10 +40,7 @@ export function EditPriceModal({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label
-              htmlFor="price"
-              className="block text-sm font-medium text-gray-700"
-            >
+            <label htmlFor="price" className="block text-sm font-medium text-gray-700">
               New price (USDC)
             </label>
             <input

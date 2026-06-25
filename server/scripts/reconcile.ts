@@ -13,7 +13,7 @@
  *   1 — one or more discrepancies were found
  *   2 — the script failed to run (config/network error)
  */
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { db } from "../src/db/client.js";
 import { resources } from "../src/db/schema.js";
 import { getResource, resourceCount } from "../src/services/registryClient.js";
@@ -39,13 +39,27 @@ interface MissingInDbEntry {
   chainPrice: string;
 }
 
+interface OwnerMismatchEntry {
+  resourceId: string;
+  dbOwner: string;
+  chainOwner: string;
+}
+
+interface ListingDriftEntry {
+  resourceId: string;
+  dbListed: boolean;
+  onchainStatus: string;
+}
+
 export interface ReconciliationSummary {
   checkedAt: string;
   totalChecked: number;
   inSync: number;
   mismatches: MismatchEntry[];
+  ownerMismatches: OwnerMismatchEntry[];
   missingOnChain: MissingOnChainEntry[];
   missingInDb: MissingInDbEntry[];
+  listingDrift: ListingDriftEntry[];
 }
 
 /** Convert a USDC string like "0.50" to stroops (bigint, 7 decimals). */
@@ -76,8 +90,10 @@ function stroopsToUsdcString(stroops: bigint): string {
 export function printSummary(summary: ReconciliationSummary): 0 | 1 {
   const totalIssues =
     summary.mismatches.length +
+    summary.ownerMismatches.length +
     summary.missingOnChain.length +
-    summary.missingInDb.length;
+    summary.missingInDb.length +
+    summary.listingDrift.length;
 
   const line = "========================================";
   const sub = "----------------------------------------";
@@ -89,18 +105,32 @@ export function printSummary(summary: ReconciliationSummary): 0 | 1 {
   out.push(`Resources checked:      ${summary.totalChecked}`);
   out.push(`In sync:                ${summary.inSync}`);
   out.push(`Price mismatches:       ${summary.mismatches.length}`);
+  out.push(`Owner mismatches:       ${summary.ownerMismatches.length}`);
   out.push(`Missing on-chain:       ${summary.missingOnChain.length}`);
   out.push(`Missing in DB:          ${summary.missingInDb.length}`);
+  out.push(`Listing drift:          ${summary.listingDrift.length}`);
 
   if (summary.mismatches.length > 0) {
     out.push("");
-    out.push(`MISMATCHES (${summary.mismatches.length})`);
+    out.push(`PRICE MISMATCHES (${summary.mismatches.length})`);
     out.push(sub);
     for (const m of summary.mismatches) {
       out.push(`Resource ID: ${m.resourceId}`);
       out.push(`DB price:    ${m.dbPrice} USDC`);
       out.push(`Chain price: ${m.chainPrice} USDC`);
       out.push(`Publisher:   ${m.publisherWallet}`);
+      out.push("");
+    }
+  }
+
+  if (summary.ownerMismatches.length > 0) {
+    out.push("");
+    out.push(`OWNER MISMATCHES (${summary.ownerMismatches.length})`);
+    out.push(sub);
+    for (const m of summary.ownerMismatches) {
+      out.push(`Resource ID: ${m.resourceId}`);
+      out.push(`DB owner:    ${m.dbOwner}`);
+      out.push(`Chain owner: ${m.chainOwner}`);
       out.push("");
     }
   }
@@ -126,6 +156,17 @@ export function printSummary(summary: ReconciliationSummary): 0 | 1 {
     }
   }
 
+  if (summary.listingDrift.length > 0) {
+    out.push(`LISTING DRIFT (${summary.listingDrift.length})`);
+    out.push(sub);
+    for (const m of summary.listingDrift) {
+      out.push(`Resource ID:    ${m.resourceId}`);
+      out.push(`DB listed:      ${m.dbListed}`);
+      out.push(`On-chain status: ${m.onchainStatus} (expected "registered")`);
+      out.push("");
+    }
+  }
+
   out.push(line);
   if (totalIssues === 0) {
     out.push("Result: ALL CLEAR");
@@ -137,14 +178,16 @@ export function printSummary(summary: ReconciliationSummary): 0 | 1 {
   return 1;
 }
 
-async function reconcile(): Promise<ReconciliationSummary> {
+export async function reconcile(): Promise<ReconciliationSummary> {
   const summary: ReconciliationSummary = {
     checkedAt: new Date().toISOString(),
     totalChecked: 0,
     inSync: 0,
     mismatches: [],
+    ownerMismatches: [],
     missingOnChain: [],
     missingInDb: [],
+    listingDrift: [],
   };
 
   const registeredRows = await db
@@ -167,24 +210,35 @@ async function reconcile(): Promise<ReconciliationSummary> {
       continue;
     }
 
+    const problems: string[] = [];
+
     const dbStroops = usdcStringToStroops(row.price);
     if (onChain.price !== dbStroops) {
-      process.stdout.write(
-        `PRICE MISMATCH (db=${row.price}, chain=${stroopsToUsdcString(
-          onChain.price
-        )})\n`
-      );
+      problems.push(`price db=${row.price} chain=${stroopsToUsdcString(onChain.price)}`);
       summary.mismatches.push({
         resourceId: row.id,
         dbPrice: row.price,
         chainPrice: stroopsToUsdcString(onChain.price),
         publisherWallet: row.walletAddress,
       });
-      continue;
     }
 
-    process.stdout.write("OK\n");
-    summary.inSync++;
+    // Owner drift: the DB payTo wallet should match the on-chain creator.
+    if (onChain.creator !== row.walletAddress) {
+      problems.push(`owner db=${row.walletAddress} chain=${onChain.creator}`);
+      summary.ownerMismatches.push({
+        resourceId: row.id,
+        dbOwner: row.walletAddress,
+        chainOwner: onChain.creator,
+      });
+    }
+
+    if (problems.length > 0) {
+      process.stdout.write(`DRIFT (${problems.join("; ")})\n`);
+    } else {
+      process.stdout.write("OK\n");
+      summary.inSync++;
+    }
   }
 
   // The contract exposes count() but no enumeration, so we cannot list the IDs
@@ -205,8 +259,24 @@ async function reconcile(): Promise<ReconciliationSummary> {
     process.stderr.write(
       `Warning: could not read on-chain count for orphan check: ${
         err instanceof Error ? err.message : String(err)
-      }\n`
+      }\n`,
     );
+  }
+
+  // Listing drift: resources advertised in the marketplace (listed = true) that
+  // are not registered on-chain, so the catalog shows them but the registry has
+  // no verifiable entry.
+  const listedNotRegistered = await db
+    .select()
+    .from(resources)
+    .where(and(eq(resources.listed, true), ne(resources.onchainStatus, "registered")));
+
+  for (const row of listedNotRegistered) {
+    summary.listingDrift.push({
+      resourceId: row.id,
+      dbListed: true,
+      onchainStatus: row.onchainStatus,
+    });
   }
 
   return summary;
@@ -220,7 +290,7 @@ async function main(): Promise<void> {
     summary = await reconcile();
   } catch (err) {
     process.stderr.write(
-      `Reconciliation failed: ${err instanceof Error ? err.message : String(err)}\n`
+      `Reconciliation failed: ${err instanceof Error ? err.message : String(err)}\n`,
     );
     process.exit(2);
   }
@@ -229,8 +299,10 @@ async function main(): Promise<void> {
     process.stdout.write(JSON.stringify(summary, null, 2) + "\n");
     const issues =
       summary.mismatches.length +
+      summary.ownerMismatches.length +
       summary.missingOnChain.length +
-      summary.missingInDb.length;
+      summary.missingInDb.length +
+      summary.listingDrift.length;
     process.exit(issues === 0 ? 0 : 1);
   }
 
@@ -238,4 +310,8 @@ async function main(): Promise<void> {
   process.exit(code);
 }
 
-main();
+// Only run when executed directly (not imported as a module in tests).
+const isMain = process.argv[1]?.endsWith("reconcile.ts") || process.argv[1]?.endsWith("reconcile.js");
+if (isMain) {
+  main();
+}

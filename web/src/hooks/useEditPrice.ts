@@ -16,11 +16,7 @@ export function useEditPrice(resourceId: string, apiKey: string) {
     try {
       // Step 1 — fetch unsigned XDR from the server
       setStatus("preparing");
-      const { unsignedXdr, networkPassphrase } = await prepareSetPrice(
-        resourceId,
-        price,
-        apiKey
-      );
+      const { unsignedXdr, networkPassphrase } = await prepareSetPrice(resourceId, price, apiKey);
 
       // Step 1b — warn if wallet is on the wrong network (non-blocking)
       const warning = await checkNetwork(networkPassphrase);
@@ -39,7 +35,7 @@ export function useEditPrice(resourceId: string, apiKey: string) {
 
       if ("error" in result && result.error) {
         throw new Error(
-          typeof result.error === "string" ? result.error : "Wallet rejected signing"
+          typeof result.error === "string" ? result.error : "Wallet rejected signing",
         );
       }
 

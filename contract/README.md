@@ -13,23 +13,76 @@ through x402 and the USDC Stellar Asset Contract (see the root README). The
 registry complements that: the server settles payment via x402, and records /
 reads the canonical resource entry here.
 
-### Interface
+### Methods
 
-| Function | Auth | Description |
-|----------|------|-------------|
-| `register(creator, id, price, metadata)` | creator | Register a new resource. Errors if `id` exists or `price <= 0`. Resources are listed by default. |
-| `set_price(id, new_price)` | creator | Update the price. |
-| `update_metadata(id, metadata)` | creator | Update the metadata pointer (e.g. IPFS URI / content hash). |
-| `transfer_ownership(id, new_creator)` | creator | Hand the resource to a new owner. |
-| `set_listed(id, listed)` | creator | Set the listing state of a resource (true = listed, false = delisted). |
-| `delist(id)` | creator | Convenience method to delist a resource (equivalent to `set_listed(id, false)`). |
-| `get(id) -> Resource` | — | Read a resource. Errors `NotFound` if absent. |
-| `exists(id) -> bool` | — | Whether a resource is registered. |
-| `count() -> u32` | — | Total resources ever registered. |
+| Function | Auth | Args | Returns | Description |
+|----------|------|------|---------|-------------|
+| `register(creator, id, price, metadata)` | `creator` | `creator: Address` — the resource owner; `id: String` — unique cuid2; `price: i128` — USDC stroops (> 0); `metadata: String` — pointer (max 512 bytes) | `Result<(), Error>` | Register a new resource. Resources are listed by default. |
+| `set_price(id, new_price)` | `creator` | `id: String` — resource cuid2; `new_price: i128` — USDC stroops (> 0) | `Result<(), Error>` | Update the resource price. |
+| `update_metadata(id, metadata)` | `creator` | `id: String` — resource cuid2; `metadata: String` — new pointer (max 512 bytes) | `Result<(), Error>` | Update the metadata pointer. |
+| `transfer_ownership(id, new_creator)` | `creator` | `id: String` — resource cuid2; `new_creator: Address` — new owner | `Result<(), Error>` | Transfer resource ownership to a new address. |
+| `set_listed(id, listed)` | `creator` | `id: String` — resource cuid2; `listed: bool` — listing state | `Result<(), Error>` | Set the listing state (true = listed, false = delisted). |
+| `delist(id)` | `creator` | `id: String` — resource cuid2 | `Result<(), Error>` | Convenience; equivalent to `set_listed(id, false)`. |
+| `list(start, limit)` | — | `start: u32` — 0‑based index; `limit: u32` — page size (capped at 20) | `Vec<Resource>` | Paginated resource list in insertion order. |
+| `get(id)` | — | `id: String` — resource cuid2 | `Result<Resource, Error>` | Read a single resource. Errors `NotFound` if absent. |
+| `exists(id)` | — | `id: String` — resource cuid2 | `bool` | Whether a resource is registered. |
+| `count()` | — | — | `u32` | Total resources successfully registered (monotonic). |
 
-`price` is an `i128` in USDC stroops (7 decimals — `1_000_000` = 0.10 USDC).
-`id` is the resource's cuid2 string, matching the server's resource IDs.
-`listed` is a boolean indicating whether the resource is available for discovery and purchase.
+### Error codes
+
+| Code | Error | Description |
+|------|-------|-------------|
+| `1` | `AlreadyRegistered` | A resource with the given `id` already exists. |
+| `2` | `NotFound` | No resource matches the given `id`. |
+| `3` | `InvalidPrice` | Price is `<= 0`. |
+| `4` | `MetadataTooLong` | Metadata pointer exceeds `MAX_METADATA_POINTER_LEN` (512 bytes). |
+
+### Events
+
+All events use the topic `(symbol, id)` — the first element identifies the event
+kind, the second carries the affected resource id.
+
+| Event | Payload | Triggered by |
+|-------|---------|-------------|
+| `register` | `creator: Address` | `register()` succeeds |
+| `setprice` | `new_price: i128` | `set_price()` succeeds |
+| `updmeta` | `()` | `update_metadata()` succeeds |
+| `transfer` | `new_creator: Address` | `transfer_ownership()` succeeds |
+| `setlisted` | `listed: bool` | `set_listed()` (and `delist()`) succeeds |
+
+### Price units
+
+`price` is an `i128` in **USDC stroops** (7 decimal places).  
+Examples: `1_000_000` = 0.10 USDC, `10_000_000` = 1.00 USDC, `500_000` = 0.05 USDC.
+
+### Resource type
+
+```rust
+pub struct Resource {
+    pub id: String,       // unique cuid2, matches server resource ID
+    pub creator: Address, // current owner's Stellar address
+    pub price: i128,      // price in USDC stroops (7 decimals)
+    pub metadata: String, // pointer (IPFS URI, content hash, or JSON anchor), max 512 bytes
+    pub listed: bool,     // whether the resource is available for discovery/purchase
+}
+```
+
+### Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MAX_METADATA_POINTER_LEN` | `512` | Maximum length of the metadata pointer in bytes. |
+
+### Breaking change: tags on `register` (v2)
+
+`register` now requires a fifth argument `tags: Vec<String>`. Existing callers must pass
+`[]` (empty tags) until they adopt labels. The `Resource` struct gains a `tags` field;
+`set_tags` updates tags without touching `metadata`.
+
+**Migration:** redeploy the contract, regenerate TypeScript bindings
+(`CONTRACT_WASM=... pnpm contract:bindings`), and update every `register` call site to
+include `tags` (use `[]` for resources without labels). Server-side filtering by tag is
+a follow-up; tags are stored on-chain for catalog use.
 
 ### Develop
 
@@ -71,10 +124,14 @@ Set `VAULT_REGISTRY_CONTRACT_ID` and `SOROBAN_RPC_URL` in the server `.env`
 (see [`server/.env.example`](../server/.env.example)) so the backend can
 record/read resources on this contract.
 
+### Emergency pause
+
+See [contract-registry-pause-decision.md](../docs/contract-registry-pause-decision.md)
+for the architecture spike on admin pause/unpause. **v1 does not implement pause**
+(creator-scoped writes + off-chain ops are sufficient for the current trust model).
+
 ### Ideas for contributors
 
-- A `list` / pagination method (current `get` is by id only).
-- Categories or tags stored alongside each resource.
 - Optional escrow/refund extension (see the root README's "Not Yet Built").
 - A TypeScript binding generated via `stellar contract bindings typescript`
   for the `server/` and `web/` packages to consume.

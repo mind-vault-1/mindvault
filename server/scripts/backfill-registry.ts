@@ -1,13 +1,13 @@
 #!/usr/bin/env tsx
 /**
  * Backfill script: register listed resources missing on-chain
- * 
+ *
  * Finds resources that are listed=true but onchain_status != "registered"
  * and registers them on the vault registry contract.
- * 
+ *
  * Usage:
  *   npx tsx scripts/backfill-registry.ts [--dry-run]
- * 
+ *
  * Prerequisites:
  *   - .env configured with valid Supabase + Stellar testnet credentials
  *   - REGISTRY_SECRET_KEY set to a funded Stellar account
@@ -31,7 +31,7 @@ interface BackfillStats {
 
 async function main() {
   const isDryRun = process.argv.includes("--dry-run");
-  
+
   console.log("=== MindVault Registry Backfill ===");
   console.log(`Mode: ${isDryRun ? "DRY RUN" : "LIVE"}`);
   console.log(`Registry Contract: ${config.REGISTRY_CONTRACT_ID}`);
@@ -48,10 +48,7 @@ async function main() {
   };
 
   // Find all listed resources
-  const listedResources = await db
-    .select()
-    .from(resources)
-    .where(eq(resources.listed, true));
+  const listedResources = await db.select().from(resources).where(eq(resources.listed, true));
 
   stats.totalListed = listedResources.length;
   console.log(`Found ${stats.totalListed} listed resources`);
@@ -62,9 +59,7 @@ async function main() {
   }
 
   // Filter to those not yet registered on-chain
-  const needsRegistration = listedResources.filter(
-    (r) => r.onchainStatus !== "registered"
-  );
+  const needsRegistration = listedResources.filter((r) => r.onchainStatus !== "registered");
 
   stats.alreadyRegistered = stats.totalListed - needsRegistration.length;
   stats.needsRegistration = needsRegistration.length;
@@ -90,14 +85,14 @@ async function main() {
 
   // Register each resource on-chain
   console.log("Registering resources on-chain...");
-  
+
   for (const resource of needsRegistration) {
     try {
       console.log(`Registering ${resource.id}: "${resource.title}"`);
-      
+
       // Convert price from USDC string to stroops (7 decimals)
       const priceStroops = Math.round(parseFloat(resource.price) * 10_000_000);
-      
+
       // Build metadata string (could be enhanced with more fields)
       const metadata = JSON.stringify({
         title: resource.title,
@@ -112,6 +107,7 @@ async function main() {
         id: resource.id,
         price: BigInt(priceStroops),
         metadata,
+        tags: [],
       });
 
       await tx.signAndSend({ signer: registryKeypair });
@@ -124,14 +120,13 @@ async function main() {
 
       stats.registered++;
       console.log(`  ✓ Registered successfully`);
-
     } catch (error) {
       stats.failed++;
       const errorMsg = error instanceof Error ? error.message : String(error);
       stats.errors.push({ resourceId: resource.id, error: errorMsg });
-      
+
       console.log(`  ✗ Failed: ${errorMsg}`);
-      
+
       // Update database to reflect failure
       await db
         .update(resources)
@@ -148,7 +143,7 @@ async function main() {
   console.log(`Attempted registration: ${stats.needsRegistration}`);
   console.log(`Successfully registered: ${stats.registered}`);
   console.log(`Failed: ${stats.failed}`);
-  
+
   if (stats.errors.length > 0) {
     console.log();
     console.log("Errors:");

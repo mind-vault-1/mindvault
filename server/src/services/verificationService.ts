@@ -16,7 +16,7 @@ export interface VerificationResult {
 
 export async function checkOriginality(
   content: string,
-  resourceType: string
+  resourceType: string,
 ): Promise<VerificationResult> {
   const response = await client.chat.completions.create({
     model: config.OPENROUTER_MODEL,

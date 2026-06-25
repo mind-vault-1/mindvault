@@ -28,34 +28,9 @@ is a separate Rust/Cargo workspace managed with the Stellar CLI.
 - A **Supabase** project (free tier) for the backend
 - Stellar testnet wallets funded with USDC from [faucet.circle.com](https://faucet.circle.com)
 
-## First-time setup
+## Local setup
 
-```bash
-git clone <your-fork-url> mindvault && cd mindvault
-
-# Install all JS/TS workspace packages at once
-pnpm install
-
-# Configure the backend
-cp server/.env.example server/.env
-# Fill in Supabase, Stellar, and OpenRouter credentials.
-# NEVER commit server/.env — it is gitignored and holds secret keys.
-
-# Database
-pnpm db:generate && pnpm db:migrate
-
-# Generate wallets (run twice for separate platform + agent wallets)
-pnpm generate-wallet
-```
-
-## Running
-
-From the repo root:
-
-```bash
-pnpm dev:server      # backend on :4021
-# pnpm dev:web       # frontend on :5173 (once web/ is imported)
-```
+See the complete **[Local Setup Guide](docs/local-setup.md)** to get from a fresh clone to a running server and web app.
 
 ## Smart contract development
 
@@ -67,18 +42,87 @@ pnpm contract:test   # cargo test
 cd contract && cargo test
 ```
 
+If your contract change alters the on-chain ABI (new methods, changed arguments,
+updated structs), regenerate the TypeScript bindings so consumers stay in sync:
+
+```bash
+pnpm contract:bindings   # regenerates packages/registry-client/src/generated/
+```
+
+See [`docs/registry-client-bindings.md`](docs/registry-client-bindings.md) for
+the full regeneration workflow, which files to commit, and how `server/`, `web/`,
+and `mcp/` consume the bindings.
+
 See [`contract/README.md`](contract/README.md) for the registry interface and
 deployment steps.
+
+## Running the integrated flow locally
+
+This walks through the full publish → verify → buy cycle on your local machine.
+
+```bash
+# 1. Start the backend
+pnpm dev:server        # http://localhost:4021
+
+# 2. Register a publisher
+curl -s -X POST http://localhost:4021/publishers \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Alice","email":"alice@example.com","walletAddress":"G..."}' \
+  | tee /tmp/publisher.json
+# Save the returned apiKey
+
+# 3. Publish a link resource (verification fee paid automatically by the agent wallet)
+curl -s -X POST http://localhost:4021/resources \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <apiKey>" \
+  -d '{"title":"My Dataset","price":"0.50","externalUrl":"https://example.com/data.csv"}' \
+  | tee /tmp/resource.json
+# Save the returned id
+
+# 4. Check verification status
+curl -s http://localhost:4021/resources/<id>/verification
+
+# 5. Access the resource (triggers 402 → payment → delivery)
+#    Any x402-capable client handles this automatically.
+#    To test manually, use the e2e script:
+pnpm --filter server e2e-test
+
+# 6. (Optional) Transfer ownership on-chain
+#    a. Build the unsigned tx
+curl -s -X POST http://localhost:4021/resources/<id>/ownership/prepare \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <apiKey>" \
+  -d '{"newOwnerWallet":"G<new-owner-address>"}' \
+  | tee /tmp/prepare.json
+# Returns { unsignedXdr, networkPassphrase }
+
+#    b. Sign the XDR with the owner's key (e.g. using stellar-sdk or Freighter),
+#       then submit:
+curl -s -X POST http://localhost:4021/resources/<id>/ownership \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <apiKey>" \
+  -d '{
+    "signedXdr": "<base64-xdr>",
+    "newOwnerWallet": "G<new-owner-address>",
+    "newPublisherId": "<new-publisher-id>"
+  }'
+# On success: DB publisherId, walletAddress, and onchainTxHash are updated.
+```
 
 ## Working on a change
 
 1. **Fork** and create a branch: `git checkout -b feat/short-description`
 2. Keep changes focused — one logical change per PR.
-3. Make sure things build/pass before pushing:
-   - Backend: `pnpm build:server`
-   - Contract: `pnpm contract:test`
+3. Run the full validation suite before pushing:
+   ```bash
+   make validate
+   ```
+   This builds the registry client and server, runs tests, checks formatting/linting,
+   and verifies doc links — all without requiring live secrets. If you only changed
+   contracts, run `pnpm contract:test` separately (requires Rust + Stellar CLI).
 4. Use clear commit messages (e.g. `feat: add catalog search`, `fix: cors header`).
-5. Open a PR against `main` describing **what** changed and **why**, and how you
+5. Use Conventional Commits formatting for your PR titles (e.g., `feat: add catalog search` or `fix(auth): cors header`). PR titles are automatically linted, and non-conforming titles will fail CI.
+6. Open a PR against `main` describing **what** changed and **why**, and how you
    tested it.
 
 ## Good first issues
@@ -102,5 +146,30 @@ the approach.
 - All payments are testnet only; do not point this at mainnet.
 - Found a vulnerability? Open an issue describing the impact (avoid posting a
   working exploit publicly).
+
+### Secret scanning (gitleaks)
+
+Every push and pull request runs [gitleaks](https://github.com/gitleaks/gitleaks)
+via GitHub Actions. The scanner looks for Stellar secret keys (`S...`), Supabase
+service keys, API keys, and other common secret patterns.
+
+**If CI fails on your PR:**
+
+1. **Do not merge** until the finding is resolved.
+2. Identify the leaked value in the gitleaks job log (file + line).
+3. **Remove the secret from git history** if it was ever committed:
+   - If the PR is not merged yet, amend or rebase to drop the offending commit.
+   - If the secret reached `main`, rotate it immediately (generate a new Stellar
+     keypair, rotate Supabase service key, etc.) — removing it from git does not
+     revoke a key that was already exposed.
+4. Replace real values with placeholders in tracked files (see `server/.env.example`).
+5. Re-run locally before pushing:
+   ```bash
+   docker run --rm -v "$(pwd):/path" zricethezav/gitleaks:latest \
+     detect --source /path --config /path/.gitleaks.toml --verbose
+   ```
+
+Placeholder patterns in `server/.env.example` (e.g. `G...`, `S...`, `eyJ...`) are
+allowlisted in `.gitleaks.toml` and will not fail the scan.
 
 Happy building. ⚡
