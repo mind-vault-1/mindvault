@@ -513,6 +513,93 @@ async function buy(resourceId: string): Promise<string> {
   return JSON.stringify(await res.json(), null, 2);
 }
 
+/**
+ * Register a verified resource on the vault registry contract.
+ *
+ * mindvault_publish triggers on-chain registration automatically, but the chain
+ * call can fail (RPC outage, unfunded fees) while the resource stays listed and
+ * purchasable. This tool is the advertised retry path: it prepares the unsigned
+ * register transaction (owner-only), signs it with the agent wallet — which is
+ * the resource creator for agent-published resources — and submits it.
+ */
+async function registerOnchain(resourceId: string): Promise<string> {
+  const wallet = requireWallet();
+  if (!agentApiKey) throw new Error("Not registered. Run mindvault_register first.");
+  if (!resourceId) throw new Error("resourceId is required.");
+
+  // Step 1: prepare the unsigned register transaction (owner-only).
+  const prep = await jsonFetch(`${BASE_URL}/resources/${resourceId}/register/prepare`, {
+    headers: { "x-api-key": agentApiKey },
+  });
+  if (!prep.ok) {
+    const detail =
+      prep.data && typeof prep.data === "object"
+        ? (prep.data.error ?? JSON.stringify(prep.data))
+        : prep.data;
+    // Surface the server's actionable reasons (not verified / already registered).
+    throw new Error(
+      [
+        `Could not prepare on-chain registration for "${resourceId}" [${prep.status}].`,
+        `Reason: ${detail}`,
+        prep.status === 400 ? "The resource must be verified before it can be registered." : null,
+        prep.status === 409
+          ? "The resource is already registered on-chain — no action needed."
+          : null,
+        prep.status === 403 ? "This resource is owned by a different publisher." : null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  const { unsignedXdr, networkPassphrase } = prep.data ?? {};
+  if (!unsignedXdr) {
+    throw new Error(
+      `register/prepare did not return an unsigned transaction: ${JSON.stringify(prep.data)}`,
+    );
+  }
+
+  // Step 2: sign with the agent wallet (the resource creator).
+  const { Keypair, Transaction } = await import("@stellar/stellar-sdk");
+  const passphrase = networkPassphrase ?? REGISTRY_NETWORK_PASSPHRASE;
+  const tx = new Transaction(unsignedXdr, passphrase);
+  tx.sign(Keypair.fromSecret(wallet.secretKey));
+  const signedXdr = tx.toXDR();
+
+  // Step 3: submit the signed transaction.
+  const submit = await jsonFetch(`${BASE_URL}/resources/${resourceId}/register`, {
+    method: "POST",
+    headers: { "x-api-key": agentApiKey },
+    body: JSON.stringify({ signedXdr }),
+  });
+  if (!submit.ok) {
+    const detail =
+      submit.data && typeof submit.data === "object"
+        ? (submit.data.detail ?? submit.data.error ?? JSON.stringify(submit.data))
+        : submit.data;
+    const txHash = submit.data && typeof submit.data === "object" ? submit.data.txHash : undefined;
+    throw new Error(
+      [
+        `On-chain registration failed for "${resourceId}" [${submit.status}].`,
+        `Reason: ${detail}`,
+        txHash ? `Tx hash: ${txHash} (check with mindvault_tx_status)` : null,
+        "The resource remains listed and purchasable. Ensure the agent wallet is funded for fees and retry.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  return [
+    `Resource registered on-chain.`,
+    `Resource: ${resourceId}`,
+    `Registry status: ${submit.data.onchainStatus ?? "registered"}`,
+    submit.data.txHash ? `On-chain tx: ${submit.data.txHash}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 async function agentStatus(): Promise<string> {
   const res = await jsonFetch(`${BASE_URL}/agent/status`);
   if (!res.ok) throw new Error(`Agent status failed: ${JSON.stringify(res.data)}`);
@@ -711,6 +798,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "mindvault_register_onchain",
+      description:
+        "Register an already-published, verified resource on the vault registry contract. Use this to retry on-chain registration after mindvault_publish reports the on-chain step failed. Prepares the unsigned transaction, signs it with the agent wallet, submits it, and returns the registry status and on-chain tx hash.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          resourceId: {
+            type: "string",
+            description: "The id of the resource to register on-chain (from mindvault_publish).",
+          },
+        },
+        required: ["resourceId"],
+      },
+    },
+    {
       name: "mindvault_agent_status",
       description: "Check the verification agent's earnings and activity.",
       inputSchema: { type: "object", properties: {}, required: [] },
@@ -798,6 +900,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case "mindvault_buy":
         result = await buy(args.resourceId as string);
+        break;
+      case "mindvault_register_onchain":
+        result = await registerOnchain(args.resourceId as string);
         break;
       case "mindvault_agent_status":
         result = await agentStatus();

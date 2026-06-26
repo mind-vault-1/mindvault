@@ -69,6 +69,7 @@ Available tools:
 | `mindvault_register` | Register as a publisher using the agent's wallet | `"Register me as Alice, alice@example.com"` |
 | `mindvault_publish` | Publish a resource and pay for verification via x402 | `"Publish 'My Dataset' for 5 USDC at https://example.com/data"` |
 | `mindvault_buy` | Pay USDC and access a resource via x402 | `"Buy resource swcn98besxpp6t1u8e77fqz3"` |
+| `mindvault_register_onchain` | Retry on-chain registration for a published, verified resource | `"Register resource swcn98besxpp6t1u8e77fqz3 on-chain"` |
 | `mindvault_agent_status` | Check the verification agent's earnings and activity | `"What's the agent's status?"` |
 | `mindvault_registry_info` | Return the on-chain vault-registry contract details | `"Show me registry info"` |
 | `mindvault_registry_lookup` | Look up a resource directly from the on-chain vault registry by ID | `"Look up resource swcn98besxpp6t1u8e77fqz3 on-chain"` |
@@ -89,13 +90,13 @@ codex mcp add mindvault -- node /path/to/mindvault/mcp/dist/index.js
 
 All env vars are optional — the defaults point to the hosted testnet backend:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MINDVAULT_URL` | `https://mindvault-hyr3.onrender.com` | MindVault API base URL |
-| `SPONSORED_ACCOUNT_URL` | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service |
-| `VAULT_REGISTRY_CONTRACT_ID` | testnet contract ID | On-chain vault-registry contract |
-| `HORIZON_URL` | `https://horizon-testnet.stellar.org` | Stellar Horizon endpoint (for USDC balance checks) |
-| `SOROBAN_RPC_URL` | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint (for tx status and payments) |
+| Variable                     | Default                                                | Description                                        |
+| ---------------------------- | ------------------------------------------------------ | -------------------------------------------------- |
+| `MINDVAULT_URL`              | `https://mindvault-hyr3.onrender.com`                  | MindVault API base URL                             |
+| `SPONSORED_ACCOUNT_URL`      | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service                  |
+| `VAULT_REGISTRY_CONTRACT_ID` | testnet contract ID                                    | On-chain vault-registry contract                   |
+| `HORIZON_URL`                | `https://horizon-testnet.stellar.org`                  | Stellar Horizon endpoint (for USDC balance checks) |
+| `SOROBAN_RPC_URL`            | `https://soroban-testnet.stellar.org`                  | Soroban RPC endpoint (for tx status and payments)  |
 
 An agent can set up a wallet, register as a publisher, publish a resource (paying for verification), and then another agent can discover and buy that resource. The full agent-to-agent economy runs through x402.
 
@@ -122,15 +123,15 @@ Set `VITE_API_URL=http://localhost:4021` when running the web app separately (e.
 
 ### Makefile targets
 
-| Target | Description |
-|--------|-------------|
-| `make setup` | Install deps, run DB migrations, generate a testnet wallet |
+| Target            | Description                                                         |
+| ----------------- | ------------------------------------------------------------------- |
+| `make setup`      | Install deps, run DB migrations, generate a testnet wallet          |
 | `make setup-usdc` | Add USDC trustline for `AGENT_SECRET_KEY` and print faucet guidance |
-| `make dev` | Start server and web app together |
-| `make dev-server` | Backend only on `:4021` |
-| `make dev-web` | Frontend only on `:5173` |
-| `make seed` | Seed the catalog with sample resources for local dev |
-| `make test` | Run unit tests |
+| `make dev`        | Start server and web app together                                   |
+| `make dev-server` | Backend only on `:4021`                                             |
+| `make dev-web`    | Frontend only on `:5173`                                            |
+| `make seed`       | Seed the catalog with sample resources for local dev                |
+| `make test`       | Run unit tests                                                      |
 
 ### Local services
 
@@ -187,19 +188,20 @@ The `PAYMENT-REQUIRED` header contains the price, destination wallet, network, a
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | Node.js, TypeScript, Express |
-| Payments | x402 protocol (`@x402/express`, `@x402/stellar`, `@x402/fetch`) |
-| Blockchain | Stellar testnet, USDC via Soroban SAC |
-| Database | Supabase Postgres, Drizzle ORM |
-| Storage | Supabase Storage |
-| AI | OpenRouter (model-flexible, defaults to Claude) |
-| Frontend | React, Vite, Tailwind CSS |
-| Wallets | @stellar/freighter-api ([Freighter](https://www.freighter.app/)) |
-| Agent Access | MCP server with sponsored account provisioning |
+| Layer        | Technology                                                       |
+| ------------ | ---------------------------------------------------------------- |
+| Backend      | Node.js, TypeScript, Express                                     |
+| Payments     | x402 protocol (`@x402/express`, `@x402/stellar`, `@x402/fetch`)  |
+| Blockchain   | Stellar testnet, USDC via Soroban SAC                            |
+| Database     | Supabase Postgres, Drizzle ORM                                   |
+| Storage      | Supabase Storage                                                 |
+| AI           | OpenRouter (model-flexible, defaults to Claude)                  |
+| Frontend     | React, Vite, Tailwind CSS                                        |
+| Wallets      | @stellar/freighter-api ([Freighter](https://www.freighter.app/)) |
+| Agent Access | MCP server with sponsored account provisioning                   |
 
 ## Links
+
 - x402 protocol: [x402.org](https://www.x402.org/)
 - x402 on Stellar: [developers.stellar.org](https://developers.stellar.org/docs/build/agentic-payments/x402)
 - Sponsored accounts: [stellar-sponsored-agent-account](https://github.com/oceans404/stellar-sponsored-agent-account)

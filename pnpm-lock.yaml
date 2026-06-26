@@ -195,6 +195,12 @@ importers:
       '@stellar/stellar-sdk':
         specifier: ^15.0.1
         version: 15.1.0
+      '@x402/fetch':
+        specifier: ^2.9.0
+        version: 2.16.0
+      '@x402/stellar':
+        specifier: ^2.9.0
+        version: 2.16.0
       react:
         specifier: ^18.3.1
         version: 18.3.1

@@ -45,13 +45,29 @@ authoritative state, while the DB provides fast indexed queries for the catalog.
 
 The contract's `set_listed` / `delist` methods (already implemented) are the
 on-chain mechanism. The server's `delistResource` (issue #19) handles the
-off-chain side, setting `listed = false` in DB and cleaning up storage.
+off-chain side, setting `listed = false` in DB and cleaning up storage, and
+(issue #218) now also triggers the on-chain delist so chain state matches the API.
+
+## On-chain sync behaviour (issue #218)
+
+`delistResource` calls `delistOnChain(id)` after the DB delist. Because
+`DELETE /resources/:id` carries no client wallet signature, the call is signed
+server-side with the registry keypair (the same pattern the legacy on-chain
+register flow uses) and is **best-effort**:
+
+- Resources whose `onchainStatus` is not `registered` were never written to the
+  contract, so the chain call is skipped and they delist DB-only.
+- If the chain call fails (RPC outage, creator-auth mismatch, NotFound), the DB
+  delist still stands and the failure is logged under `event:
+"delist_onchain_sync"`. The reconcile script and event listener (issue #90)
+  remain the backstop that converges any residual drift.
 
 ## Implementation
 
-| Layer | Method | Status |
-|-------|--------|--------|
-| Contract | `set_listed(id, listed)` | Implemented |
-| Contract | `delist(id)` (convenience) | Implemented |
-| Server  | `DELETE /resources/:id` → `listed = false` | Implemented |
-| Server  | Event listener syncs on-chain → DB | Issue #90 |
+| Layer    | Method                                                 | Status             |
+| -------- | ------------------------------------------------------ | ------------------ |
+| Contract | `set_listed(id, listed)`                               | Implemented        |
+| Contract | `delist(id)` (convenience)                             | Implemented        |
+| Server   | `DELETE /resources/:id` → `listed = false`             | Implemented        |
+| Server   | `delistResource` → on-chain `delist(id)` (best-effort) | Implemented (#218) |
+| Server   | Event listener syncs on-chain → DB                     | Issue #90          |

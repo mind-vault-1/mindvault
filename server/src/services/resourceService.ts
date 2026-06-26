@@ -272,7 +272,28 @@ export async function getResourceMeta(
   return result;
 }
 
-export async function delistResource(id: string, publisherId: string) {
+/**
+ * Delist a resource: flip `listed` to false in Postgres, drop stored files, and
+ * (issue #218) sync the change on-chain so the vault registry's `listed` flag
+ * matches the API.
+ *
+ * The on-chain delist is best-effort and never blocks the DB delist:
+ *  - Resources that were never registered on-chain (`onchainStatus !==
+ *    "registered"`) skip the chain call entirely and delist cleanly.
+ *  - If the on-chain call fails, the DB delist still stands and the failure is
+ *    logged for reconciliation rather than surfaced to the caller.
+ *
+ * `onChainDelist` is injectable so tests can assert both paths without touching
+ * Soroban; it defaults to the real registry-signed delist.
+ */
+export async function delistResource(
+  id: string,
+  publisherId: string,
+  // Injectable for tests. Left out, it lazily loads the real registry-signed
+  // delist; the lazy import keeps `resourceService` free of a load-time Stellar
+  // client so unrelated tests don't need to mock the registry.
+  onChainDelist?: (resourceId: string) => Promise<{ success: boolean; error?: string }>,
+) {
   const [resource] = await db
     .update(resources)
     .set({ listed: false })
@@ -285,6 +306,26 @@ export async function delistResource(id: string, publisherId: string) {
 
   if (resource.storagePath) {
     await deleteFile(resource.storagePath);
+  }
+
+  // Only registered resources exist on-chain; anything else delists DB-only.
+  if (resource.onchainStatus === "registered") {
+    const { getLogger } = await import("../lib/logger.js");
+    try {
+      const delist = onChainDelist ?? (await import("./registryClient.js")).delistOnChain;
+      const result = await delist(resource.id);
+      if (!result.success) {
+        getLogger().warn(
+          { event: "delist_onchain_sync", resourceId: resource.id, error: result.error },
+          "DB delist succeeded but on-chain delist failed; chain state may be stale",
+        );
+      }
+    } catch (err) {
+      getLogger().error(
+        { event: "delist_onchain_sync", resourceId: resource.id, err },
+        "unexpected error during on-chain delist sync",
+      );
+    }
   }
 
   return resource;

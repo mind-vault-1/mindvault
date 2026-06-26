@@ -3,7 +3,6 @@ import { EditPriceModal } from "./components/EditPriceModal.js";
 import { TransferOwnershipModal } from "./components/TransferOwnershipModal.js";
 import { RegisterModal } from "./components/RegisterModal.js";
 import { ResourcePreviewModal } from "./components/ResourcePreviewModal.js";
-import { PurchaseConfirmModal } from "./components/PurchaseConfirmModal.js";
 import { ExplorerLink } from "./components/ExplorerLink.js";
 import { Toast } from "./components/Toast.js";
 import { CatalogSearch } from "./components/CatalogSearch.js";
@@ -13,8 +12,10 @@ import { WalletButton } from "./components/WalletButton.js";
 import { AnalyticsDashboard } from "./components/AnalyticsDashboard.js";
 import { CreatorDashboard } from "./components/CreatorDashboard.js";
 import { Leaderboard } from "./components/Leaderboard.js";
+import { AgentStatusPage } from "./components/AgentStatusPage.js";
 import { PublishModal } from "./components/PublishModal.js";
 import { PurchasesDashboard } from "./components/PurchasesDashboard.js";
+import { BuyModal } from "./components/BuyModal.js";
 import { useTheme } from "./hooks/useTheme.js";
 import { useAsync } from "./hooks/useAsync.js";
 import { useWalletConnection } from "./hooks/useWalletConnection.js";
@@ -43,7 +44,7 @@ type ActiveModal =
   | { kind: "buy"; resource: Resource }
   | null;
 
-type Tab = "catalog" | "dashboard" | "analytics" | "leaderboard" | "purchases";
+type Tab = "catalog" | "dashboard" | "analytics" | "leaderboard" | "purchases" | "agent";
 
 const API_KEY = import.meta.env.VITE_API_KEY ?? "";
 
@@ -172,6 +173,9 @@ export default function App() {
           <TabButton active={tab === "leaderboard"} onClick={() => setTab("leaderboard")}>
             Leaderboard
           </TabButton>
+          <TabButton active={tab === "agent"} onClick={() => setTab("agent")}>
+            Agent
+          </TabButton>
           {API_KEY && (
             <>
               <TabButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
@@ -224,6 +228,21 @@ export default function App() {
           }
           onRegister={(resource) => setActiveModal({ kind: "register", resource })}
         />
+      )}
+
+      {/* ── Agent tab ───────────────────────────────────────────────────────── */}
+      {tab === "agent" && (
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="border-b border-gray-200 pb-4 dark:border-gray-700">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+              Verification Agent
+            </h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Live stats and activity for the MindVault originality-verification agent
+            </p>
+          </div>
+          <AgentStatusPage />
+        </div>
       )}
 
       {/* ── Analytics tab ───────────────────────────────────────────────────── */}
@@ -405,16 +424,16 @@ export default function App() {
                           Preview
                         </button>
                         <button
+                          onClick={() => setActiveModal({ kind: "buy", resource: r })}
+                          className="rounded-lg bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700"
+                        >
+                          Buy
+                        </button>
+                        <button
                           onClick={() => handleCopyUrl(r.accessUrl)}
                           className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
                         >
                           Copy URL
-                        </button>
-                        <button
-                          onClick={() => setActiveModal({ kind: "buy", resource: r })}
-                          className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700"
-                        >
-                          Buy
                         </button>
                       </div>
                     </div>
@@ -430,6 +449,24 @@ export default function App() {
       {activeModal?.kind === "preview" && (
         <ResourcePreviewModal
           resourceId={activeModal.resource.id}
+          onClose={() => setActiveModal(null)}
+          onCopyUrl={handleCopyUrl}
+          onBuy={() =>
+            setActiveModal({
+              kind: "buy",
+              resource: (activeModal as { resource: Resource }).resource,
+            })
+          }
+        />
+      )}
+
+      {activeModal?.kind === "buy" && (
+        <BuyModal
+          resourceTitle={activeModal.resource.title}
+          price={activeModal.resource.price}
+          recipient={activeModal.resource.walletAddress}
+          accessUrl={activeModal.resource.accessUrl}
+          walletAddress={wallet.status === "connected" ? wallet.address : null}
           onClose={() => setActiveModal(null)}
           onCopyUrl={handleCopyUrl}
         />
@@ -462,13 +499,6 @@ export default function App() {
           apiKey={API_KEY}
           onClose={() => setActiveModal(null)}
           onConfirmed={(txHash) => handleRegistrationConfirmed(activeModal.resource.id, txHash)}
-        />
-      )}
-
-      {activeModal?.kind === "buy" && (
-        <PurchaseConfirmModal
-          resource={activeModal.resource}
-          onClose={() => setActiveModal(null)}
         />
       )}
 
