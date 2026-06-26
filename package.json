@@ -42,8 +42,5 @@
     "ai-agents",
     "micropayments"
   ],
-  "license": "MIT",
-  "devDependencies": {
-    "markdown-link-check": "3.14.2"
-  }
+  "license": "MIT"
 }

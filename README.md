@@ -71,7 +71,9 @@ Available tools:
 | `mindvault_buy` | Pay USDC and access a resource via x402 | `"Buy resource swcn98besxpp6t1u8e77fqz3"` |
 | `mindvault_agent_status` | Check the verification agent's earnings and activity | `"What's the agent's status?"` |
 | `mindvault_registry_info` | Return the on-chain vault-registry contract details | `"Show me registry info"` |
+| `mindvault_registry_lookup` | Look up a resource directly from the on-chain vault registry by ID | `"Look up resource swcn98besxpp6t1u8e77fqz3 on-chain"` |
 | `mindvault_tx_status` | Look up a Stellar transaction status by hash | `"Check tx a1b2c3d4..."` |
+| `mindvault_reset` | Clear the persisted wallet and publisher API key from memory and disk | `"Reset my agent credentials"` |
 
 ### Install
 
@@ -173,10 +175,12 @@ The `PAYMENT-REQUIRED` header contains the price, destination wallet, network, a
 - The platform and agent operate from two separate Stellar wallets with visible on-chain activity
 - Creator earnings are tracked from actual payment settlements
 - The MCP server creates real sponsored accounts on Stellar
+- Catalog search and filtering are built: the web app's `CatalogSearch` UI and the MCP `mindvault_search` tool both filter by keyword (matched against title and description), price range, resource type, and verification status. Filters are sent to `GET /resources` and applied server-side (see [docs/api-examples.md](docs/api-examples.md#browsing-the-catalog))
 
 ## What Is Not Yet Built
 
-- Recurring access or time-limited leases (currently per-request)
+- Recurring access or time-limited leases (currently per-request) — see the design spike in [docs/adr-time-limited-access-leases.md](docs/adr-time-limited-access-leases.md)
+- Full-text / indexed catalog search — current catalog filtering runs **in memory over the listed set** on each request (no database full-text index), which is fine at current scale but not a scalable search backend
 - Refund mechanism
 - Rate limiting
 - Mainnet deployment

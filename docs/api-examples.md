@@ -156,6 +156,31 @@ Expected response (array):
 ]
 ```
 
+### Searching and filtering
+
+`GET /resources` accepts optional query parameters that narrow the catalog. They can be combined; all filtering is applied **server-side** before the response is returned. (The web app's `CatalogSearch` UI and the MCP `mindvault_search` tool send these same parameters.)
+
+| Parameter            | Type                                   | Effect |
+|----------------------|----------------------------------------|--------|
+| `search`             | string                                 | Case-insensitive match against resource **title or description** |
+| `minPrice`           | number string (e.g. `0.50`)            | Only resources priced ≥ `minPrice` |
+| `maxPrice`           | number string                          | Only resources priced ≤ `maxPrice` |
+| `verificationStatus` | `verified` \| `pending` \| `rejected`  | Filter by verification status |
+| `resourceType`       | `file` \| `link`                       | Filter by resource type |
+
+```bash
+# Verified links priced between 0.10 and 1.00 USDC that mention "dataset"
+curl -s "$BASE/resources?search=dataset&verificationStatus=verified&resourceType=link&minPrice=0.10&maxPrice=1.00" \
+  | jq '[.[] | {id, title, price, resourceType, verificationStatus}]'
+```
+
+Notes and current limitations:
+
+- `minPrice` and `maxPrice` must be non-negative numbers and `minPrice` cannot exceed `maxPrice` (otherwise the request is rejected with `400`).
+- Unknown query parameters are rejected (the schema is strict).
+- Filtering runs **in memory over the listed set** on each request — there is no full-text/database search index yet, so this is appropriate at the current catalog scale rather than a scalable search backend.
+- The web search box is labelled "Search by title…", but the server also matches the description.
+
 ---
 
 ## Resource Preview

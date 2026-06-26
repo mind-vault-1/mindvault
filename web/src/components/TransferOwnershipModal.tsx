@@ -21,9 +21,8 @@ export function TransferOwnershipModal({ resourceId, apiKey, onClose, onConfirme
   const [newCreator, setNewCreator] = useState("");
   const { status, newOwner, error, networkWarning, transferOwnership } = useTransferOwnership(
     resourceId,
-    apiKey
+    apiKey,
   );
-  const { status, newOwner, error, transferOwnership } = useTransferOwnership(resourceId, apiKey);
 
   const busy = ["preparing", "signing", "submitting"].includes(status);
 

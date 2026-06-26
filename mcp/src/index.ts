@@ -186,7 +186,8 @@ function normalizeSearchFilters(args: any): SearchFilters | null {
     args?.verificationStatus === "skipped"
       ? args.verificationStatus
       : undefined;
-  const resourceType = args?.resourceType === "file" || args?.resourceType === "link" ? args.resourceType : undefined;
+  const resourceType =
+    args?.resourceType === "file" || args?.resourceType === "link" ? args.resourceType : undefined;
 
   return {
     query,
@@ -198,7 +199,8 @@ function normalizeSearchFilters(args: any): SearchFilters | null {
 }
 
 function describeFilters(filters: SearchFilters): string {
-  const hasExtra = filters.minPrice || filters.maxPrice || filters.verificationStatus || filters.resourceType;
+  const hasExtra =
+    filters.minPrice || filters.maxPrice || filters.verificationStatus || filters.resourceType;
   if (!hasExtra) {
     return `"${filters.query}"`;
   }
@@ -236,7 +238,9 @@ async function insufficientFundsMessage(
   ].join("\n");
 }
 
-async function txStatus(txHash: string): Promise<string> {
+export async function txStatus(txHash: string): Promise<string> {
+  const hash = (txHash ?? "").trim();
+  if (!hash) return "Provide a transaction hash to look up.";
   const res = await fetch(SOROBAN_RPC_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -244,17 +248,31 @@ async function txStatus(txHash: string): Promise<string> {
       jsonrpc: "2.0",
       id: 1,
       method: "getTransaction",
-      params: { hash: txHash },
+      params: { hash },
     }),
   });
   if (!res.ok) throw new Error(`Soroban RPC error: ${res.status}`);
   const data: any = await res.json();
   if (data.error) throw new Error(`RPC error: ${JSON.stringify(data.error)}`);
   const tx = data.result;
+  if (tx.status === "NOT_FOUND") {
+    return JSON.stringify(
+      {
+        status: "NOT_FOUND",
+        hash,
+        message:
+          "Transaction not found on the configured Soroban RPC. It may be unconfirmed, on a different network, or outside the RPC's retention window.",
+        oldestLedger: tx.oldestLedger,
+        latestLedger: tx.latestLedger,
+      },
+      null,
+      2,
+    );
+  }
   return JSON.stringify(
     {
       status: tx.status,
-      hash: txHash,
+      hash,
       ledger: tx.ledger,
       ledgerCloseTime: tx.createdAt ? new Date(tx.createdAt * 1000).toISOString() : null,
       applicationOrder: tx.applicationOrder,
@@ -293,9 +311,8 @@ export async function browse(): Promise<string> {
 }
 
 export async function search(filtersOrQuery: string | SearchFilters): Promise<string> {
-  const filters: SearchFilters = typeof filtersOrQuery === "string"
-    ? { query: filtersOrQuery }
-    : filtersOrQuery;
+  const filters: SearchFilters =
+    typeof filtersOrQuery === "string" ? { query: filtersOrQuery } : filtersOrQuery;
 
   if (!filters.query.trim()) return "Provide a non-empty search query.";
   const queryParams = new URLSearchParams();
@@ -311,9 +328,7 @@ export async function search(filtersOrQuery: string | SearchFilters): Promise<st
 
   // Filter client-side as well for unit tests compatibility
   const q = filters.query.trim().toLowerCase();
-  items = items.filter((r) =>
-    `${r.title ?? ""} ${r.description ?? ""}`.toLowerCase().includes(q)
-  );
+  items = items.filter((r) => `${r.title ?? ""} ${r.description ?? ""}`.toLowerCase().includes(q));
 
   if (items.length === 0) return `No resources match ${describeFilters(filters)}.`;
   return items.map(formatResource).join("\n\n");
@@ -605,15 +620,6 @@ const server = new Server({ name: "mindvault", version: "1.0.0" }, { capabilitie
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
-    { name: "mindvault_setup_wallet", description: "Create a Stellar wallet using the sponsored account protocol.", inputSchema: { type: "object", properties: {}, required: [] } },
-    { name: "mindvault_wallet_info", description: "Check the agent wallet address and USDC balance.", inputSchema: { type: "object", properties: {}, required: [] } },
-    { name: "mindvault_browse", description: "List all available resources in the MindVault catalog.", inputSchema: { type: "object", properties: {}, required: [] } },
-    { name: "mindvault_preview", description: "Get details and price for a specific resource.", inputSchema: { type: "object", properties: { resourceId: { type: "string" } }, required: ["resourceId"] } },
-    { name: "mindvault_register", description: "Register as a publisher using the agent wallet.", inputSchema: { type: "object", properties: { name: { type: "string" }, email: { type: "string" }, walletAddress: { type: "string" } }, required: ["name", "email"] } },
-    { name: "mindvault_publish", description: "Publish a link resource. Agent wallet signs the x402 verification payment on-chain.", inputSchema: { type: "object", properties: { title: { type: "string" }, description: { type: "string" }, price: { type: "string" }, externalUrl: { type: "string" } }, required: ["title", "price", "externalUrl"] } },
-    { name: "mindvault_buy", description: "Pay USDC via x402 and access a resource.", inputSchema: { type: "object", properties: { resourceId: { type: "string" } }, required: ["resourceId"] } },
-    { name: "mindvault_agent_status", description: "Check the verification agent's earnings and activity.", inputSchema: { type: "object", properties: {}, required: [] } },
-    { name: "mindvault_reset_wallet", description: "Clear the in-memory wallet and wipe any persisted wallet files. Use this to rotate or reset the agent wallet.", inputSchema: { type: "object", properties: {}, required: [] } },
     {
       name: "mindvault_setup_wallet",
       description:
@@ -637,7 +643,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Keyword(s) to match against resource title or description." },
+          query: {
+            type: "string",
+            description: "Keyword(s) to match against resource title or description.",
+          },
           minPrice: { type: "string", description: "Minimum USDC price to include." },
           maxPrice: { type: "string", description: "Maximum USDC price to include." },
           verificationStatus: {
@@ -751,16 +760,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     let result: string;
     switch (name) {
-      case "mindvault_setup_wallet": result = await setupWallet(); break;
-      case "mindvault_wallet_info":  result = await walletInfo(); break;
-      case "mindvault_browse":       result = await browse(); break;
-      case "mindvault_preview":      result = await preview(args.resourceId as string); break;
-      case "mindvault_register":     result = await register(args.name as string, args.email as string, args.walletAddress as string | undefined); break;
-      case "mindvault_publish":      result = await publish({ title: args.title as string, description: args.description as string | undefined, price: args.price as string, externalUrl: args.externalUrl as string }); break;
-      case "mindvault_buy":          result = await buy(args.resourceId as string); break;
-      case "mindvault_agent_status": result = await agentStatus(); break;
-      case "mindvault_reset_wallet":  result = resetWallet(); break;
-      default: throw new Error(`Unknown tool: ${name}`);
       case "mindvault_setup_wallet":
         result = await setupWallet();
         break;

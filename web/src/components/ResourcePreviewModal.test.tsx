@@ -181,4 +181,37 @@ describe("ResourcePreviewModal", () => {
     // Focus restored to trigger element
     expect(document.activeElement).toBe(triggerBtn);
   });
+
+  it("shows the content integrity anchor when a content hash is present", async () => {
+    const hash = "a".repeat(64);
+    vi.mocked(fetchResourceMeta).mockResolvedValue({ ...mockResourceMeta, contentHash: hash });
+
+    render(
+      <ResourcePreviewModal resourceId="res-1" onClose={mockOnClose} onCopyUrl={mockOnCopyUrl} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Content integrity")).toBeInTheDocument();
+    });
+    expect(screen.getByText(hash)).toBeInTheDocument();
+    expect(
+      screen.queryByText("No integrity anchor available for this resource."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /copy content hash/i })).toBeInTheDocument();
+  });
+
+  it("does not imply verification when no content hash is available", async () => {
+    vi.mocked(fetchResourceMeta).mockResolvedValue({ ...mockResourceMeta, contentHash: null });
+
+    render(
+      <ResourcePreviewModal resourceId="res-1" onClose={mockOnClose} onCopyUrl={mockOnCopyUrl} />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("No integrity anchor available for this resource."),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("button", { name: /copy content hash/i })).not.toBeInTheDocument();
+  });
 });
