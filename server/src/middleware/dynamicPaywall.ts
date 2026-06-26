@@ -9,8 +9,6 @@ import { network, sharedX402ResourceServer } from "../lib/x402.js";
 import { getResource } from "../services/registryClient.js";
 import { getOnChainPrice, normalizeUsdcPrice, OnChainLookupError } from "../lib/stellarRegistry.js";
 
-
-
 // Cache middleware instances by resource ID to avoid re-creating on every request
 const middlewareCache = new Map<
   string,
@@ -48,9 +46,7 @@ export async function dynamicPaywall(req: Request, res: Response, next: NextFunc
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const cause =
-      err instanceof Error && err.cause instanceof Error
-        ? err.cause.message
-        : undefined;
+      err instanceof Error && err.cause instanceof Error ? err.cause.message : undefined;
     getLogger().error(
       {
         event: "paywall_chain_lookup_failed",

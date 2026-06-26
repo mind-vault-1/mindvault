@@ -2,7 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod/v4";
 import { validate } from "./middleware/validate.js";
-import { publisherRegisterSchema, verifyContentSchema, catalogQuerySchema } from "./schemas/requests.js";
+import {
+  publisherRegisterSchema,
+  verifyContentSchema,
+  catalogQuerySchema,
+} from "./schemas/requests.js";
 
 function mockResponse() {
   const res = {

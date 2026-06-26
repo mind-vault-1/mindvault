@@ -212,7 +212,9 @@ describe("GET /resources catalog API — price filters (#203)", () => {
   });
 
   it("accepts decimal boundary values", async () => {
-    await request(createTestApp()).get("/resources").query({ minPrice: "0.01", maxPrice: "9999.99" });
+    await request(createTestApp())
+      .get("/resources")
+      .query({ minPrice: "0.01", maxPrice: "9999.99" });
 
     expect(mockListCatalog).toHaveBeenCalledWith(
       expect.objectContaining({ minPrice: "0.01", maxPrice: "9999.99" }),

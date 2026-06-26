@@ -34,12 +34,7 @@ const needsRegistration = (r: DashboardResource) =>
  * and listing state, plus entry points into the existing edit-price,
  * transfer-ownership, and register flows (#164).
  */
-export function CreatorDashboard({
-  apiKey,
-  onEditPrice,
-  onTransferOwnership,
-  onRegister,
-}: Props) {
+export function CreatorDashboard({ apiKey, onEditPrice, onTransferOwnership, onRegister }: Props) {
   const { status, data, error, retry } = useAsync<DashboardResource[]>(
     () => fetchMyResources(apiKey),
     [apiKey],

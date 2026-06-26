@@ -24,15 +24,15 @@
     "test": "pnpm run build:registry-client && pnpm --filter @mindvault/registry-client test && pnpm --filter @mindvault/server test && pnpm --filter @mindvault/web test"
   },
   "devDependencies": {
-    "@types/supertest": "^6.0.2",
-    "@typescript-eslint/eslint-plugin": "^6.20.0",
-    "@typescript-eslint/parser": "^6.20.0",
-    "eslint": "^8.57.0",
-    "eslint-config-prettier": "^9.0.0",
-    "eslint-plugin-prettier": "^5.0.0",
+    "@types/supertest": "^6.0.3",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^9.1.2",
+    "eslint-plugin-prettier": "^5.5.6",
     "markdown-link-check": "^3.14.2",
-    "prettier": "^3.8.3",
-    "supertest": "^6.3.3"
+    "prettier": "^3.8.4",
+    "supertest": "^6.3.4"
   },
   "keywords": [
     "x402",

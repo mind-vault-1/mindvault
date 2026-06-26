@@ -72,9 +72,10 @@ describe("resourceService catalog filters", () => {
   });
 
   it("filters by search text", async () => {
-    currentRows = allRows.filter((r) =>
-      r.title.toLowerCase().includes("alpha") ||
-      (r.description ?? "").toLowerCase().includes("alpha"),
+    currentRows = allRows.filter(
+      (r) =>
+        r.title.toLowerCase().includes("alpha") ||
+        (r.description ?? "").toLowerCase().includes("alpha"),
     );
     const rows = await listCatalog({ search: "alpha" });
 
@@ -82,7 +83,7 @@ describe("resourceService catalog filters", () => {
   });
 
   it("filters by price range", async () => {
-    currentRows = allRows.filter((r) => parseFloat(r.price) >= 1.00 && parseFloat(r.price) <= 1.50);
+    currentRows = allRows.filter((r) => parseFloat(r.price) >= 1.0 && parseFloat(r.price) <= 1.5);
     const rows = await listCatalog({ minPrice: "1.00", maxPrice: "1.50" });
 
     expect(rows.map((row) => row.id)).toEqual(["r3"]);

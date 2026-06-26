@@ -109,7 +109,9 @@ router.get("/publishers/me/analytics", apiKeyAuth, async (req, res) => {
 
   // Compute per-resource stats
   const resourceStats = pubResources.map((r) => {
-    const resourcePayments = allPayments.filter((p) => p.resourceId === r.id && p.recipientAddress === req.publisher!.walletAddress);
+    const resourcePayments = allPayments.filter(
+      (p) => p.resourceId === r.id && p.recipientAddress === req.publisher!.walletAddress,
+    );
     const totalEarned = resourcePayments.reduce((sum, p) => sum + parseFloat(p.amount), 0);
     return {
       id: r.id,
@@ -130,7 +132,9 @@ router.get("/publishers/me/analytics", apiKeyAuth, async (req, res) => {
   });
 
   // Summary
-  const validPayments = allPayments.filter((p) => p.recipientAddress === req.publisher!.walletAddress);
+  const validPayments = allPayments.filter(
+    (p) => p.recipientAddress === req.publisher!.walletAddress,
+  );
   const totalEarned = validPayments.reduce((sum, p) => sum + parseFloat(p.amount), 0);
   const totalSales = validPayments.length;
   const totalResources = pubResources.length;
@@ -181,7 +185,9 @@ router.get("/publishers/leaderboard", async (_req, res) => {
   const leaderboard = allPublishers.map((pub) => {
     const pubResources = allResources.filter((r) => r.publisherId === pub.id);
     const pubResourceIds = pubResources.map((r) => r.id);
-    const pubPayments = allPayments.filter((p) => pubResourceIds.includes(p.resourceId) && p.recipientAddress === pub.walletAddress);
+    const pubPayments = allPayments.filter(
+      (p) => pubResourceIds.includes(p.resourceId) && p.recipientAddress === pub.walletAddress,
+    );
 
     const totalEarned = pubPayments.reduce((sum, p) => sum + parseFloat(p.amount), 0);
 

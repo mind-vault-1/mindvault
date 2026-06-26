@@ -121,9 +121,7 @@ export function PurchaseConfirmModal({ resource, onClose }: Props) {
         {state === "submitting" && (
           <div className="mb-6 flex items-center gap-3">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent" />
-            <span className="text-sm text-gray-600 dark:text-gray-400">
-              Requesting resource…
-            </span>
+            <span className="text-sm text-gray-600 dark:text-gray-400">Requesting resource…</span>
           </div>
         )}
 
