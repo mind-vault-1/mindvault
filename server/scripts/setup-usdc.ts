@@ -5,13 +5,7 @@
  */
 
 import "dotenv/config";
-import {
-  Keypair,
-  TransactionBuilder,
-  Operation,
-  Asset,
-  Horizon,
-} from "@stellar/stellar-sdk";
+import { Keypair, TransactionBuilder, Operation, Asset, Horizon } from "@stellar/stellar-sdk";
 import { getNetworkPreset, resolveStellarNetwork } from "@mindvault/registry-client";
 
 async function main() {

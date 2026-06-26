@@ -7,11 +7,9 @@ import {
   registryKeypair,
   resourceExists,
 } from "../services/registryClient.js";
-import { config } from "../config.js";
 import { getLogger } from "../lib/logger.js";
 
 const WORKER_INTERVAL_MS = 60_000;
-const PENDING_THRESHOLD_MINUTES = 5;
 const MAX_RETRY_ATTEMPTS = 3;
 
 const retryCounts = new Map<string, number>();
@@ -43,12 +41,7 @@ async function tick(): Promise<void> {
     const stuck = await db
       .select()
       .from(resources)
-      .where(
-        and(
-          eq(resources.onchainStatus, "pending"),
-          lt(resources.createdAt, cutoff),
-        ),
-      );
+      .where(and(eq(resources.onchainStatus, "pending"), lt(resources.createdAt, cutoff)));
 
     if (stuck.length === 0) return;
 
@@ -71,7 +64,10 @@ async function retryResource(resource: typeof resources.$inferSelect): Promise<v
   try {
     const exists = await resourceExists(resource.id);
     if (exists) {
-      log.info({ event: "retry_already_registered" }, "resource already registered on-chain; updating DB");
+      log.info(
+        { event: "retry_already_registered" },
+        "resource already registered on-chain; updating DB",
+      );
       await db
         .update(resources)
         .set({ onchainStatus: "registered" })

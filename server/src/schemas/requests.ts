@@ -76,8 +76,14 @@ export const CATALOG_MAX_LIMIT = 100;
 export const catalogQuerySchema = z
   .object({
     verificationStatus: z.enum(["verified", "pending", "rejected"]).optional(),
-    minPrice: z.string().regex(/^\d+(\.\d+)?$/, "must be a non-negative number").optional(),
-    maxPrice: z.string().regex(/^\d+(\.\d+)?$/, "must be a non-negative number").optional(),
+    minPrice: z
+      .string()
+      .regex(/^\d+(\.\d+)?$/, "must be a non-negative number")
+      .optional(),
+    maxPrice: z
+      .string()
+      .regex(/^\d+(\.\d+)?$/, "must be a non-negative number")
+      .optional(),
     search: z.string().optional(),
     resourceType: z.enum(["file", "link"]).optional(),
     sort: z.enum(catalogSortValues).optional(),

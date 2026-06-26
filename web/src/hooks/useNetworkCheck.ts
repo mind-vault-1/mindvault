@@ -11,7 +11,7 @@ export async function checkNetwork(expectedPassphrase: string): Promise<string |
   const label = expectedPassphrase.includes("Test")
     ? "Stellar Testnet"
     : expectedPassphrase.includes("Public")
-    ? "Stellar Mainnet"
-    : expectedPassphrase;
+      ? "Stellar Mainnet"
+      : expectedPassphrase;
   return `Network mismatch: your wallet is on a different network. Switch Freighter to ${label} before signing.`;
 }

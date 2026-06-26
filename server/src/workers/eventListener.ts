@@ -63,34 +63,17 @@ interface SorobanEvent {
   };
 }
 
-function decodeScVal(val: { type: string; value?: string; symbol?: string }): unknown {
-  switch (val.type) {
-    case "symbol":
-      return val.symbol;
-    case "string":
-      return val.value;
-    case "bool":
-      return val.value === "true";
-    case "address":
-      return val.value;
-    case "i128":
-      return val.value ? BigInt(val.value) : BigInt(0);
-    case "u32":
-      return val.value ? Number(val.value) : 0;
-    case "void":
-      return null;
-    default:
-      return val.value ?? val.symbol ?? null;
-  }
-}
-
 function extractResourceId(topic: string[]): string | null {
   if (topic.length < 2) return null;
   const raw = topic[1];
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    return typeof parsed === "string" ? parsed : typeof parsed?.value === "string" ? parsed.value : null;
+    return typeof parsed === "string"
+      ? parsed
+      : typeof parsed?.value === "string"
+        ? parsed.value
+        : null;
   } catch {
     return raw;
   }
@@ -112,10 +95,7 @@ async function handleRegisterEvent(event: SorobanEvent): Promise<void> {
     .then((r) => r[0]);
 
   if (dbResource) {
-    await db
-      .update(resources)
-      .set({ onchainStatus: "registered" })
-      .where(eq(resources.id, id));
+    await db.update(resources).set({ onchainStatus: "registered" }).where(eq(resources.id, id));
     getLogger().info({ event: "event_register", resourceId: id }, "synced register event");
   }
 }
@@ -129,12 +109,12 @@ async function handleSetPriceEvent(event: SorobanEvent): Promise<void> {
     const stroops = BigInt(rawPrice);
     const usdc = (Number(stroops) / 10_000_000).toFixed(7).replace(/\.?0+$/, "");
 
-    await db
-      .update(resources)
-      .set({ price: usdc })
-      .where(eq(resources.id, id));
+    await db.update(resources).set({ price: usdc }).where(eq(resources.id, id));
 
-    getLogger().info({ event: "event_setprice", resourceId: id, price: usdc }, "synced set_price event");
+    getLogger().info(
+      { event: "event_setprice", resourceId: id, price: usdc },
+      "synced set_price event",
+    );
   }
 }
 
@@ -144,12 +124,12 @@ async function handleTransferEvent(event: SorobanEvent): Promise<void> {
 
   const newCreator = extractAddress({ type: event.value.type, value: event.value.value });
   if (newCreator) {
-    await db
-      .update(resources)
-      .set({ walletAddress: newCreator })
-      .where(eq(resources.id, id));
+    await db.update(resources).set({ walletAddress: newCreator }).where(eq(resources.id, id));
 
-    getLogger().info({ event: "event_transfer", resourceId: id, newCreator }, "synced transfer event");
+    getLogger().info(
+      { event: "event_transfer", resourceId: id, newCreator },
+      "synced transfer event",
+    );
   }
 }
 
@@ -159,12 +139,12 @@ async function handleSetListedEvent(event: SorobanEvent): Promise<void> {
 
   const listed = event.value.type === "bool" ? event.value.value === "true" : null;
   if (listed !== null) {
-    await db
-      .update(resources)
-      .set({ listed })
-      .where(eq(resources.id, id));
+    await db.update(resources).set({ listed }).where(eq(resources.id, id));
 
-    getLogger().info({ event: "event_setlisted", resourceId: id, listed }, "synced set_listed event");
+    getLogger().info(
+      { event: "event_setlisted", resourceId: id, listed },
+      "synced set_listed event",
+    );
   }
 }
 
