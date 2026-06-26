@@ -63,26 +63,6 @@ interface SorobanEvent {
   };
 }
 
-function decodeScVal(val: { type: string; value?: string; symbol?: string }): unknown {
-  switch (val.type) {
-    case "symbol":
-      return val.symbol;
-    case "string":
-      return val.value;
-    case "bool":
-      return val.value === "true";
-    case "address":
-      return val.value;
-    case "i128":
-      return val.value ? BigInt(val.value) : BigInt(0);
-    case "u32":
-      return val.value ? Number(val.value) : 0;
-    case "void":
-      return null;
-    default:
-      return val.value ?? val.symbol ?? null;
-  }
-}
 
 function extractResourceId(topic: string[]): string | null {
   if (topic.length < 2) return null;

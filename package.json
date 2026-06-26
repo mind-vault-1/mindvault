@@ -42,5 +42,14 @@
     "ai-agents",
     "micropayments"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "pnpm": {
+    "overrides": {
+      "axios": "^1.16.0",
+      "ws": "^8.21.0",
+      "fast-xml-parser": "^4.4.1",
+      "minimatch": "^9.0.7",
+      "esbuild": "^0.25.0"
+    }
+  }
 }

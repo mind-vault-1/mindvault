@@ -79,7 +79,6 @@ export default function App() {
   const {
     status: registryStatus,
     data: registryData,
-    error: _registryError,
     retry: retryRegistry,
   } = useAsync<{ resourceCount: number }>((_signal) => fetchRegistryStatus(), []);
 

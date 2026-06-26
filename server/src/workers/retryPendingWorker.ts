@@ -7,11 +7,9 @@ import {
   registryKeypair,
   resourceExists,
 } from "../services/registryClient.js";
-import { config } from "../config.js";
 import { getLogger } from "../lib/logger.js";
 
 const WORKER_INTERVAL_MS = 60_000;
-const PENDING_THRESHOLD_MINUTES = 5;
 const MAX_RETRY_ATTEMPTS = 3;
 
 const retryCounts = new Map<string, number>();
