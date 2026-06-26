@@ -66,6 +66,12 @@ export const transferOwnershipSchema = z
   })
   .strict();
 
+/** Sort values supported by GET /resources (#163). */
+export const catalogSortValues = ["newest", "price_asc", "price_desc", "title"] as const;
+
+export const CATALOG_DEFAULT_LIMIT = 20;
+export const CATALOG_MAX_LIMIT = 100;
+
 /** Query params for GET /resources (public catalog). */
 export const catalogQuerySchema = z
   .object({
@@ -74,6 +80,9 @@ export const catalogQuerySchema = z
     maxPrice: z.string().regex(/^\d+(\.\d+)?$/, "must be a non-negative number").optional(),
     search: z.string().optional(),
     resourceType: z.enum(["file", "link"]).optional(),
+    sort: z.enum(catalogSortValues).optional(),
+    limit: z.coerce.number().int().min(1).max(CATALOG_MAX_LIMIT).optional(),
+    offset: z.coerce.number().int().min(0).optional(),
   })
   .strict()
   .refine(

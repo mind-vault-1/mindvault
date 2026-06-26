@@ -80,4 +80,17 @@ describe("App catalog empty states", () => {
     });
     expect(screen.getByText("Atlas of Stellar Networks")).toBeInTheDocument();
   });
+
+  it("opens the purchase confirmation modal from the Buy button (#168)", async () => {
+    vi.mocked(fetchCatalog).mockResolvedValue([mockResource]);
+
+    render(<App />);
+
+    const buyButton = await screen.findByRole("button", { name: "Buy" });
+    await userEvent.click(buyButton);
+
+    expect(await screen.findByText("Confirm purchase")).toBeInTheDocument();
+    expect(screen.getByText("Atlas of Stellar Networks")).toBeInTheDocument();
+    expect(screen.getByText("5.00 USDC")).toBeInTheDocument();
+  });
 });

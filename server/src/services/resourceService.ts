@@ -97,13 +97,51 @@ export async function getResourceById(id: string) {
     .then((rows) => rows[0] ?? null);
 }
 
+export type CatalogSort = "newest" | "price_asc" | "price_desc" | "title";
+
 export type CatalogListFilters = {
   verificationStatus?: "verified" | "pending" | "rejected";
   minPrice?: string;
   maxPrice?: string;
   search?: string;
   resourceType?: "file" | "link";
+  sort?: CatalogSort;
+  limit?: number;
+  offset?: number;
 };
+
+export type CatalogPage<T> = {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
+};
+
+const CATALOG_DEFAULT_LIMIT = 20;
+
+function sortRows<T extends { price: string; title: string; createdAt: Date | string }>(
+  rows: T[],
+  sort: CatalogSort,
+): T[] {
+  const sorted = [...rows];
+  switch (sort) {
+    case "price_asc":
+      sorted.sort((a, b) => parseFloat(a.price) - parseFloat(b.price));
+      break;
+    case "price_desc":
+      sorted.sort((a, b) => parseFloat(b.price) - parseFloat(a.price));
+      break;
+    case "title":
+      sorted.sort((a, b) => a.title.localeCompare(b.title));
+      break;
+    case "newest":
+    default:
+      sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      break;
+  }
+  return sorted;
+}
 
 async function queryCatalog() {
   return db
@@ -123,23 +161,25 @@ async function queryCatalog() {
     .where(eq(resources.listed, true));
 }
 
-// The full listed set is cached once under CATALOG_KEY and all filtering happens
-// in memory. Price is a continuous value, so a per-filter cache key would blow up
-// cardinality; filtering after a single cached read keeps the cache correct and
-// mirrors how the search filter already works (issue #159).
-export async function listCatalog(
-  filters?: CatalogListFilters,
-): Promise<Awaited<ReturnType<typeof queryCatalog>>> {
-  let rows: Awaited<ReturnType<typeof queryCatalog>>;
-
+async function getCachedCatalogRows(): Promise<Awaited<ReturnType<typeof queryCatalog>>> {
   const cached = readCache.get(CATALOG_KEY);
   if (cached !== undefined) {
-    rows = cached as Awaited<ReturnType<typeof queryCatalog>>;
-  } else {
-    rows = await queryCatalog();
-    readCache.set(CATALOG_KEY, rows);
+    return cached as Awaited<ReturnType<typeof queryCatalog>>;
   }
+  const rows = await queryCatalog();
+  readCache.set(CATALOG_KEY, rows);
+  return rows;
+}
 
+function applyCatalogFilters<
+  T extends {
+    title: string;
+    description: string | null;
+    price: string;
+    verificationStatus: string;
+    resourceType: string;
+  },
+>(rows: T[], filters?: CatalogListFilters): T[] {
   if (!filters) return rows;
 
   const search = filters.search?.toLowerCase();
@@ -163,6 +203,37 @@ export async function listCatalog(
     if (filters.resourceType && r.resourceType !== filters.resourceType) return false;
     return true;
   });
+}
+
+// The full listed set is cached once under CATALOG_KEY and all filtering happens
+// in memory. Price is a continuous value, so a per-filter cache key would blow up
+// cardinality; filtering after a single cached read keeps the cache correct and
+// mirrors how the search filter already works (issue #159).
+//
+// `sort` (#163) and `limit`/`offset` (#162) are applied after filtering, in that
+// order, so pagination always walks a stable, sorted sequence. Omitting limit/offset
+// preserves the historical "return everything" behavior for existing callers.
+export async function listCatalog(
+  filters?: CatalogListFilters,
+): Promise<Awaited<ReturnType<typeof queryCatalog>>> {
+  const rows = await getCachedCatalogRows();
+  const filtered = applyCatalogFilters(rows, filters);
+
+  if (!filters) return filtered;
+
+  const sorted = filters.sort ? sortRows(filtered, filters.sort) : filtered;
+
+  if (filters.limit === undefined && filters.offset === undefined) return sorted;
+
+  const offset = filters.offset ?? 0;
+  const limit = filters.limit ?? CATALOG_DEFAULT_LIMIT;
+  return sorted.slice(offset, offset + limit);
+}
+
+/** Total count of listed resources matching `filters`, ignoring limit/offset (#162). */
+export async function countCatalog(filters?: CatalogListFilters): Promise<number> {
+  const rows = await getCachedCatalogRows();
+  return applyCatalogFilters(rows, filters).length;
 }
 
 async function queryResourceMeta(id: string) {

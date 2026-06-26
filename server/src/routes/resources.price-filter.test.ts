@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 
-const { mockListCatalog } = vi.hoisted(() => ({
+const { mockListCatalog, mockCountCatalog } = vi.hoisted(() => ({
   mockListCatalog: vi.fn(),
+  mockCountCatalog: vi.fn(),
 }));
 
 vi.mock("../config.js", () => ({
@@ -15,6 +16,7 @@ vi.mock("../config.js", () => ({
 
 vi.mock("../services/resourceService.js", () => ({
   listCatalog: mockListCatalog,
+  countCatalog: mockCountCatalog,
   createFileResource: vi.fn(),
   createLinkResource: vi.fn(),
   getResourceMeta: vi.fn(),
@@ -84,6 +86,8 @@ describe("GET /resources catalog API — price-range query params (#159)", () =>
   beforeEach(() => {
     mockListCatalog.mockReset();
     mockListCatalog.mockResolvedValue([]);
+    mockCountCatalog.mockReset();
+    mockCountCatalog.mockResolvedValue(0);
   });
 
   it("passes minPrice/maxPrice through to listCatalog and maps accessUrl", async () => {
@@ -94,18 +98,31 @@ describe("GET /resources catalog API — price-range query params (#159)", () =>
       .query({ minPrice: "0.50", maxPrice: "5.00" });
 
     expect(res.status).toBe(200);
-    expect(mockListCatalog).toHaveBeenCalledWith({ minPrice: "0.50", maxPrice: "5.00" });
+    expect(mockListCatalog).toHaveBeenCalledWith({
+      verificationStatus: undefined,
+      minPrice: "0.50",
+      maxPrice: "5.00",
+      search: undefined,
+      resourceType: undefined,
+      sort: undefined,
+      limit: 20,
+      offset: 0,
+    });
     expect(res.body[0].accessUrl).toBe("http://localhost:4021/resources/in-range");
   });
 
   it("passes only minPrice when only minPrice is supplied", async () => {
     await request(createTestApp()).get("/resources").query({ minPrice: "0.50" });
-    expect(mockListCatalog).toHaveBeenCalledWith({ minPrice: "0.50" });
+    expect(mockListCatalog).toHaveBeenCalledWith(
+      expect.objectContaining({ minPrice: "0.50", limit: 20, offset: 0 }),
+    );
   });
 
   it("passes only maxPrice when only maxPrice is supplied", async () => {
     await request(createTestApp()).get("/resources").query({ maxPrice: "5.00" });
-    expect(mockListCatalog).toHaveBeenCalledWith({ maxPrice: "5.00" });
+    expect(mockListCatalog).toHaveBeenCalledWith(
+      expect.objectContaining({ maxPrice: "5.00", limit: 20, offset: 0 }),
+    );
   });
 
   it("returns 400 for a negative minPrice", async () => {

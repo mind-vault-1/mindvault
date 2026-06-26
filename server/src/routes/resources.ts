@@ -11,12 +11,14 @@ import {
   setPriceSchema,
   prepareOwnershipSchema,
   transferOwnershipSchema,
+  CATALOG_DEFAULT_LIMIT,
 } from "../schemas/requests.js";
 import { dynamicPaywall } from "../middleware/dynamicPaywall.js";
 import {
   createFileResource,
   createLinkResource,
   listCatalog,
+  countCatalog,
   getResourceMeta,
   getVerificationDetails,
   delistResource,
@@ -147,15 +149,38 @@ router.post(
 );
 
 // GET /resources — browse catalog (public)
+//
+// Pagination (#162): `limit` (default 20, max 100) and `offset` control the page.
+// Metadata for fetching the next page is returned via response headers rather
+// than the body, so the response stays a plain array for existing clients:
+//   X-Total-Count, X-Limit, X-Offset, X-Next-Offset (omitted on the last page)
+//
+// Sorting (#163): `sort` accepts newest (default), price_asc, price_desc, title.
 router.get("/resources", async (req, res) => {
   const parsed = catalogQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid query params" });
     return;
   }
-  const catalog = await listCatalog(
-    Object.values(parsed.data).some((v) => v !== undefined) ? parsed.data : undefined,
-  );
+
+  const hasFilters = Object.values(parsed.data).some((v) => v !== undefined);
+  const limit = parsed.data.limit ?? CATALOG_DEFAULT_LIMIT;
+  const offset = parsed.data.offset ?? 0;
+
+  const filters = { ...parsed.data, limit, offset };
+
+  const [catalog, total] = await Promise.all([
+    listCatalog(filters),
+    countCatalog(hasFilters ? parsed.data : undefined),
+  ]);
+
+  const nextOffset = offset + catalog.length < total ? offset + catalog.length : null;
+
+  res.setHeader("X-Total-Count", String(total));
+  res.setHeader("X-Limit", String(limit));
+  res.setHeader("X-Offset", String(offset));
+  if (nextOffset !== null) res.setHeader("X-Next-Offset", String(nextOffset));
+
   res.json(
     catalog.map((r) => ({
       ...r,

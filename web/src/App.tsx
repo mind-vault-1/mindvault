@@ -3,6 +3,7 @@ import { EditPriceModal } from "./components/EditPriceModal.js";
 import { TransferOwnershipModal } from "./components/TransferOwnershipModal.js";
 import { RegisterModal } from "./components/RegisterModal.js";
 import { ResourcePreviewModal } from "./components/ResourcePreviewModal.js";
+import { PurchaseConfirmModal } from "./components/PurchaseConfirmModal.js";
 import { ExplorerLink } from "./components/ExplorerLink.js";
 import { Toast } from "./components/Toast.js";
 import { CatalogSearch } from "./components/CatalogSearch.js";
@@ -10,12 +11,13 @@ import { ResourceGridSkeleton } from "./components/ResourceCardSkeleton.js";
 import { ErrorBanner } from "./components/ErrorBanner.js";
 import { WalletButton } from "./components/WalletButton.js";
 import { AnalyticsDashboard } from "./components/AnalyticsDashboard.js";
+import { CreatorDashboard } from "./components/CreatorDashboard.js";
 import { Leaderboard } from "./components/Leaderboard.js";
 import { PublishModal } from "./components/PublishModal.js";
 import { useTheme } from "./hooks/useTheme.js";
 import { useAsync } from "./hooks/useAsync.js";
 import { useWalletConnection } from "./hooks/useWalletConnection.js";
-import { fetchCatalog, fetchMyResources, fetchRegistryStatus } from "./api/resources.js";
+import { fetchCatalog, fetchRegistryStatus } from "./api/resources.js";
 import type { CatalogFilters } from "./api/resources.js";
 
 interface Resource {
@@ -37,9 +39,10 @@ type ActiveModal =
   | { kind: "transferOwnership"; resource: Resource }
   | { kind: "register"; resource: Resource }
   | { kind: "preview"; resource: Resource }
+  | { kind: "buy"; resource: Resource }
   | null;
 
-type Tab = "catalog" | "analytics" | "leaderboard";
+type Tab = "catalog" | "dashboard" | "analytics" | "leaderboard";
 
 const API_KEY = import.meta.env.VITE_API_KEY ?? "";
 
@@ -61,16 +64,15 @@ export default function App() {
   const { theme, toggleTheme } = useTheme();
   const wallet = useWalletConnection();
 
-  // ── Catalog / my-resources fetch ──────────────────────────────────────────
+  // ── Public catalog fetch ──────────────────────────────────────────────────
+  // Always the public listing, independent of API_KEY — owned resources have
+  // their own view in the Dashboard tab (#164).
   const {
     status: resourcesStatus,
     data: rawResources,
     error: resourcesError,
     retry: retryResources,
-  } = useAsync<Resource[]>(
-    (_signal) => (API_KEY ? fetchMyResources(API_KEY) : fetchCatalog(filters)),
-    [filters],
-  );
+  } = useAsync<Resource[]>((_signal) => fetchCatalog(filters), [filters]);
 
   // ── Registry status fetch ─────────────────────────────────────────────────
   const {
@@ -115,9 +117,6 @@ export default function App() {
     applyOverride(id, { onchainStatus: "registered" });
     setActiveModal(null);
   }
-
-  const needsRegistration = (r: Resource) =>
-    r.verificationStatus === "verified" && r.onchainStatus !== "registered";
 
   const registryCount = registryData?.resourceCount ?? null;
   const isLoading = resourcesStatus === "idle" || resourcesStatus === "loading";
@@ -172,6 +171,9 @@ export default function App() {
           </TabButton>
           {API_KEY && (
             <>
+              <TabButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
+                Dashboard
+              </TabButton>
               <TabButton active={tab === "analytics"} onClick={() => setTab("analytics")}>
                 My Analytics
               </TabButton>
@@ -209,23 +211,25 @@ export default function App() {
           <Leaderboard />
         </div>
       )}
+      {/* ── Dashboard tab ───────────────────────────────────────────────────── */}
+      {tab === "dashboard" && API_KEY && (
+        <CreatorDashboard
+          apiKey={API_KEY}
+          onEditPrice={(resource) => setActiveModal({ kind: "editPrice", resource })}
+          onTransferOwnership={(resource) =>
+            setActiveModal({ kind: "transferOwnership", resource })
+          }
+          onRegister={(resource) => setActiveModal({ kind: "register", resource })}
+        />
+      )}
+
       {/* ── Analytics tab ───────────────────────────────────────────────────── */}
       {tab === "analytics" && API_KEY && <AnalyticsDashboard apiKey={API_KEY} />}
 
       {tab === "catalog" && (
         <>
-          {/* ── Pending registration banner ──────────────────────────────────── */}
-          {API_KEY && filteredResources.some(needsRegistration) && (
-            <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950">
-              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                {filteredResources.filter(needsRegistration).length} resource(s) verified but not
-                yet registered on-chain.
-              </p>
-            </div>
-          )}
-
           {/* ── Search + filter bar ──────────────────────────────────────────── */}
-          {!API_KEY && !isLoading && resourcesStatus === "success" && (
+          {!isLoading && resourcesStatus === "success" && (
             <CatalogSearch
               filters={filters}
               total={filteredResources.length}
@@ -400,32 +404,12 @@ export default function App() {
                         >
                           Copy URL
                         </button>
-                        {API_KEY && needsRegistration(r) && (
-                          <button
-                            onClick={() => setActiveModal({ kind: "register", resource: r })}
-                            className="rounded-lg bg-amber-500 px-3 py-1 text-xs font-medium text-white hover:bg-amber-600"
-                          >
-                            Register on-chain
-                          </button>
-                        )}
-                        {API_KEY && (
-                          <>
-                            <button
-                              onClick={() => setActiveModal({ kind: "editPrice", resource: r })}
-                              className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
-                            >
-                              Edit price
-                            </button>
-                            <button
-                              onClick={() =>
-                                setActiveModal({ kind: "transferOwnership", resource: r })
-                              }
-                              className="rounded-lg bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
-                            >
-                              Transfer
-                            </button>
-                          </>
-                        )}
+                        <button
+                          onClick={() => setActiveModal({ kind: "buy", resource: r })}
+                          className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700"
+                        >
+                          Buy
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -472,6 +456,13 @@ export default function App() {
           apiKey={API_KEY}
           onClose={() => setActiveModal(null)}
           onConfirmed={(txHash) => handleRegistrationConfirmed(activeModal.resource.id, txHash)}
+        />
+      )}
+
+      {activeModal?.kind === "buy" && (
+        <PurchaseConfirmModal
+          resource={activeModal.resource}
+          onClose={() => setActiveModal(null)}
         />
       )}
 
