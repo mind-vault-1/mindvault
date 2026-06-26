@@ -33,6 +33,7 @@ jobs:
       - run: pnpm exec eslint "server/src/**/*.{ts,tsx}" "web/src/**/*.{ts,tsx}" "packages/**/*.{ts,tsx}" "mcp/src/**/*.{ts,tsx}"
       - run: pnpm exec prettier --check "server/**/*.{ts,tsx,js,json,md}" "web/**/*.{ts,tsx,js,json,md}" "packages/**/*.{ts,tsx,js,json,md}" "mcp/**/*.{ts,tsx,js,json,md}"
       - run: pnpm run build:registry-client
+      - run: pnpm --filter @mindvault/server typecheck
       - run: pnpm --filter @mindvault/server build
       - run: pnpm --filter @mindvault/web build
       - run: pnpm test

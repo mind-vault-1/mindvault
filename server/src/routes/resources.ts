@@ -1,6 +1,6 @@
 import { Router, type Router as RouterType } from "express";
-import multer from "multer";
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
+import { singleFileUpload, validateUploadContentType } from "../middleware/uploadGuards.js";
 import { validate, validateFields } from "../middleware/validate.js";
 import {
   filePublishBodySchema,
@@ -45,10 +45,6 @@ import {
 import { parsePayerFromXPayment } from "../lib/parseXPayment.js";
 
 const router: RouterType = Router();
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: config.MAX_FILE_SIZE_MB * 1024 * 1024 },
-});
 
 // POST /resources — publish a resource (authenticated)
 router.post(
@@ -56,7 +52,8 @@ router.post(
   apiKeyAuth,
   publishIpRateLimit,
   publishWalletRateLimit,
-  upload.single("file"),
+  singleFileUpload("file"),
+  validateUploadContentType,
   async (req, res) => {
     const publisher = req.publisher!;
 

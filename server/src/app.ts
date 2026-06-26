@@ -18,7 +18,7 @@ export function createApp(): Express {
   app.use(corsMiddleware());
   app.use(requestContextMiddleware);
   app.use(inFlightMiddleware);
-  app.use(express.json());
+  app.use(express.json({ limit: config.MAX_JSON_BODY_SIZE }));
   app.use(requestTimeout(config.REQUEST_TIMEOUT_MS));
 
   // Routes
