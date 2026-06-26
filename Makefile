@@ -41,6 +41,7 @@ dev:
 	wait
 
 test:
+	pnpm run build:registry-client
 	pnpm test
 
 # Full local validation — run before opening a PR.
