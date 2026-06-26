@@ -12,6 +12,7 @@ import { WalletButton } from "./components/WalletButton.js";
 import { AnalyticsDashboard } from "./components/AnalyticsDashboard.js";
 import { CreatorDashboard } from "./components/CreatorDashboard.js";
 import { Leaderboard } from "./components/Leaderboard.js";
+import { AgentStatusPage } from "./components/AgentStatusPage.js";
 import { PublishModal } from "./components/PublishModal.js";
 import { PurchasesDashboard } from "./components/PurchasesDashboard.js";
 import { BuyModal } from "./components/BuyModal.js";
@@ -43,7 +44,7 @@ type ActiveModal =
   | { kind: "buy"; resource: Resource }
   | null;
 
-type Tab = "catalog" | "dashboard" | "analytics" | "leaderboard" | "purchases";
+type Tab = "catalog" | "dashboard" | "analytics" | "leaderboard" | "purchases" | "agent";
 
 const API_KEY = import.meta.env.VITE_API_KEY ?? "";
 
@@ -172,6 +173,9 @@ export default function App() {
           <TabButton active={tab === "leaderboard"} onClick={() => setTab("leaderboard")}>
             Leaderboard
           </TabButton>
+          <TabButton active={tab === "agent"} onClick={() => setTab("agent")}>
+            Agent
+          </TabButton>
           {API_KEY && (
             <>
               <TabButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
@@ -224,6 +228,21 @@ export default function App() {
           }
           onRegister={(resource) => setActiveModal({ kind: "register", resource })}
         />
+      )}
+
+      {/* ── Agent tab ───────────────────────────────────────────────────────── */}
+      {tab === "agent" && (
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
+          <div className="border-b border-gray-200 pb-4 dark:border-gray-700">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+              Verification Agent
+            </h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Live stats and activity for the MindVault originality-verification agent
+            </p>
+          </div>
+          <AgentStatusPage />
+        </div>
       )}
 
       {/* ── Analytics tab ───────────────────────────────────────────────────── */}
