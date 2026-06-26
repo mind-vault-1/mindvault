@@ -14,6 +14,7 @@ import { AnalyticsDashboard } from "./components/AnalyticsDashboard.js";
 import { CreatorDashboard } from "./components/CreatorDashboard.js";
 import { Leaderboard } from "./components/Leaderboard.js";
 import { PublishModal } from "./components/PublishModal.js";
+import { PurchasesDashboard } from "./components/PurchasesDashboard.js";
 import { useTheme } from "./hooks/useTheme.js";
 import { useAsync } from "./hooks/useAsync.js";
 import { useWalletConnection } from "./hooks/useWalletConnection.js";
@@ -42,7 +43,7 @@ type ActiveModal =
   | { kind: "buy"; resource: Resource }
   | null;
 
-type Tab = "catalog" | "dashboard" | "analytics" | "leaderboard";
+type Tab = "catalog" | "dashboard" | "analytics" | "leaderboard" | "purchases";
 
 const API_KEY = import.meta.env.VITE_API_KEY ?? "";
 
@@ -166,6 +167,9 @@ export default function App() {
           <TabButton active={tab === "catalog"} onClick={() => setTab("catalog")}>
             Catalog
           </TabButton>
+          <TabButton active={tab === "purchases"} onClick={() => setTab("purchases")}>
+            Purchases
+          </TabButton>
           <TabButton active={tab === "leaderboard"} onClick={() => setTab("leaderboard")}>
             Leaderboard
           </TabButton>
@@ -225,6 +229,9 @@ export default function App() {
 
       {/* ── Analytics tab ───────────────────────────────────────────────────── */}
       {tab === "analytics" && API_KEY && <AnalyticsDashboard apiKey={API_KEY} />}
+
+      {/* ── Purchases tab ───────────────────────────────────────────────────── */}
+      {tab === "purchases" && <PurchasesDashboard initialWallet={wallet.address || ""} />}
 
       {tab === "catalog" && (
         <>

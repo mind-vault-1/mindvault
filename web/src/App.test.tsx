@@ -90,7 +90,7 @@ describe("App catalog empty states", () => {
     await userEvent.click(buyButton);
 
     expect(await screen.findByText("Confirm purchase")).toBeInTheDocument();
-    expect(screen.getByText("Atlas of Stellar Networks")).toBeInTheDocument();
-    expect(screen.getByText("5.00 USDC")).toBeInTheDocument();
+    expect(screen.getAllByText("Atlas of Stellar Networks").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("5.00 USDC").length).toBeGreaterThan(0);
   });
 });

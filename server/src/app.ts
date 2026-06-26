@@ -10,6 +10,7 @@ import publisherRouter from "./routes/publishers.js";
 import registryRouter from "./routes/registry.js";
 import resourceRouter from "./routes/resources.js";
 import verifyRouter from "./routes/verify.js";
+import paymentsRouter from "./routes/payments.js";
 import docsRouter from "./routes/docs.js";
 
 export function createApp(): Express {
@@ -27,6 +28,7 @@ export function createApp(): Express {
   app.use(registryRouter);
   app.use(resourceRouter);
   app.use(verifyRouter);
+  app.use(paymentsRouter);
 
   // OpenAPI spec + Swagger UI (all envs; UI is CDN-based, no extra package needed)
   app.use(docsRouter);
