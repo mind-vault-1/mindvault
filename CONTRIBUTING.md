@@ -140,6 +140,14 @@ These are drawn from the README's "What Is Not Yet Built" — great starting poi
 If you want to take something larger on, open an issue first so we can align on
 the approach.
 
+## Labels & triage
+
+Issues and PRs use a small, consistent label taxonomy — `area:`, `type:`,
+`difficulty:`, and `wave:` (open-source contributor cohorts). The canonical set
+lives in [`.github/labels.yml`](.github/labels.yml) and the full triage guide is
+in [`docs/LABELS.md`](docs/LABELS.md). Browse the `good first issue` and current
+`wave:` labels to find a starting point.
+
 ## Security
 
 - Never commit secrets. Only `*.env.example` files belong in git.

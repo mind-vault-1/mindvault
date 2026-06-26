@@ -434,7 +434,32 @@ async function publish(args: {
     : "failed";
   const onchainTxHash: string | null = registerRes.ok
     ? (registerRes.data.onchainTxHash ?? null)
-    : null;
+    : ((registerRes.data?.txHash as string | undefined) ?? null);
+
+  // On failure the server returns actionable guidance (next steps, the retry
+  // endpoint, and a tx-status link when a hash exists). Surface it verbatim so
+  // the agent knows exactly how to recover instead of getting an opaque error.
+  const failureGuidance: string[] = [];
+  if (!registerRes.ok) {
+    const data = registerRes.data ?? {};
+    const retryEndpoint =
+      typeof data.retryEndpoint === "string"
+        ? data.retryEndpoint
+        : `POST ${BASE_URL}/resources/${resource.id}/register`;
+    failureGuidance.push(
+      `Registration failed — the resource is still listed and purchasable.`,
+      typeof data.message === "string" ? data.message : `Detail: ${data.detail ?? "unknown error"}`,
+      `Retry endpoint: ${retryEndpoint} (send your x-api-key; no body re-runs server-side registration).`,
+    );
+    if (typeof data.txStatusUrl === "string") {
+      failureGuidance.push(`Transaction status: ${data.txStatusUrl}`);
+    } else if (onchainTxHash) {
+      failureGuidance.push(`Check transaction ${onchainTxHash} with mindvault_tx_status.`);
+    }
+    if (Array.isArray(data.nextSteps)) {
+      failureGuidance.push("Next steps:", ...data.nextSteps.map((s: string) => `  - ${s}`));
+    }
+  }
 
   return [
     `Resource published.`,
@@ -443,9 +468,7 @@ async function publish(args: {
     `Verification: approved ✓`,
     `On-chain status: ${onchainStatus}`,
     onchainTxHash ? `On-chain tx: ${onchainTxHash}` : null,
-    !registerRes.ok
-      ? `(Registration failed — resource is still listed and purchasable. Retry with mindvault_register_onchain.)`
-      : null,
+    ...failureGuidance,
   ]
     .filter(Boolean)
     .join("\n");

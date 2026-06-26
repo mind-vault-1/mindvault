@@ -32,6 +32,7 @@ import { config } from "../config.js";
 import { getLogger } from "../lib/logger.js";
 import { publishIpRateLimit, publishWalletRateLimit } from "../middleware/rateLimiters.js";
 import { getIdempotencyStore, idempotencyCacheKey } from "../lib/idempotency.js";
+import { buildRegistrationFailureGuidance, explorerTxUrl } from "../lib/registrationGuidance.js";
 import {
   NETWORK_PASSPHRASE,
   registryClient,
@@ -371,7 +372,19 @@ router.post(
     }
     // "pending" means a registration is already in-flight — don't double-submit
     if (resource.onchainStatus === "pending") {
-      res.status(409).json({ error: "Registration already in progress" });
+      res.status(409).json({
+        error: "Registration already in progress",
+        message:
+          "An on-chain registration for this resource is already pending. A background worker retries pending registrations automatically for a few minutes.",
+        nextSteps: [
+          "Wait for the pending registration to settle — re-check this resource's onchainStatus shortly.",
+          `If it is still pending after several minutes, the retry worker marks it "failed", after which you can retry with POST /resources/${resourceId}/register.`,
+          ...(resource.onchainTxHash
+            ? [`Inspect the in-flight transaction: ${explorerTxUrl(resource.onchainTxHash)}`]
+            : []),
+        ],
+        ...(resource.onchainTxHash ? { txHash: resource.onchainTxHash } : {}),
+      });
       return;
     }
     // "none" or "failed" → proceed (failed is retryable)
@@ -424,10 +437,16 @@ router.post(
             .update(resources)
             .set({ onchainStatus: "failed" })
             .where(eq(resources.id, resourceId));
+          const guidance = buildRegistrationFailureGuidance({
+            resourceId,
+            txHash: result.txHash,
+            detail: result.error,
+          });
           res.status(502).json({
             error: "On-chain registration failed",
             detail: result.error,
             txHash: result.txHash || undefined,
+            ...guidance,
           });
         }
       } else {
@@ -493,10 +512,14 @@ router.post(
         .update(resources)
         .set({ onchainStatus: "failed" })
         .where(eq(resources.id, resourceId));
+      const guidance = buildRegistrationFailureGuidance({
+        resourceId,
+        detail: err?.message,
+      });
       res.status(502).json({
         error: "On-chain registration failed",
         detail: err?.message,
-        retryable: true,
+        ...guidance,
       });
     }
   },

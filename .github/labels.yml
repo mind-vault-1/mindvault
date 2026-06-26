@@ -1,0 +1,109 @@
+# Canonical MindVault label set.
+#
+# This file is the single source of truth for repository labels. It is consumed
+# by .github/workflows/labels.yml (manual dispatch) to sync labels via the
+# GitHub API, and documented for triagers in docs/LABELS.md.
+#
+# Labels are grouped into four families used together on every triaged issue:
+#   area:*        which part of the codebase            (exactly one)
+#   type:*        what kind of change                   (exactly one)
+#   difficulty:*  expected effort / required experience (exactly one)
+#   wave:*        contributor cohort an issue belongs to (zero or one)
+#
+# A handful of GitHub workflow/default labels are kept below as well.
+# Colors are 6-digit hex without the leading '#'.
+
+# ── Area ────────────────────────────────────────────────────────────────────
+# One per issue. Mirrors the "Affected area" dropdown in the issue templates.
+- name: "area: server"
+  color: "1d76db"
+  description: "Express API, services, workers (server/)"
+- name: "area: web"
+  color: "1d76db"
+  description: "React web app (web/)"
+- name: "area: contract"
+  color: "1d76db"
+  description: "Soroban vault-registry contract (contract/)"
+- name: "area: mcp"
+  color: "1d76db"
+  description: "MCP server for AI agents (mcp/)"
+- name: "area: registry-client"
+  color: "1d76db"
+  description: "Shared @mindvault/registry-client package (packages/registry-client/)"
+- name: "area: docs"
+  color: "1d76db"
+  description: "Documentation, README, guides (docs/)"
+- name: "area: ci"
+  color: "1d76db"
+  description: "CI workflows, tooling, repo config (.github/, scripts/)"
+
+# ── Type ────────────────────────────────────────────────────────────────────
+# One per issue. Replaces the ambiguous default trio (bug/enhancement/
+# documentation) with an explicit, prefixed taxonomy.
+- name: "type: feature"
+  color: "0e8a16"
+  description: "New functionality or capability"
+- name: "type: bug"
+  color: "d73a4a"
+  description: "Something is broken and needs fixing"
+- name: "type: docs"
+  color: "0075ca"
+  description: "Documentation-only change"
+- name: "type: refactor"
+  color: "fbca04"
+  description: "Code change that neither fixes a bug nor adds a feature"
+- name: "type: test"
+  color: "5319e7"
+  description: "Adds or improves automated tests"
+- name: "type: chore"
+  color: "cfd3d7"
+  description: "Tooling, deps, config, or housekeeping"
+- name: "type: security"
+  color: "b60205"
+  description: "Security hardening or vulnerability remediation"
+
+# ── Difficulty ──────────────────────────────────────────────────────────────
+# One per issue. "good first issue" stays as its own GitHub-recognized label so
+# the newcomers feed keeps working; the other tiers grade everything else.
+- name: "good first issue"
+  color: "7057ff"
+  description: "Beginner-friendly; well-scoped with clear acceptance criteria"
+- name: "difficulty: easy"
+  color: "c2e0c6"
+  description: "Small, low-risk change; little context required"
+- name: "difficulty: medium"
+  color: "7fc96f"
+  description: "Moderate effort; touches a couple of areas or needs some context"
+- name: "difficulty: hard"
+  color: "1e7d32"
+  description: "Substantial effort, deep context, or cross-cutting changes"
+
+# ── Wave ────────────────────────────────────────────────────────────────────
+# Zero or one per issue. Groups issues into open-source contributor cohorts so a
+# wave's work can be triaged and tracked together.
+- name: "wave: backlog"
+  color: "ededed"
+  description: "Triaged and ready, but not yet assigned to a wave"
+- name: "wave: 1"
+  color: "6f42c1"
+  description: "Contributor wave 1"
+- name: "wave: 2"
+  color: "8a63d2"
+  description: "Contributor wave 2"
+- name: "wave: 3"
+  color: "a371f7"
+  description: "Contributor wave 3"
+
+# ── Workflow / status (GitHub defaults we keep) ─────────────────────────────
+- name: "help wanted"
+  color: "008672"
+  description: "Maintainers would welcome a contributor picking this up"
+- name: "duplicate"
+  color: "cfd3d7"
+  description: "Already tracked by another issue or PR"
+- name: "wontfix"
+  color: "ffffff"
+  description: "Out of scope; will not be worked on"
+- name: "question"
+  color: "d876e3"
+  description: "A question or request for more information, not actionable work"
