@@ -55,6 +55,10 @@ const envSchema = z.object({
     .string()
     .min(1, "REGISTRY_SECRET_KEY (deployer / owner secret) is required"),
 
+  // Metrics endpoint token — if set, requests to /metrics must supply it via
+  // Bearer auth or ?token=. If unset, the endpoint is disabled.
+  METRICS_TOKEN: z.string().optional(),
+
   // Verification
   VERIFICATION_PRICE: z.string().default("0.10"),
 

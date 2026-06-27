@@ -5,6 +5,7 @@ import { getLogger } from "./lib/logger.js";
 import { requestContextMiddleware } from "./middleware/requestContext.js";
 import { inFlightMiddleware } from "./middleware/inFlight.js";
 import { requestTimeout } from "./middleware/timeout.js";
+import { requestDurationMiddleware } from "./middleware/requestDuration.js";
 import healthRouter from "./routes/health.js";
 import publisherRouter from "./routes/publishers.js";
 import registryRouter from "./routes/registry.js";
@@ -12,6 +13,7 @@ import resourceRouter from "./routes/resources.js";
 import verifyRouter from "./routes/verify.js";
 import paymentsRouter from "./routes/payments.js";
 import docsRouter from "./routes/docs.js";
+import metricsRouter from "./routes/metrics.js";
 
 export function createApp(): Express {
   const app = express();
@@ -21,6 +23,7 @@ export function createApp(): Express {
   app.use(inFlightMiddleware);
   app.use(express.json({ limit: config.MAX_JSON_BODY_SIZE }));
   app.use(requestTimeout(config.REQUEST_TIMEOUT_MS));
+  app.use(requestDurationMiddleware);
 
   // Routes
   app.use(healthRouter);
@@ -29,6 +32,7 @@ export function createApp(): Express {
   app.use(resourceRouter);
   app.use(verifyRouter);
   app.use(paymentsRouter);
+  app.use(metricsRouter);
 
   // OpenAPI spec + Swagger UI (all envs; UI is CDN-based, no extra package needed)
   app.use(docsRouter);
