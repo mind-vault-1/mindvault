@@ -1,4 +1,5 @@
 import { type Resource, Networks } from "@mindvault/registry-client";
+import { signedPublisherFetch } from "./requestSignature.js";
 
 export type { Resource };
 export { Networks as registryNetworks };
