@@ -114,6 +114,51 @@ export async function buildRegisterTx(
 }
 
 /**
+ * Delist a resource on the vault registry (set_listed(id, false)).
+ *
+ * The DELETE /resources/:id flow has no client wallet to sign with, so this
+ * signs with the registry keypair — the same server-side signing pattern the
+ * legacy on-chain register flow uses. It is best-effort by design: the caller
+ * keeps the DB delist authoritative and treats on-chain failure as non-fatal.
+ *
+ * Resources that were never registered on-chain should not reach here (callers
+ * guard on `onchainStatus`), but if one does the contract returns NotFound and
+ * we surface it as a failed result rather than throwing.
+ */
+export async function delistOnChain(id: string): Promise<{
+  txHash: string;
+  success: boolean;
+  error?: string;
+}> {
+  try {
+    const tx = await (registryClient as any).delist({ id }, { simulate: true });
+
+    const sentTx = await tx.signAndSend({
+      signTransaction: async (xdr: string) => {
+        const { Transaction } = await import("@stellar/stellar-sdk");
+        const stellarTx = new Transaction(xdr, NETWORK_PASSPHRASE);
+        stellarTx.sign(keypair);
+        return stellarTx.toXDR();
+      },
+    });
+
+    const txHash = sentTx?.sendTransactionResponse?.hash ?? "";
+    getLogger().info(
+      { event: "onchain_delist", resourceId: id, txHash, success: true },
+      "on-chain resource delist succeeded",
+    );
+    return { txHash, success: true };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    getLogger().warn(
+      { event: "onchain_delist", resourceId: id, success: false, error: message },
+      "on-chain resource delist failed",
+    );
+    return { txHash: "", success: false, error: message };
+  }
+}
+
+/**
  * Submit a creator-signed XDR to Soroban RPC and poll for the result.
  * Returns the transaction hash and success/failure status.
  */

@@ -80,4 +80,20 @@ describe("App catalog empty states", () => {
     });
     expect(screen.getByText("Atlas of Stellar Networks")).toBeInTheDocument();
   });
+
+  it("opens the in-browser x402 purchase modal from the Buy button (#168, #219)", async () => {
+    vi.mocked(fetchCatalog).mockResolvedValue([mockResource]);
+
+    render(<App />);
+
+    const buyButton = await screen.findByRole("button", { name: "Buy" });
+    await userEvent.click(buyButton);
+
+    // The Buy button opens the real x402 BuyModal (issue #219), which supersedes
+    // the earlier confirm-only stub.
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "Buy resource" })).toBeInTheDocument();
+    expect(within(dialog).getByText("Atlas of Stellar Networks")).toBeInTheDocument();
+    expect(within(dialog).getByText("5.00 USDC")).toBeInTheDocument();
+  });
 });

@@ -51,7 +51,7 @@ fn register_then_read() {
     assert_eq!(r.creator, creator);
     assert_eq!(r.price, 1_000_000i128);
     assert_eq!(r.metadata, metadata);
-    assert_eq!(r.listed, true); // Resources are listed by default
+    assert!(r.listed); // Resources are listed by default
 }
 
 #[test]
@@ -74,7 +74,13 @@ fn count_tracks_multiple_successful_registrations() {
     // Failed duplicate must not increment count.
     let dup = String::from_str(&env, "c2");
     assert_eq!(
-        client.try_register(&creator, &dup, &100i128, &String::from_str(&env, "m"), &empty_tags(&env)),
+        client.try_register(
+            &creator,
+            &dup,
+            &100i128,
+            &String::from_str(&env, "m"),
+            &empty_tags(&env)
+        ),
         Err(Ok(Error::AlreadyRegistered))
     );
     assert_eq!(client.count(), 4);
@@ -119,7 +125,13 @@ fn get_missing_fails() {
 fn set_price_updates_value() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r1");
-    client.register(&creator, &id, &1_000_000i128, &String::from_str(&env, "m"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &1_000_000i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
 
     client.set_price(&id, &2_500_000i128);
     assert_eq!(client.get(&id).price, 2_500_000i128);
@@ -134,7 +146,13 @@ fn set_price_updates_value() {
 fn update_metadata_changes_pointer() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r2");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "old"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "old"),
+        &empty_tags(&env),
+    );
 
     let new_meta = String::from_str(&env, "ipfs://QmNew");
     client.update_metadata(&id, &new_meta);
@@ -145,7 +163,13 @@ fn update_metadata_changes_pointer() {
 fn ownership_can_transfer() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r3");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
 
     let new_owner = Address::generate(&env);
     client.transfer_ownership(&id, &new_owner);
@@ -156,32 +180,44 @@ fn ownership_can_transfer() {
 fn set_listed_toggles_listing_state() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r4");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
 
     // Initially listed
-    assert_eq!(client.get(&id).listed, true);
+    assert!(client.get(&id).listed);
 
     // Delist
     client.set_listed(&id, &false);
-    assert_eq!(client.get(&id).listed, false);
+    assert!(!client.get(&id).listed);
 
     // Re-list
     client.set_listed(&id, &true);
-    assert_eq!(client.get(&id).listed, true);
+    assert!(client.get(&id).listed);
 }
 
 #[test]
 fn delist_convenience_method() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r5");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
 
     // Initially listed
-    assert_eq!(client.get(&id).listed, true);
+    assert!(client.get(&id).listed);
 
     // Delist using convenience method
     client.delist(&id);
-    assert_eq!(client.get(&id).listed, false);
+    assert!(!client.get(&id).listed);
 }
 
 #[test]
@@ -197,7 +233,7 @@ fn set_price_preserves_other_fields() {
     assert_eq!(resource.price, 250i128);
     assert_eq!(resource.metadata, metadata);
     assert_eq!(resource.creator, creator);
-    assert_eq!(resource.listed, true);
+    assert!(resource.listed);
 }
 
 #[test]
@@ -230,7 +266,13 @@ fn update_metadata_preserves_price_and_creator() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r8");
     let original_metadata = String::from_str(&env, "ipfs://QmOriginal");
-    client.register(&creator, &id, &500i128, &original_metadata, &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &500i128,
+        &original_metadata,
+        &empty_tags(&env),
+    );
 
     let new_metadata = String::from_str(&env, "ipfs://QmUpdated");
     client.update_metadata(&id, &new_metadata);
@@ -242,14 +284,61 @@ fn update_metadata_preserves_price_and_creator() {
 }
 
 #[test]
+fn get_owner_returns_creator() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "owner-test");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
+
+    let owner = client.get_owner(&id);
+    assert_eq!(owner, creator);
+}
+
+#[test]
+fn get_owner_missing_fails() {
+    let (env, _creator, client) = setup();
+    let res = client.try_get_owner(&String::from_str(&env, "nope"));
+    assert_eq!(res, Err(Ok(Error::NotFound)));
+}
+
+#[test]
+fn get_owner_after_transfer() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "owner-xfer");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
+
+    let new_owner = Address::generate(&env);
+    client.transfer_ownership(&id, &new_owner);
+
+    assert_eq!(client.get_owner(&id), new_owner);
+}
+
+#[test]
 fn set_listed_requires_creator_auth() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r6");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
 
     // This should work fine since we mock all auths
     client.set_listed(&id, &false);
-    assert_eq!(client.get(&id).listed, false);
+    assert!(!client.get(&id).listed);
 }
 
 #[test]
@@ -319,7 +408,13 @@ fn register_rejects_metadata_over_max_length() {
 fn update_metadata_accepts_at_max_length() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "meta-upd-ok");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "short"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "short"),
+        &empty_tags(&env),
+    );
     let metadata = metadata_of_len(&env, MAX_METADATA_POINTER_LEN);
     client.update_metadata(&id, &metadata);
     assert_eq!(client.get(&id).metadata.len(), MAX_METADATA_POINTER_LEN);
@@ -329,7 +424,13 @@ fn update_metadata_accepts_at_max_length() {
 fn update_metadata_rejects_over_max_length() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "meta-upd-bad");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "short"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "short"),
+        &empty_tags(&env),
+    );
     let metadata = metadata_of_len(&env, MAX_METADATA_POINTER_LEN + 1);
     assert_eq!(
         client.try_update_metadata(&id, &metadata),
@@ -391,7 +492,13 @@ fn list_start_beyond_count_returns_empty() {
 fn register_extends_resource_storage_ttl() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "ttl-register");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
     assert_eq!(
         resource_storage_ttl(&env, &client.address, &id),
         TTL_BUMP_AMOUNT
@@ -402,7 +509,13 @@ fn register_extends_resource_storage_ttl() {
 fn set_price_reextends_resource_ttl() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "ttl-price");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
     env.ledger()
         .set_sequence_number(env.ledger().sequence() + DAY_IN_LEDGERS);
     assert_eq!(
@@ -421,7 +534,13 @@ fn set_price_reextends_resource_ttl() {
 fn update_metadata_reextends_resource_ttl() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "ttl-meta");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "old"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "old"),
+        &empty_tags(&env),
+    );
     env.ledger()
         .set_sequence_number(env.ledger().sequence() + DAY_IN_LEDGERS);
 
@@ -436,7 +555,13 @@ fn update_metadata_reextends_resource_ttl() {
 fn transfer_ownership_reextends_resource_ttl() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "ttl-xfer");
-    client.register(&creator, &id, &100i128, &String::from_str(&env, "m"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
     env.ledger()
         .set_sequence_number(env.ledger().sequence() + DAY_IN_LEDGERS);
 
@@ -469,13 +594,7 @@ fn register_with_tags_stores_labels() {
     let metadata = String::from_str(&env, "ipfs://QmTagged");
     let resource_tags = tags(&env, &["dataset", "research"]);
 
-    client.register(
-        &creator,
-        &id,
-        &100i128,
-        &metadata,
-        &resource_tags,
-    );
+    client.register(&creator, &id, &100i128, &metadata, &resource_tags);
 
     let r = client.get(&id);
     assert_eq!(r.metadata, metadata);
@@ -516,10 +635,7 @@ fn invalid_tag_rejected() {
     assert!(!client.exists(&id));
 
     client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
-    assert_eq!(
-        client.try_set_tags(&id, &bad),
-        Err(Ok(Error::InvalidTag))
-    );
+    assert_eq!(client.try_set_tags(&id, &bad), Err(Ok(Error::InvalidTag)));
 }
 
 proptest! {
@@ -551,7 +667,7 @@ proptest! {
         assert_eq!(r.metadata, metadata);
         assert_eq!(r.price, price);
         assert_eq!(r.creator, creator);
-        assert_eq!(r.listed, true);
+        assert!(r.listed);
 
         // 3. Update metadata
         client.update_metadata(&id, &metadata_2);
@@ -561,7 +677,7 @@ proptest! {
         assert_eq!(r2.metadata, metadata_2);
         assert_eq!(r2.price, price);
         assert_eq!(r2.creator, creator);
-        assert_eq!(r2.listed, true);
+        assert!(r2.listed);
 
         // 5. Update price and verify metadata is unaffected
         client.set_price(&id, &price_2);

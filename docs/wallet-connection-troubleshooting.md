@@ -121,7 +121,7 @@ This table summarises the error messages you may see in the MindVault web UI and
 
 | UI error message | Scenario | Action |
 |---|---|---|
-| `Freighter wallet not found. Please install the Freighter browser extension.` | `window.freighterApi` is undefined | [Install wallet](#wallet-not-installed) and reload |
+| `Freighter wallet not found. Please install the Freighter browser extension.` | `window.freighterApi` is undefined | [Install wallet](#wallet-not-installed-freighterapi-undefined) and reload |
 | `Freighter is not connected. Open the extension and unlock your wallet.` | Extension installed but locked | Open Freighter and unlock |
 | `Could not retrieve public key from Freighter.` | Freighter returned no public key | Reconnect or reinstall Freighter |
 | `Failed to connect wallet.` | Generic catch-all error | Check browser console; retry |

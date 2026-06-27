@@ -27,11 +27,22 @@ vi.mock("@x402/fetch", () => ({
   x402Client: vi.fn().mockImplementation(() => ({ register: vi.fn() })),
 }));
 
-vi.mock("@mindvault/registry-client", () => ({
-  networks: { testnet: { contractId: "test", networkPassphrase: "test" } },
-}));
+vi.mock("@mindvault/registry-client", async (importOriginal) => {
+  const actual = (await importOriginal()) as any;
+  return {
+    ...actual,
+    networks: {
+      ...actual.networks,
+      testnet: {
+        ...actual.networks.testnet,
+        contractId: "test",
+        networkPassphrase: "test",
+      },
+    },
+  };
+});
 
-import { browse, search, preview } from "./index.js";
+import { browse, search, preview, txStatus } from "./index.js";
 
 function mockResponse(data: unknown, ok = true, status = 200): Response {
   const body = JSON.stringify(data);
@@ -247,9 +258,7 @@ describe("preview", () => {
   });
 
   it("throws on non-ok response", async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue(mockResponse({ error: "Not found" }, false, 404));
+    globalThis.fetch = vi.fn().mockResolvedValue(mockResponse({ error: "Not found" }, false, 404));
     await expect(preview("missing")).rejects.toThrow("Preview failed");
   });
 
@@ -263,6 +272,89 @@ describe("preview", () => {
     expect(globalThis.fetch).toHaveBeenCalledWith(
       expect.stringContaining("/resources/res-001/meta"),
       expect.anything(),
+    );
+  });
+});
+
+describe("txStatus", () => {
+  const successEnvelope = {
+    jsonrpc: "2.0",
+    id: 1,
+    result: {
+      status: "SUCCESS",
+      ledger: 123456,
+      createdAt: 1700000000,
+      applicationOrder: 1,
+      feeBump: false,
+      envelopeXdr: "AAAA...env",
+      resultXdr: "AAAA...res",
+      resultMetaXdr: "AAAA...meta",
+    },
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns a readable SUCCESS response with ledger and close time", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse(successEnvelope));
+    const result = await txStatus("abc123");
+    const parsed = JSON.parse(result);
+    expect(parsed.status).toBe("SUCCESS");
+    expect(parsed.hash).toBe("abc123");
+    expect(parsed.ledger).toBe(123456);
+    expect(parsed.ledgerCloseTime).toBe(new Date(1700000000 * 1000).toISOString());
+    expect(parsed.resultXdr).toBe("AAAA...res");
+  });
+
+  it("returns a readable FAILED response carrying the result XDR", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ result: { ...successEnvelope.result, status: "FAILED" } }),
+    );
+    const result = await txStatus("def456");
+    const parsed = JSON.parse(result);
+    expect(parsed.status).toBe("FAILED");
+    expect(parsed.resultXdr).toBe("AAAA...res");
+  });
+
+  it("returns an explicit NOT_FOUND message", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ result: { status: "NOT_FOUND", oldestLedger: 1, latestLedger: 999 } }),
+    );
+    const result = await txStatus("missing");
+    const parsed = JSON.parse(result);
+    expect(parsed.status).toBe("NOT_FOUND");
+    expect(parsed.message).toContain("not found");
+  });
+
+  it("returns a message for an empty hash without calling the RPC", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    const result = await txStatus("   ");
+    expect(result).toBe("Provide a transaction hash to look up.");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("throws on a JSON-RPC error", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ error: { code: -32602, message: "invalid hash" } }),
+    );
+    await expect(txStatus("bad")).rejects.toThrow("RPC error");
+  });
+
+  it("throws on a non-ok HTTP response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse({}, false, 503));
+    await expect(txStatus("abc123")).rejects.toThrow("Soroban RPC error: 503");
+  });
+
+  it("posts a getTransaction request to the Soroban RPC", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse(successEnvelope));
+    await txStatus("abc123");
+    expect(spy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining("getTransaction"),
+      }),
     );
   });
 });

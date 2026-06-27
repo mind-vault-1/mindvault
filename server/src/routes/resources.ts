@@ -1,6 +1,6 @@
 import { Router, type Router as RouterType } from "express";
-import multer from "multer";
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
+import { singleFileUpload, validateUploadContentType } from "../middleware/uploadGuards.js";
 import { validate, validateFields } from "../middleware/validate.js";
 import {
   filePublishBodySchema,
@@ -11,13 +11,14 @@ import {
   setPriceSchema,
   prepareOwnershipSchema,
   transferOwnershipSchema,
-  catalogQuerySchema,
+  CATALOG_DEFAULT_LIMIT,
 } from "../schemas/requests.js";
 import { dynamicPaywall } from "../middleware/dynamicPaywall.js";
 import {
   createFileResource,
   createLinkResource,
   listCatalog,
+  countCatalog,
   getResourceMeta,
   getVerificationDetails,
   delistResource,
@@ -31,21 +32,19 @@ import { config } from "../config.js";
 import { getLogger } from "../lib/logger.js";
 import { publishIpRateLimit, publishWalletRateLimit } from "../middleware/rateLimiters.js";
 import { getIdempotencyStore, idempotencyCacheKey } from "../lib/idempotency.js";
+import { buildRegistrationFailureGuidance, explorerTxUrl } from "../lib/registrationGuidance.js";
 import {
   NETWORK_PASSPHRASE,
   registryClient,
+  registryKeypair,
   setPrice,
   transferOwnership,
   buildRegisterTx,
   submitSignedTx,
-  registryKeypair,
 } from "../services/registryClient.js";
+import { parsePayerFromXPayment } from "../lib/parseXPayment.js";
 
 const router: RouterType = Router();
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: config.MAX_FILE_SIZE_MB * 1024 * 1024 },
-});
 
 // POST /resources — publish a resource (authenticated)
 router.post(
@@ -53,7 +52,8 @@ router.post(
   apiKeyAuth,
   publishIpRateLimit,
   publishWalletRateLimit,
-  upload.single("file"),
+  singleFileUpload("file"),
+  validateUploadContentType,
   async (req, res) => {
     const publisher = req.publisher!;
 
@@ -147,9 +147,38 @@ router.post(
 );
 
 // GET /resources — browse catalog (public)
+//
+// Pagination (#162): `limit` (default 20, max 100) and `offset` control the page.
+// Metadata for fetching the next page is returned via response headers rather
+// than the body, so the response stays a plain array for existing clients:
+//   X-Total-Count, X-Limit, X-Offset, X-Next-Offset (omitted on the last page)
+//
+// Sorting (#163): `sort` accepts newest (default), price_asc, price_desc, title.
 router.get("/resources", async (req, res) => {
-  const search = typeof req.query.search === "string" ? req.query.search : undefined;
-  const catalog = await listCatalog(search);
+  const parsed = catalogQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid query params" });
+    return;
+  }
+
+  const hasFilters = Object.values(parsed.data).some((v) => v !== undefined);
+  const limit = parsed.data.limit ?? CATALOG_DEFAULT_LIMIT;
+  const offset = parsed.data.offset ?? 0;
+
+  const filters = { ...parsed.data, limit, offset };
+
+  const [catalog, total] = await Promise.all([
+    listCatalog(filters),
+    countCatalog(hasFilters ? parsed.data : undefined),
+  ]);
+
+  const nextOffset = offset + catalog.length < total ? offset + catalog.length : null;
+
+  res.setHeader("X-Total-Count", String(total));
+  res.setHeader("X-Limit", String(limit));
+  res.setHeader("X-Offset", String(offset));
+  if (nextOffset !== null) res.setHeader("X-Next-Offset", String(nextOffset));
+
   res.json(
     catalog.map((r) => ({
       ...r,
@@ -185,17 +214,19 @@ router.get("/resources/:id/verification", async (req, res) => {
 router.get("/resources/:id", dynamicPaywall, async (req, res) => {
   const resource = (req as any).resource;
 
-  // Record payment
+  // Record payment — best-effort payer extraction, never blocks delivery
   let payerAddress = "unknown";
-  try {
-    const paymentHeader = req.headers["x-payment"] as string;
-    if (paymentHeader) {
-      const decoded = JSON.parse(Buffer.from(paymentHeader, "base64").toString());
-      payerAddress =
-        decoded?.payload?.authorization?.address || decoded?.clientAddress || "unknown";
+  const paymentHeader = req.headers["x-payment"];
+  if (paymentHeader && typeof paymentHeader === "string") {
+    const { payer, parseError } = parsePayerFromXPayment(paymentHeader);
+    if (payer) {
+      payerAddress = payer;
+    } else if (parseError) {
+      getLogger().warn(
+        { event: "x_payment_parse_error", resourceId: resource.id, error: parseError },
+        "failed to parse X-Payment header; payer recorded as unknown",
+      );
     }
-  } catch {
-    // Best effort — don't fail delivery if we can't parse
   }
 
   const [payment] = await db
@@ -338,7 +369,19 @@ router.post(
     }
     // "pending" means a registration is already in-flight — don't double-submit
     if (resource.onchainStatus === "pending") {
-      res.status(409).json({ error: "Registration already in progress" });
+      res.status(409).json({
+        error: "Registration already in progress",
+        message:
+          "An on-chain registration for this resource is already pending. A background worker retries pending registrations automatically for a few minutes.",
+        nextSteps: [
+          "Wait for the pending registration to settle — re-check this resource's onchainStatus shortly.",
+          `If it is still pending after several minutes, the retry worker marks it "failed", after which you can retry with POST /resources/${resourceId}/register.`,
+          ...(resource.onchainTxHash
+            ? [`Inspect the in-flight transaction: ${explorerTxUrl(resource.onchainTxHash)}`]
+            : []),
+        ],
+        ...(resource.onchainTxHash ? { txHash: resource.onchainTxHash } : {}),
+      });
       return;
     }
     // "none" or "failed" → proceed (failed is retryable)
@@ -391,10 +434,16 @@ router.post(
             .update(resources)
             .set({ onchainStatus: "failed" })
             .where(eq(resources.id, resourceId));
+          const guidance = buildRegistrationFailureGuidance({
+            resourceId,
+            txHash: result.txHash,
+            detail: result.error,
+          });
           res.status(502).json({
             error: "On-chain registration failed",
             detail: result.error,
             txHash: result.txHash || undefined,
+            ...guidance,
           });
         }
       } else {
@@ -460,10 +509,14 @@ router.post(
         .update(resources)
         .set({ onchainStatus: "failed" })
         .where(eq(resources.id, resourceId));
+      const guidance = buildRegistrationFailureGuidance({
+        resourceId,
+        detail: err?.message,
+      });
       res.status(502).json({
         error: "On-chain registration failed",
         detail: err?.message,
-        retryable: true,
+        ...guidance,
       });
     }
   },

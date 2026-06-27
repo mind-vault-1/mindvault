@@ -311,7 +311,8 @@ async function main(): Promise<void> {
 }
 
 // Only run when executed directly (not imported as a module in tests).
-const isMain = process.argv[1]?.endsWith("reconcile.ts") || process.argv[1]?.endsWith("reconcile.js");
+const isMain =
+  process.argv[1]?.endsWith("reconcile.ts") || process.argv[1]?.endsWith("reconcile.js");
 if (isMain) {
   main();
 }

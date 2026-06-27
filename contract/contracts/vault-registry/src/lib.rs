@@ -204,6 +204,12 @@ impl VaultRegistry {
         env.storage().persistent().has(&DataKey::Resource(id))
     }
 
+    /// Get the owner address of a resource. Errors with `NotFound` if it does not exist.
+    pub fn get_owner(env: Env, id: String) -> Result<Address, Error> {
+        let resource = Self::load(&env, &id)?;
+        Ok(resource.creator)
+    }
+
     /// Total number of resources successfully registered (monotonic; not decremented on transfer).
     pub fn count(env: Env) -> u32 {
         env.storage().instance().get(&DataKey::Count).unwrap_or(0)

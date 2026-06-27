@@ -127,6 +127,7 @@ pnpm --filter @mindvault/server setup-usdc
 ```
 
 For mainnet, replace the USDC contract ID with the mainnet SAC ID:
+
 - Testnet: `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`
 - Mainnet: `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`
 
@@ -147,21 +148,21 @@ Copy the example env file and fill in every variable:
 cp server/.env.example server/.env
 ```
 
-| Variable | Description | Source |
-|----------|-------------|--------|
-| `PORT` | Server port (default `4021`) | — |
-| `BASE_URL` | Public URL of the server | Your deployment |
-| `WEB_APP_URL` | Public URL of the web frontend | Your deployment |
-| `NETWORK` | `stellar:testnet` or `stellar:pubnet` | Step 1.1 |
-| `FACILITATOR_URL` | x402 facilitator endpoint | Default `https://www.x402.org/facilitator` |
-| `PAY_TO` | Platform wallet address (receives verification fees) | Generated wallet |
-| `AGENT_SECRET_KEY` | Agent wallet secret key | Step 2 |
-| `SOROBAN_RPC_URL` | Soroban RPC endpoint | Step 1.1 |
-| `VAULT_REGISTRY_CONTRACT_ID` | Deployed contract ID | Step 1.4 |
-| `OPENROUTER_API_KEY` | For AI verification | OpenRouter dashboard |
-| `DATABASE_URL` | Supabase Postgres connection string | Supabase project settings |
-| `SUPABASE_URL` | Supabase project URL | Supabase project settings |
-| `SUPABASE_SERVICE_KEY` | Supabase service role key | Supabase project settings |
+| Variable                     | Description                                          | Source                                     |
+| ---------------------------- | ---------------------------------------------------- | ------------------------------------------ |
+| `PORT`                       | Server port (default `4021`)                         | —                                          |
+| `BASE_URL`                   | Public URL of the server                             | Your deployment                            |
+| `WEB_APP_URL`                | Public URL of the web frontend                       | Your deployment                            |
+| `NETWORK`                    | `stellar:testnet` or `stellar:pubnet`                | Step 1.1                                   |
+| `FACILITATOR_URL`            | x402 facilitator endpoint                            | Default `https://www.x402.org/facilitator` |
+| `PAY_TO`                     | Platform wallet address (receives verification fees) | Generated wallet                           |
+| `AGENT_SECRET_KEY`           | Agent wallet secret key                              | Step 2                                     |
+| `SOROBAN_RPC_URL`            | Soroban RPC endpoint                                 | Step 1.1                                   |
+| `VAULT_REGISTRY_CONTRACT_ID` | Deployed contract ID                                 | Step 1.4                                   |
+| `OPENROUTER_API_KEY`         | For AI verification                                  | OpenRouter dashboard                       |
+| `DATABASE_URL`               | Supabase Postgres connection string                  | Supabase project settings                  |
+| `SUPABASE_URL`               | Supabase project URL                                 | Supabase project settings                  |
+| `SUPABASE_SERVICE_KEY`       | Supabase service role key                            | Supabase project settings                  |
 
 ### 3.2 Run database migrations
 
@@ -185,7 +186,24 @@ pnpm build:server
 
 Deploy the `server/` directory to your hosting platform:
 
-**Render / Railway / Fly.io:**
+**CI/CD (recommended):** Push a `v*` tag or publish a GitHub Release to trigger
+[`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml). Configure a
+GitHub Environment (`staging` or `production`) with:
+
+| Name                   | Type     | Purpose                                                          |
+| ---------------------- | -------- | ---------------------------------------------------------------- |
+| `SERVER_DEPLOY_HOOK`   | Secret   | POST URL that triggers a server redeploy (Render, Railway, etc.) |
+| `WEB_DEPLOY_HOOK`      | Secret   | POST URL that triggers a static-site redeploy                    |
+| `SERVER_URL`           | Variable | Public API base URL for post-deploy smoke tests                  |
+| `WEB_URL`              | Variable | (Optional) Public web URL for smoke tests                        |
+| `VITE_API_URL`         | Variable | Baked into the web build                                         |
+| `VITE_STELLAR_NETWORK` | Variable | `testnet` or `mainnet` for explorer links                        |
+
+The workflow builds both apps, triggers deploy hooks, then verifies `GET $SERVER_URL/health`
+returns HTTP 200. Failed smoke checks fail the deploy.
+
+**Render / Railway / Fly.io (manual):**
+
 - Build command: `pnpm install && pnpm build:registry-client && pnpm --filter @mindvault/server build`
 - Start command: `pnpm --filter @mindvault/server start`
 - Set all env vars from `server/.env` in the platform dashboard
@@ -241,6 +259,7 @@ pnpm build
 Deploy `web/dist/` to any static host (Vercel, Netlify, Cloudflare Pages, S3+CloudFront).
 
 Configure the static host to:
+
 - Serve `index.html` for all routes (SPA fallback)
 - Set `VITE_API_URL` as an env var pointing to the deployed server
 - Set `VITE_STELLAR_NETWORK` to `testnet` or `mainnet`
@@ -248,6 +267,7 @@ Configure the static host to:
 ### 4.4 Verify the frontend
 
 Open the web app URL in a browser:
+
 - Confirm it loads without console errors
 - Connect a wallet (Freighter testnet/mainnet)
 - Browse the catalog
@@ -332,11 +352,12 @@ Add the reconciliation CI workflow (see [docs/reconciliation.md](reconciliation.
 # .github/workflows/reconcile.yml
 on:
   schedule:
-    - cron: '0 6 * * *'
+    - cron: "0 6 * * *"
   workflow_dispatch:
 ```
 
 Update the workflow secrets with mainnet values:
+
 - `SOROBAN_RPC_URL` → mainnet Soroban RPC
 - `REGISTRY_CONTRACT_ID` → mainnet contract ID
 - `NETWORK` → `stellar:pubnet`
@@ -351,12 +372,12 @@ Update the workflow secrets with mainnet values:
 
 Review `server/.env.example` rate limit variables and tune for expected traffic:
 
-| Variable | Default | Notes |
-|----------|---------|-------|
-| `RATE_LIMIT_VERIFY_IP_MAX` | 10 | Per-IP verify calls per window |
-| `RATE_LIMIT_VERIFY_WALLET_MAX` | 5 | Per-wallet verify calls per window |
-| `RATE_LIMIT_PUBLISH_IP_MAX` | 20 | Per-IP publish calls per window |
-| `RATE_LIMIT_PUBLISH_WALLET_MAX` | 10 | Per-wallet publish calls per window |
+| Variable                        | Default | Notes                               |
+| ------------------------------- | ------- | ----------------------------------- |
+| `RATE_LIMIT_VERIFY_IP_MAX`      | 10      | Per-IP verify calls per window      |
+| `RATE_LIMIT_VERIFY_WALLET_MAX`  | 5       | Per-wallet verify calls per window  |
+| `RATE_LIMIT_PUBLISH_IP_MAX`     | 20      | Per-IP publish calls per window     |
+| `RATE_LIMIT_PUBLISH_WALLET_MAX` | 10      | Per-wallet publish calls per window |
 
 ### 7.4 Register for Stellar mainnet USDC
 
@@ -368,14 +389,15 @@ Review `server/.env.example` rate limit variables and tune for expected traffic:
 
 ## Rollback plan
 
-| Component | Rollback action |
-|-----------|----------------|
-| Contract | Deploy the previous WASM as a new contract; update `VAULT_REGISTRY_CONTRACT_ID` env var |
-| Server | Revert to the previous Docker image or deployment version |
-| Frontend | Revert the static deployment (most hosts keep previous versions) |
-| Database | Restore from the most recent Supabase backup (Point-in-Time Recovery) |
+| Component | Rollback action                                                                         |
+| --------- | --------------------------------------------------------------------------------------- |
+| Contract  | Deploy the previous WASM as a new contract; update `VAULT_REGISTRY_CONTRACT_ID` env var |
+| Server    | Revert to the previous Docker image or deployment version                               |
+| Frontend  | Revert the static deployment (most hosts keep previous versions)                        |
+| Database  | Restore from the most recent Supabase backup (Point-in-Time Recovery)                   |
 
 **Data safety notes:**
+
 - The contract is immutable once deployed. To "roll back" the registry, deploy a new instance with the old WASM and point the server at it.
 - On-chain USDC payments cannot be reversed. If a bug causes incorrect pricing, delist affected resources via `set_listed(id, false)` and issue refunds manually.
 - The database schema migration should be backward-compatible for at least one release. Test rollback by deploying the previous server version against the current database before cutting over.

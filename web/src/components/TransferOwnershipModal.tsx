@@ -19,7 +19,10 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function TransferOwnershipModal({ resourceId, apiKey, onClose, onConfirmed }: Props) {
   const [newCreator, setNewCreator] = useState("");
-  const { status, newOwner, error, transferOwnership } = useTransferOwnership(resourceId, apiKey);
+  const { status, newOwner, error, networkWarning, transferOwnership } = useTransferOwnership(
+    resourceId,
+    apiKey,
+  );
 
   const busy = ["preparing", "signing", "submitting"].includes(status);
 
@@ -56,6 +59,12 @@ export function TransferOwnershipModal({ resourceId, apiKey, onClose, onConfirme
 
           {STATUS_LABELS[status] && (
             <p className="text-sm text-indigo-600">{STATUS_LABELS[status]}</p>
+          )}
+
+          {networkWarning && (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              ⚠️ {networkWarning}
+            </p>
           )}
 
           {error && <p className="text-sm text-red-600">{error}</p>}

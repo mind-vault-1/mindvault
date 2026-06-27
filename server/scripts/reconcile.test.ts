@@ -26,10 +26,23 @@ import { reconcile, printSummary, type ReconciliationSummary } from "./reconcile
 
 // Helpers ------------------------------------------------------------------
 
-function dbRow(overrides: Partial<{
-  id: string; price: string; walletAddress: string; listed: boolean; onchainStatus: string;
-}> = {}) {
-  return { id: "res-001", price: "1", walletAddress: "GCREATOR", listed: true, onchainStatus: "registered", ...overrides };
+function dbRow(
+  overrides: Partial<{
+    id: string;
+    price: string;
+    walletAddress: string;
+    listed: boolean;
+    onchainStatus: string;
+  }> = {},
+) {
+  return {
+    id: "res-001",
+    price: "1",
+    walletAddress: "GCREATOR",
+    listed: true,
+    onchainStatus: "registered",
+    ...overrides,
+  };
 }
 
 function onChainRow(overrides: Partial<{ price: bigint; creator: string }> = {}) {
@@ -70,7 +83,11 @@ describe("reconcile()", () => {
     const summary = await reconcile();
 
     expect(summary.mismatches).toHaveLength(1);
-    expect(summary.mismatches[0]).toMatchObject({ resourceId: "res-001", dbPrice: "1", chainPrice: "2" });
+    expect(summary.mismatches[0]).toMatchObject({
+      resourceId: "res-001",
+      dbPrice: "1",
+      chainPrice: "2",
+    });
     expect(summary.inSync).toBe(0);
   });
 
@@ -131,7 +148,10 @@ describe("printSummary()", () => {
 
   it("returns 0 and prints ALL CLEAR when no issues", () => {
     const writes: string[] = [];
-    vi.spyOn(process.stdout, "write").mockImplementation((s) => { writes.push(s as string); return true; });
+    vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      writes.push(s as string);
+      return true;
+    });
     expect(printSummary(base())).toBe(0);
     expect(writes.join("")).toContain("ALL CLEAR");
     vi.restoreAllMocks();
@@ -139,7 +159,10 @@ describe("printSummary()", () => {
 
   it("returns 1 and prints NEEDS ATTENTION with correct counts", () => {
     const writes: string[] = [];
-    vi.spyOn(process.stdout, "write").mockImplementation((s) => { writes.push(s as string); return true; });
+    vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      writes.push(s as string);
+      return true;
+    });
     const code = printSummary({
       ...base(),
       inSync: 2,
@@ -154,11 +177,16 @@ describe("printSummary()", () => {
 
   it("includes price mismatch details in output", () => {
     const writes: string[] = [];
-    vi.spyOn(process.stdout, "write").mockImplementation((s) => { writes.push(s as string); return true; });
+    vi.spyOn(process.stdout, "write").mockImplementation((s) => {
+      writes.push(s as string);
+      return true;
+    });
     printSummary({
       ...base(),
       inSync: 0,
-      mismatches: [{ resourceId: "res-001", dbPrice: "1", chainPrice: "2", publisherWallet: "GCREATOR" }],
+      mismatches: [
+        { resourceId: "res-001", dbPrice: "1", chainPrice: "2", publisherWallet: "GCREATOR" },
+      ],
     });
     const out = writes.join("");
     expect(out).toContain("PRICE MISMATCHES");

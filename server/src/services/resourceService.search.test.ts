@@ -26,7 +26,7 @@ vi.mock("../config.js", () => ({ config: { CATALOG_CACHE_TTL_MS: 60_000 } }));
 import { listCatalog, __resetCatalogCache } from "./resourceService.js";
 
 describe("catalog search", () => {
-  const resources = [
+  const allResources = [
     {
       id: "1",
       title: "Atlas of Stellar Networks",
@@ -71,7 +71,7 @@ describe("catalog search", () => {
 
   beforeEach(() => {
     __resetCatalogCache();
-    currentRows = resources;
+    currentRows = allResources;
   });
 
   it("returns all resources when no search term is given", async () => {
@@ -80,25 +80,31 @@ describe("catalog search", () => {
   });
 
   it("filters resources matching the search term in the title", async () => {
-    const result = await listCatalog("Stellar");
+    currentRows = allResources.filter((r) => r.title.toLowerCase().includes("stellar"));
+    const result = await listCatalog({ search: "Stellar" });
     expect(result).toHaveLength(2);
     expect(result.map((r) => r.id)).toEqual(expect.arrayContaining(["1", "3"]));
   });
 
   it("filters resources matching the search term in the description", async () => {
-    const result = await listCatalog("quantum");
+    currentRows = allResources.filter((r) =>
+      (r.description ?? "").toLowerCase().includes("quantum"),
+    );
+    const result = await listCatalog({ search: "quantum" });
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe("2");
   });
 
   it("performs case-insensitive matching", async () => {
-    const result = await listCatalog("stellar");
+    currentRows = allResources.filter((r) => r.title.toLowerCase().includes("stellar"));
+    const result = await listCatalog({ search: "stellar" });
     expect(result).toHaveLength(2);
     expect(result.map((r) => r.id)).toEqual(expect.arrayContaining(["1", "3"]));
   });
 
   it("returns an empty array when no resources match", async () => {
-    const result = await listCatalog("nonexistent");
+    currentRows = [];
+    const result = await listCatalog({ search: "nonexistent" });
     expect(result).toHaveLength(0);
   });
 });

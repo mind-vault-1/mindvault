@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
@@ -52,7 +53,9 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.1.0",
+    "@types/supertest": "^6.0.2",
     "drizzle-kit": "^0.31.10",
+    "supertest": "^6.3.3",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.7"

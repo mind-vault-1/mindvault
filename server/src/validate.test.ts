@@ -2,7 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod/v4";
 import { validate } from "./middleware/validate.js";
-import { publisherRegisterSchema, verifyContentSchema, catalogQuerySchema } from "./schemas/requests.js";
+import {
+  publisherRegisterSchema,
+  verifyContentSchema,
+  catalogQuerySchema,
+} from "./schemas/requests.js";
 
 function mockResponse() {
   const res = {
@@ -74,9 +78,30 @@ describe("request schemas", () => {
         maxPrice: "1.00",
         verificationStatus: "verified",
         resourceType: "file",
+        sort: "newest",
+        limit: "20",
+        offset: "0",
       }).success,
     ).toBe(true);
 
-    expect(catalogQuerySchema.safeParse({ sort: "newest" } as Record<string, string>).success).toBe(false);
+    expect(
+      catalogQuerySchema.safeParse({ unsupportedParam: "x" } as Record<string, string>).success,
+    ).toBe(false);
+  });
+
+  it("accepts all supported sort values (#163)", () => {
+    for (const sort of ["newest", "price_asc", "price_desc", "title"]) {
+      expect(catalogQuerySchema.safeParse({ sort }).success).toBe(true);
+    }
+    expect(catalogQuerySchema.safeParse({ sort: "popularity" }).success).toBe(false);
+  });
+
+  it("validates limit and offset bounds (#162)", () => {
+    expect(catalogQuerySchema.safeParse({ limit: "1" }).success).toBe(true);
+    expect(catalogQuerySchema.safeParse({ limit: "100" }).success).toBe(true);
+    expect(catalogQuerySchema.safeParse({ limit: "0" }).success).toBe(false);
+    expect(catalogQuerySchema.safeParse({ limit: "101" }).success).toBe(false);
+    expect(catalogQuerySchema.safeParse({ offset: "0" }).success).toBe(true);
+    expect(catalogQuerySchema.safeParse({ offset: "-1" }).success).toBe(false);
   });
 });

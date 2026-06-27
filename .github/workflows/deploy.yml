@@ -1,0 +1,169 @@
+name: Deploy
+
+on:
+  push:
+    tags:
+      - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub Environment to deploy to
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build server and web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run build:registry-client
+
+      - run: pnpm --filter @mindvault/server build
+
+      - name: Build web
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_STELLAR_NETWORK: ${{ vars.VITE_STELLAR_NETWORK || 'testnet' }}
+        run: pnpm --filter @mindvault/web build
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-dist
+          path: |
+            server/dist
+            server/package.json
+            packages/registry-client/dist
+          retention-days: 7
+
+      - name: Upload web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 7
+
+  deploy-server:
+    name: Deploy server
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    steps:
+      - name: Trigger server deploy
+        env:
+          DEPLOY_HOOK: ${{ secrets.SERVER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "::error::SERVER_DEPLOY_HOOK secret is not set in the ${{ github.event.inputs.environment || 'production' }} environment."
+            exit 1
+          fi
+          echo "Triggering server deployment…"
+          HTTP_STATUS=$(curl -s -o /tmp/deploy-response.txt -w "%{http_code}" \
+            -X POST "$DEPLOY_HOOK")
+          cat /tmp/deploy-response.txt
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "::error::Server deploy hook returned HTTP $HTTP_STATUS"
+            exit 1
+          fi
+          echo "Server deploy triggered (HTTP $HTTP_STATUS)."
+
+  deploy-web:
+    name: Deploy web
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: Trigger web deploy
+        env:
+          DEPLOY_HOOK: ${{ secrets.WEB_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "::error::WEB_DEPLOY_HOOK secret is not set in the ${{ github.event.inputs.environment || 'production' }} environment."
+            exit 1
+          fi
+          echo "Triggering web deployment…"
+          HTTP_STATUS=$(curl -s -o /tmp/deploy-response.txt -w "%{http_code}" \
+            -X POST "$DEPLOY_HOOK")
+          cat /tmp/deploy-response.txt
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "::error::Web deploy hook returned HTTP $HTTP_STATUS"
+            exit 1
+          fi
+          echo "Web deploy triggered (HTTP $HTTP_STATUS)."
+
+  smoke-test:
+    name: Post-deploy smoke check
+    needs: [deploy-server, deploy-web]
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    steps:
+      - name: Wait for services to settle
+        run: sleep 30
+
+      - name: Check server liveness
+        env:
+          SERVER_URL: ${{ vars.SERVER_URL }}
+        run: |
+          if [ -z "$SERVER_URL" ]; then
+            echo "::error::SERVER_URL variable is not set in the environment."
+            exit 1
+          fi
+          echo "Smoke testing $SERVER_URL/health"
+          for attempt in 1 2 3 4 5; do
+            HTTP_STATUS=$(curl -s -o /tmp/health.json -w "%{http_code}" \
+              --max-time 15 "$SERVER_URL/health")
+            if [ "$HTTP_STATUS" = "200" ]; then
+              cat /tmp/health.json
+              echo "Health check passed on attempt $attempt."
+              exit 0
+            fi
+            echo "Attempt $attempt: HTTP $HTTP_STATUS — retrying in 15s…"
+            sleep 15
+          done
+          echo "::error::Smoke check failed: $SERVER_URL/health did not return 200"
+          cat /tmp/health.json 2>/dev/null || true
+          exit 1
+
+      - name: Check web availability
+        env:
+          WEB_URL: ${{ vars.WEB_URL }}
+        run: |
+          if [ -z "$WEB_URL" ]; then
+            echo "WEB_URL not set — skipping web smoke check."
+            exit 0
+          fi
+          echo "Smoke testing $WEB_URL"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$WEB_URL")
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 400 ]; then
+            echo "::error::Web smoke check failed: HTTP $HTTP_STATUS"
+            exit 1
+          fi
+          echo "Web smoke check passed (HTTP $HTTP_STATUS)."

@@ -1,17 +1,19 @@
 # Creator-Signed Registration Flow
 
-This document describes the end-to-end flow for registering a resource on the vault-registry contract using creator-signed transactions. The server builds an unsigned transaction, the creator signs it (via browser wallet or MCP agent key), and the server submits and persists the result.
+This document describes the narrower creator-signed part of the lifecycle: registering an already-verified resource on the vault-registry contract. The server builds an unsigned transaction, the creator signs it (via browser wallet or MCP agent key), and the server submits and persists the result.
+
+For the full create -> verify -> list -> register -> buy lifecycle, see [resource-publish-lifecycle.md](resource-publish-lifecycle.md).
 
 ## Motivation
 
-The vault-registry contract requires the creator's authorization to register a resource (`require_auth`). The server cannot sign on behalf of the creator — the creator must sign the transaction themselves. This design supports both web (browser wallet) and MCP (agent key) signing paths.
+The vault-registry contract requires the creator's authorization to register a resource (`require_auth`). The server cannot sign on behalf of the creator - the creator must sign the transaction themselves. This design supports both web (browser wallet) and MCP (agent key) signing paths.
 
 ## Sequence Diagram
 
 ```
 Creator (Browser/MCP)          Server                     Stellar/Soroban
         |                        |                              |
-        |  POST /resources/:id   |                              |
+        |  GET /resources/:id    |                              |
         |  /register/prepare     |                              |
         |----------------------->|                              |
         |                        |  Build unsigned register tx  |
@@ -41,10 +43,11 @@ Creator (Browser/MCP)          Server                     Stellar/Soroban
         |                        |----------------------------->|
         |                        |                              |
         |                        |  Update DB:                  |
-        |                        |  onchain_status = registered |
+        |                        |  onchain_status = pending    |
+        |                        |  -> registered or failed     |
         |                        |                              |
-        |  { id, status:         |                              |
-        |    "confirmed" }       |                              |
+        |  { id, onchainStatus,  |                              |
+        |    txHash }            |                              |
         |<-----------------------|                              |
 ```
 
@@ -70,25 +73,35 @@ Creator (Browser/MCP)          Server                     Stellar/Soroban
 
 ## API Shape
 
-### `POST /resources/:id/register/prepare`
+### `GET /resources/:id/register/prepare`
 
 Builds an unsigned `register` transaction for the given resource.
 
 **Auth:** API key (authenticated publisher)
 
-**Request:** No body required — the resource's on-chain data is read from the DB.
+**Request:** No body required - the resource's on-chain data is read from the DB.
 
 **Response:**
 ```json
 {
   "unsignedXdr": "<base64-encoded-transaction-xdr>",
-  "networkPassphrase": "Test SDF Network ; September 2015"
+  "networkPassphrase": "Test SDF Network ; September 2015",
+  "metadata": {
+    "resourceId": "resource-id",
+    "creator": "G...",
+    "price": "0.50",
+    "title": "My resource",
+    "description": "Optional description"
+  }
 }
 ```
 
 **Errors:**
-- `404` — Resource not found
-- `403` — Publisher does not own this resource
+- `400` - Resource must be verified before registering on-chain
+- `404` - Resource not found
+- `403` - Publisher does not own this resource
+- `409` - Resource is already registered on-chain
+- `500` - Failed to build register transaction
 
 ### `POST /resources/:id/register`
 
@@ -108,35 +121,38 @@ Submits the signed registration transaction and persists the on-chain status.
 {
   "id": "resource-id",
   "onchainStatus": "registered",
-  "status": "confirmed"
+  "txHash": "<stellar-transaction-hash>"
 }
 ```
 
 **Errors:**
-- `404` — Resource not found
-- `403` — Publisher does not own this resource
-- `502` — Transaction rejected or failed on-chain
-- `504` — Transaction confirmation timed out
+- `400` - Resource must be verified before registering on-chain
+- `404` - Resource not found
+- `403` - Publisher does not own this resource
+- `409` - Resource is already registered on-chain or registration is already in progress
+- `502` - Transaction rejected, failed on-chain, or confirmation timed out in the current submit helper
 
 ## Implementation Notes
 
 - The prepare endpoint converts the resource's price from USDC string (e.g. `"0.50"`) to stroops (i128, 7 decimals) before passing to the contract
-- The submit endpoint follows the same pattern as `POST /resources/:id/price` — submit via RPC, poll for confirmation, update DB
+- The prepare endpoint only builds XDR; it does not mutate the DB
 - On confirmation, set `onchain_status = "registered"` in the resources table
-- On failure, set `onchain_status = "failed"` and return the error detail
-- Set `onchain_status = "pending"` when the prepare endpoint is called (before signing)
+- On failure or timeout, set `onchain_status = "failed"` and return the error detail
+- Set `onchain_status = "pending"` when the submit endpoint is called (before RPC submission)
+- A resource with `onchain_status = "failed"` can be retried later
 
 ## DB State Transitions
 
 ```
-none → pending (prepare called)
-pending → registered (tx confirmed on-chain)
-pending → failed (tx failed on-chain)
-failed → pending (retry: prepare called again)
+none -> pending (submit called)
+pending -> registered (tx confirmed on-chain)
+pending -> failed (tx failed or confirmation timed out)
+failed -> pending (retry: submit called again)
 ```
 
 ## References
 
+- Full lifecycle: `docs/resource-publish-lifecycle.md`
 - Existing prepare/submit pattern: `server/src/routes/resources.ts` (set_price endpoints)
-- Contract entrypoint: `contract/contracts/vault-registry/src/lib.rs` — `register(creator, id, price, metadata)`
+- Contract entrypoint: `contract/contracts/vault-registry/src/lib.rs` - `register(creator, id, price, metadata)`
 - Generated bindings: `packages/registry-client/src/generated/index.ts`

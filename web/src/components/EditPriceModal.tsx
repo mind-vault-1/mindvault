@@ -20,7 +20,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function EditPriceModal({ resourceId, currentPrice, apiKey, onClose, onConfirmed }: Props) {
   const [price, setPrice] = useState(currentPrice);
-  const { status, newPrice, error, editPrice } = useEditPrice(resourceId, apiKey);
+  const { status, newPrice, error, networkWarning, editPrice } = useEditPrice(resourceId, apiKey);
 
   const busy = ["preparing", "signing", "submitting"].includes(status);
 
@@ -58,6 +58,12 @@ export function EditPriceModal({ resourceId, currentPrice, apiKey, onClose, onCo
 
           {STATUS_LABELS[status] && (
             <p className="text-sm text-indigo-600">{STATUS_LABELS[status]}</p>
+          )}
+
+          {networkWarning && (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              ⚠️ {networkWarning}
+            </p>
           )}
 
           {error && <p className="text-sm text-red-600">{error}</p>}

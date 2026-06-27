@@ -40,6 +40,14 @@ const envSchema = z.object({
 
   // Limits
   MAX_FILE_SIZE_MB: z.coerce.number().default(50),
+  // Explicit JSON body limit for express.json() (e.g. "1mb", "512kb").
+  MAX_JSON_BODY_SIZE: z.string().default("1mb"),
+  // Comma-separated allowlist of accepted upload content types (#87).
+  ALLOWED_UPLOAD_MIME_TYPES: z
+    .string()
+    .default(
+      "application/pdf,image/png,image/jpeg,image/gif,image/webp,text/plain,text/markdown,application/json,application/zip,video/mp4,audio/mpeg",
+    ),
 
   // Soroban registry
   REGISTRY_CONTRACT_ID: z.string().min(1, "REGISTRY_CONTRACT_ID is required"),
@@ -71,6 +79,9 @@ const envSchema = z.object({
   // Short-lived cache for catalog/preview reads to cut DB load. Kept low so
   // newly published/delisted resources surface quickly.
   CATALOG_CACHE_TTL_MS: z.coerce.number().default(10_000),
+  // Max distinct filter/sort/pagination combinations cached for the catalog
+  // (#316). Bounds key cardinality; oldest entries are evicted (FIFO).
+  CATALOG_CACHE_MAX_KEYS: z.coerce.number().int().min(1).default(200),
 });
 
 const parsed = envSchema.safeParse(envWithDefaults);

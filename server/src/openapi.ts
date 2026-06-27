@@ -42,6 +42,15 @@ export const openApiSpec = {
         },
         required: ["error"],
       },
+      RateLimitError: {
+        type: "object",
+        properties: {
+          error: { type: "string", example: "Too many requests" },
+          code: { type: "string", example: "RATE_LIMITED" },
+          retryAfterSeconds: { type: "integer", example: 60 },
+        },
+        required: ["error", "code", "retryAfterSeconds"],
+      },
       HealthResponse: {
         type: "object",
         properties: {
@@ -115,6 +124,12 @@ export const openApiSpec = {
           listed: { type: "boolean" },
           onchainStatus: { type: "string", enum: ["none", "pending", "registered", "failed"] },
           onchainTxHash: { type: "string", nullable: true },
+          contentHash: {
+            type: "string",
+            nullable: true,
+            description:
+              "SHA-256 content integrity anchor recorded in the on-chain registry metadata; null when no anchor is available.",
+          },
           accessUrl: { type: "string", format: "uri" },
           createdAt: { type: "string", format: "date-time" },
         },
@@ -420,13 +435,58 @@ export const openApiSpec = {
             schema: { type: "string" },
             description: "Filter resources by title or description (case-insensitive)",
           },
+          {
+            name: "sort",
+            in: "query",
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["newest", "price_asc", "price_desc", "title"],
+            },
+            description: "Sort order. Defaults to newest first.",
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+            description: "Max number of resources to return (1-100, default 20).",
+          },
+          {
+            name: "offset",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 0, default: 0 },
+            description: "Number of resources to skip for pagination.",
+          },
         ],
         responses: {
           "200": {
-            description: "Array of listed resources",
+            description:
+              "Array of listed resources. Pagination metadata is returned via the " +
+              "X-Total-Count, X-Limit, X-Offset, and X-Next-Offset response headers " +
+              "(X-Next-Offset is omitted on the last page).",
             content: {
               "application/json": {
                 schema: { type: "array", items: { $ref: "#/components/schemas/Resource" } },
+              },
+            },
+            headers: {
+              "X-Total-Count": {
+                schema: { type: "integer" },
+                description: "Total number of matching resources across all pages.",
+              },
+              "X-Limit": {
+                schema: { type: "integer" },
+                description: "The page size used for this response.",
+              },
+              "X-Offset": {
+                schema: { type: "integer" },
+                description: "The offset used for this response.",
+              },
+              "X-Next-Offset": {
+                schema: { type: "integer" },
+                description: "Offset to use for the next page. Omitted on the last page.",
               },
             },
           },
@@ -492,7 +552,9 @@ export const openApiSpec = {
           },
           "429": {
             description: "Rate limit exceeded",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/RateLimitError" } },
+            },
           },
         },
       },
@@ -925,7 +987,9 @@ export const openApiSpec = {
           "402": { description: "Payment required (x402)" },
           "429": {
             description: "Rate limit exceeded",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/RateLimitError" } },
+            },
           },
         },
       },
