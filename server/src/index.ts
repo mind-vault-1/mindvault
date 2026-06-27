@@ -4,6 +4,7 @@ import { createApp } from "./app.js";
 import { rootLogger } from "./lib/logger.js";
 import { beginShutdown, whenDrained, inFlightCount } from "./lib/lifecycle.js";
 import { pgClient } from "./db/client.js";
+import { startPoolMetrics, stopPoolMetrics } from "./db/client.js";
 import { startRetryPendingWorker, stopRetryPendingWorker } from "./workers/retryPendingWorker.js";
 import { startEventListener, stopEventListener } from "./workers/eventListener.js";
 
@@ -22,6 +23,7 @@ const server: Server = app.listen(config.PORT, () => {
 
   startRetryPendingWorker();
   startEventListener();
+  startPoolMetrics();
 });
 
 let shuttingDown = false;
@@ -32,6 +34,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
   stopRetryPendingWorker();
   stopEventListener();
+  stopPoolMetrics();
 
   // Stop passing readiness checks so load balancers drain us before we close.
   beginShutdown();

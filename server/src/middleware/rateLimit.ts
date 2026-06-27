@@ -1,10 +1,13 @@
 import rateLimit, { type Options } from "express-rate-limit";
 import type { Request, Response } from "express";
 import { parsePayerFromXPayment } from "../lib/parseXPayment.js";
+import { rateLimitCounter } from "../lib/metrics.js";
 
 export const RATE_LIMITED = "RATE_LIMITED";
 
-function rateLimitHandler(_req: Request, res: Response, _next: () => void, options: Options): void {
+function rateLimitHandler(req: Request, res: Response, _next: () => void, options: Options): void {
+  const limiter = (req as Request & { rateLimitName?: string }).rateLimitName ?? "default";
+  rateLimitCounter.inc({ limiter });
   const retryAfterSeconds = Math.ceil(options.windowMs / 1000);
   res.setHeader("Retry-After", String(retryAfterSeconds));
   res.status(429).json({
@@ -18,14 +21,19 @@ function clientIp(req: Request): string {
   return req.ip || req.socket.remoteAddress || "unknown";
 }
 
-export function createIpRateLimiter(max: number, windowMs: number) {
+type LimitedRequest = Request & { rateLimitName?: string };
+
+export function createIpRateLimiter(max: number, windowMs: number, name = "ip") {
   return rateLimit({
     windowMs,
     max,
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: clientIp,
-    handler: rateLimitHandler,
+    handler(req, res, next, options) {
+      (req as LimitedRequest).rateLimitName = name;
+      rateLimitHandler(req as LimitedRequest, res, next, options);
+    },
   });
 }
 
@@ -33,6 +41,7 @@ export function createWalletRateLimiter(
   max: number,
   windowMs: number,
   getWallet: (req: Request) => string | undefined,
+  name = "wallet",
 ) {
   return rateLimit({
     windowMs,
@@ -41,7 +50,10 @@ export function createWalletRateLimiter(
     legacyHeaders: false,
     skip: (req) => !getWallet(req),
     keyGenerator: (req) => `wallet:${getWallet(req)}`,
-    handler: rateLimitHandler,
+    handler(req, res, next, options) {
+      (req as LimitedRequest).rateLimitName = name;
+      rateLimitHandler(req as LimitedRequest, res, next, options);
+    },
   });
 }
 
