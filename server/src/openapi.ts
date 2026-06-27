@@ -8,7 +8,8 @@ export const openApiSpec = {
     title: "MindVault API",
     version: "1.0.0",
     description:
-      "A marketplace where humans and AI agents publish and trade digital resources via HTTP 402 payments on Stellar.",
+      "A marketplace where humans and AI agents publish and trade digital resources via HTTP 402 payments on Stellar.\n\n" +
+      "**Optional request signatures:** When the server has `REQUIRE_REQUEST_SIGNATURE=true`, publisher mutations (POST/DELETE on `/resources/*`) must include `X-Timestamp` and `X-Signature` headers. See `docs/request-signature.md`.",
     license: { name: "MIT" },
   },
   servers: [{ url: "/", description: "Current server" }],
@@ -26,6 +27,14 @@ export const openApiSpec = {
         in: "header",
         name: "x-api-key",
         description: "Publisher API key returned on registration",
+      },
+      RequestSignature: {
+        type: "apiKey",
+        in: "header",
+        name: "X-Signature",
+        description:
+          "Optional HMAC-SHA256 hex digest over method, path, timestamp, and body (required when REQUIRE_REQUEST_SIGNATURE is enabled). " +
+          "Pair with X-Timestamp (unix seconds). The API key is the HMAC secret. See docs/request-signature.md.",
       },
       X402Payment: {
         type: "apiKey",
@@ -496,7 +505,7 @@ export const openApiSpec = {
         tags: ["Resources"],
         summary: "Publish a new resource (file or link)",
         operationId: "publishResource",
-        security: [{ ApiKeyAuth: [] }],
+        security: [{ ApiKeyAuth: [], RequestSignature: [] }],
         requestBody: {
           required: true,
           content: {
@@ -627,7 +636,7 @@ export const openApiSpec = {
         tags: ["Resources"],
         summary: "Delist a resource (owner only)",
         operationId: "delistResource",
-        security: [{ ApiKeyAuth: [] }],
+        security: [{ ApiKeyAuth: [], RequestSignature: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
           "200": { description: "Resource delisted" },
@@ -684,7 +693,7 @@ export const openApiSpec = {
         tags: ["Resources"],
         summary: "Submit signed register transaction to Soroban",
         operationId: "registerResource",
-        security: [{ ApiKeyAuth: [] }],
+        security: [{ ApiKeyAuth: [], RequestSignature: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: {
           content: {
@@ -742,7 +751,7 @@ export const openApiSpec = {
         tags: ["Resources"],
         summary: "Build unsigned set_price transaction",
         operationId: "preparePriceUpdate",
-        security: [{ ApiKeyAuth: [] }],
+        security: [{ ApiKeyAuth: [], RequestSignature: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: {
           required: true,
@@ -783,7 +792,7 @@ export const openApiSpec = {
         tags: ["Resources"],
         summary: "Submit signed set_price transaction and sync DB",
         operationId: "updatePrice",
-        security: [{ ApiKeyAuth: [] }],
+        security: [{ ApiKeyAuth: [], RequestSignature: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: {
           required: true,
@@ -836,7 +845,7 @@ export const openApiSpec = {
         tags: ["Resources"],
         summary: "Build unsigned transfer_ownership transaction",
         operationId: "prepareOwnershipTransfer",
-        security: [{ ApiKeyAuth: [] }],
+        security: [{ ApiKeyAuth: [], RequestSignature: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: {
           required: true,
@@ -879,7 +888,7 @@ export const openApiSpec = {
         tags: ["Resources"],
         summary: "Submit signed transfer_ownership transaction and sync DB",
         operationId: "transferOwnership",
-        security: [{ ApiKeyAuth: [] }],
+        security: [{ ApiKeyAuth: [], RequestSignature: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: {
           required: true,

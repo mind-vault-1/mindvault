@@ -4,6 +4,7 @@ import { createApp } from "./app.js";
 import { rootLogger } from "./lib/logger.js";
 import { beginShutdown, whenDrained, inFlightCount } from "./lib/lifecycle.js";
 import { pgClient } from "./db/client.js";
+import { closeRateLimitStore } from "./lib/rateLimit/index.js";
 import { startRetryPendingWorker, stopRetryPendingWorker } from "./workers/retryPendingWorker.js";
 import { startEventListener, stopEventListener } from "./workers/eventListener.js";
 
@@ -64,6 +65,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   }
 
   try {
+    await closeRateLimitStore();
     await pgClient.end({ timeout: 5 });
     const forced = timedOut && inFlightCount() > 0;
     rootLogger.info({ event: "shutdown_complete", signal, forced }, "graceful shutdown complete");
