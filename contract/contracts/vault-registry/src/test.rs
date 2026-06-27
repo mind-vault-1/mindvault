@@ -51,7 +51,7 @@ fn register_then_read() {
     assert_eq!(r.creator, creator);
     assert_eq!(r.price, 1_000_000i128);
     assert_eq!(r.metadata, metadata);
-    assert_eq!(r.listed, true); // Resources are listed by default
+    assert!(r.listed); // Resources are listed by default
 }
 
 #[test]
@@ -189,15 +189,15 @@ fn set_listed_toggles_listing_state() {
     );
 
     // Initially listed
-    assert_eq!(client.get(&id).listed, true);
+    assert!(client.get(&id).listed);
 
     // Delist
     client.set_listed(&id, &false);
-    assert_eq!(client.get(&id).listed, false);
+    assert!(!client.get(&id).listed);
 
     // Re-list
     client.set_listed(&id, &true);
-    assert_eq!(client.get(&id).listed, true);
+    assert!(client.get(&id).listed);
 }
 
 #[test]
@@ -213,11 +213,11 @@ fn delist_convenience_method() {
     );
 
     // Initially listed
-    assert_eq!(client.get(&id).listed, true);
+    assert!(client.get(&id).listed);
 
     // Delist using convenience method
     client.delist(&id);
-    assert_eq!(client.get(&id).listed, false);
+    assert!(!client.get(&id).listed);
 }
 
 #[test]
@@ -233,7 +233,7 @@ fn set_price_preserves_other_fields() {
     assert_eq!(resource.price, 250i128);
     assert_eq!(resource.metadata, metadata);
     assert_eq!(resource.creator, creator);
-    assert_eq!(resource.listed, true);
+    assert!(resource.listed);
 }
 
 #[test]
@@ -338,7 +338,7 @@ fn set_listed_requires_creator_auth() {
 
     // This should work fine since we mock all auths
     client.set_listed(&id, &false);
-    assert_eq!(client.get(&id).listed, false);
+    assert!(!client.get(&id).listed);
 }
 
 #[test]
@@ -667,7 +667,7 @@ proptest! {
         assert_eq!(r.metadata, metadata);
         assert_eq!(r.price, price);
         assert_eq!(r.creator, creator);
-        assert_eq!(r.listed, true);
+        assert!(r.listed);
 
         // 3. Update metadata
         client.update_metadata(&id, &metadata_2);
@@ -677,7 +677,7 @@ proptest! {
         assert_eq!(r2.metadata, metadata_2);
         assert_eq!(r2.price, price);
         assert_eq!(r2.creator, creator);
-        assert_eq!(r2.listed, true);
+        assert!(r2.listed);
 
         // 5. Update price and verify metadata is unaffected
         client.set_price(&id, &price_2);
