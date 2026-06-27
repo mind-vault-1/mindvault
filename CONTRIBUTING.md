@@ -113,17 +113,33 @@ curl -s -X POST http://localhost:4021/resources/<id>/ownership \
 
 1. **Fork** and create a branch: `git checkout -b feat/short-description`
 2. Keep changes focused — one logical change per PR.
-3. Run the full validation suite before pushing:
+3. **Install git hooks** (once per clone — runs automatically via `pnpm install`):
+   ```bash
+   pnpm install
+   ```
+   Husky installs a **pre-commit** hook that runs ESLint and Prettier on staged files
+   via [lint-staged](https://github.com/lint-staged/lint-staged), and a **commit-msg**
+   hook that validates [Conventional Commits](https://www.conventionalcommits.org/)
+   message formatting (matching the PR title linter in CI).
+4. Run the full validation suite before pushing:
    ```bash
    make validate
    ```
    This builds the registry client and server, runs tests, checks formatting/linting,
    and verifies doc links — all without requiring live secrets. If you only changed
    contracts, run `pnpm contract:test` separately (requires Rust + Stellar CLI).
-4. Use clear commit messages (e.g. `feat: add catalog search`, `fix: cors header`).
-5. Use Conventional Commits formatting for your PR titles (e.g., `feat: add catalog search` or `fix(auth): cors header`). PR titles are automatically linted, and non-conforming titles will fail CI.
-6. Open a PR against `main` describing **what** changed and **why**, and how you
+5. Use clear commit messages (e.g. `feat: add catalog search`, `fix: cors header`).
+6. Use Conventional Commits formatting for your PR titles (e.g., `feat: add catalog search` or `fix(auth): cors header`). PR titles are automatically linted, and non-conforming titles will fail CI. Commit messages are checked locally by the `commit-msg` hook.
+7. Open a PR against `main` describing **what** changed and **why**, and how you
    tested it.
+
+### Git hooks troubleshooting
+
+| Symptom                        | Fix                                                                   |
+| ------------------------------ | --------------------------------------------------------------------- |
+| Hooks not running after clone  | Run `pnpm install` (triggers the `prepare` script)                    |
+| Need to skip hooks temporarily | `git commit --no-verify` (use sparingly — CI will still catch issues) |
+| Commit message rejected        | Use `type: description` format, e.g. `feat: add PWA manifest`         |
 
 ## Good first issues
 
