@@ -19,7 +19,12 @@ function buildBlockedResult(
   };
 }
 
-function buildAllowedResult(limit: number, count: number, now: number, windowMs: number): RateLimitConsumeResult {
+function buildAllowedResult(
+  limit: number,
+  count: number,
+  now: number,
+  windowMs: number,
+): RateLimitConsumeResult {
   return {
     allowed: true,
     limit,
@@ -119,7 +124,6 @@ export class RedisSlidingWindowStore implements RateLimitStore {
       };
     }
 
-    const count = secondValue;
     const retryAfterSeconds = Math.max(1, Math.ceil((resetAt - now) / 1000));
     return {
       allowed: false,
