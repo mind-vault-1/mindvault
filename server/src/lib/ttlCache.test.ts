@@ -62,4 +62,27 @@ describe("createTtlCache", () => {
     cache.clear();
     expect(cache.get("b")).toBeUndefined();
   });
+
+  it("evicts the oldest key (FIFO) when maxSize is exceeded (#316)", () => {
+    const cache = createTtlCache<string>({ defaultTtlMs: 1000, maxSize: 2 });
+
+    cache.set("a", "1");
+    cache.set("b", "2");
+    cache.set("c", "3"); // exceeds cap -> evicts oldest ("a")
+
+    expect(cache.get("a")).toBeUndefined();
+    expect(cache.get("b")).toBe("2");
+    expect(cache.get("c")).toBe("3");
+  });
+
+  it("re-setting an existing key does not trigger eviction", () => {
+    const cache = createTtlCache<string>({ defaultTtlMs: 1000, maxSize: 2 });
+
+    cache.set("a", "1");
+    cache.set("b", "2");
+    cache.set("a", "updated"); // existing key -> no growth, no eviction
+
+    expect(cache.get("a")).toBe("updated");
+    expect(cache.get("b")).toBe("2");
+  });
 });

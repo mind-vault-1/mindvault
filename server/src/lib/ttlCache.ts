@@ -24,6 +24,12 @@ export interface TtlCacheOptions {
   defaultTtlMs: number;
   /** Injectable clock for deterministic tests. Defaults to Date.now. */
   now?: () => number;
+  /**
+   * Optional cap on the number of live entries. When a new key would exceed the
+   * cap, the oldest inserted key is evicted (FIFO). Bounds memory for caches
+   * keyed by high-cardinality inputs (e.g. per-filter catalog responses, #316).
+   */
+  maxSize?: number;
 }
 
 // Factory so callers (and tests) hold their own isolated instance rather than
@@ -32,6 +38,7 @@ export function createTtlCache<T>(options: TtlCacheOptions): TtlCache<T> {
   const store = new Map<string, Entry<T>>();
   const now = options.now ?? Date.now;
   const defaultTtlMs = options.defaultTtlMs;
+  const maxSize = options.maxSize;
 
   return {
     get(key) {
@@ -44,6 +51,12 @@ export function createTtlCache<T>(options: TtlCacheOptions): TtlCache<T> {
       return entry.value;
     },
     set(key, value, ttlMs) {
+      // Re-inserting refreshes the value; only enforce the cap when adding a
+      // genuinely new key, evicting the oldest (first-inserted) entry.
+      if (maxSize !== undefined && !store.has(key) && store.size >= maxSize) {
+        const oldest = store.keys().next().value;
+        if (oldest !== undefined) store.delete(oldest);
+      }
       store.set(key, { value, expiresAt: now() + (ttlMs ?? defaultTtlMs) });
     },
     delete(key) {

@@ -13,16 +13,28 @@ const CATALOG_KEY = "catalog";
 const metaKey = (id: string) => `meta:${id}`;
 const readCache = createTtlCache<unknown>({ defaultTtlMs: config.CATALOG_CACHE_TTL_MS });
 
-// Drop cached reads affected by a write. The catalog (the listed set) is always
-// invalidated; the specific resource's preview is dropped too when known.
+// Per-filter-combination catalog response cache (#316). Keyed by a normalized
+// filter/sort/pagination key so identical queries skip the filter/sort/paginate
+// recompute entirely. Bounded (FIFO) so high-cardinality inputs (price/search)
+// can't grow keys unbounded.
+const pageCache = createTtlCache<unknown>({
+  defaultTtlMs: config.CATALOG_CACHE_TTL_MS,
+  maxSize: config.CATALOG_CACHE_MAX_KEYS,
+});
+
+// Drop cached reads affected by a write. The catalog (the listed set) and every
+// per-filter response are invalidated, since any write can change any filtered
+// view; the specific resource's preview is dropped too when known.
 function invalidateReads(resourceId?: string): void {
   readCache.delete(CATALOG_KEY);
+  pageCache.clear();
   if (resourceId) readCache.delete(metaKey(resourceId));
 }
 
-/** Test helper — clear the read cache between cases. */
+/** Test helper — clear the read caches between cases. */
 export function __resetCatalogCache(): void {
   readCache.clear();
+  pageCache.clear();
 }
 
 export async function createFileResource(data: {
@@ -205,10 +217,37 @@ function applyCatalogFilters<
   });
 }
 
-// The full listed set is cached once under CATALOG_KEY and all filtering happens
-// in memory. Price is a continuous value, so a per-filter cache key would blow up
-// cardinality; filtering after a single cached read keeps the cache correct and
-// mirrors how the search filter already works (issue #159).
+// Normalized, order-stable cache key for a filter/sort/pagination combination
+// (#316). Undefined fields are omitted and `search` is trimmed/lowercased so
+// equivalent queries share an entry; keys are emitted in sorted order for
+// determinism. `kind` separates the list vs. count views of the same filters.
+function catalogCacheKey(kind: "list" | "count", filters?: CatalogListFilters): string {
+  if (!filters) return `${kind}:all`;
+  const norm: Record<string, string | number> = {};
+  if (filters.verificationStatus) norm.vs = filters.verificationStatus;
+  if (filters.minPrice !== undefined) norm.min = filters.minPrice;
+  if (filters.maxPrice !== undefined) norm.max = filters.maxPrice;
+  if (filters.search) {
+    const q = filters.search.trim().toLowerCase();
+    if (q) norm.q = q;
+  }
+  if (filters.resourceType) norm.rt = filters.resourceType;
+  if (filters.sort) norm.sort = filters.sort;
+  // Count ignores pagination (#162), so omit limit/offset from the count key so
+  // all pages of the same filter share one cached total.
+  if (kind === "list") {
+    if (filters.limit !== undefined) norm.limit = filters.limit;
+    if (filters.offset !== undefined) norm.offset = filters.offset;
+  }
+  return `${kind}:` + JSON.stringify(norm, Object.keys(norm).sort());
+}
+
+// The full listed set is cached once under CATALOG_KEY; on top of that, each
+// distinct filter/sort/pagination combination caches its computed response under
+// a normalized key (#316) so popular identical queries skip the in-memory
+// filter/sort/paginate work entirely. The per-filter cache is bounded (FIFO via
+// CATALOG_CACHE_MAX_KEYS) so high-cardinality inputs (price, search) can't grow
+// keys without limit, and it is cleared on any resource mutation.
 //
 // `sort` (#163) and `limit`/`offset` (#162) are applied after filtering, in that
 // order, so pagination always walks a stable, sorted sequence. Omitting limit/offset
@@ -216,24 +255,38 @@ function applyCatalogFilters<
 export async function listCatalog(
   filters?: CatalogListFilters,
 ): Promise<Awaited<ReturnType<typeof queryCatalog>>> {
+  const cacheKey = catalogCacheKey("list", filters);
+  const cached = pageCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached as Awaited<ReturnType<typeof queryCatalog>>;
+  }
+
   const rows = await getCachedCatalogRows();
   const filtered = applyCatalogFilters(rows, filters);
 
-  if (!filters) return filtered;
+  const result = ((): Awaited<ReturnType<typeof queryCatalog>> => {
+    if (!filters) return filtered;
+    const sorted = filters.sort ? sortRows(filtered, filters.sort) : filtered;
+    if (filters.limit === undefined && filters.offset === undefined) return sorted;
+    const offset = filters.offset ?? 0;
+    const limit = filters.limit ?? CATALOG_DEFAULT_LIMIT;
+    return sorted.slice(offset, offset + limit);
+  })();
 
-  const sorted = filters.sort ? sortRows(filtered, filters.sort) : filtered;
-
-  if (filters.limit === undefined && filters.offset === undefined) return sorted;
-
-  const offset = filters.offset ?? 0;
-  const limit = filters.limit ?? CATALOG_DEFAULT_LIMIT;
-  return sorted.slice(offset, offset + limit);
+  pageCache.set(cacheKey, result);
+  return result;
 }
 
 /** Total count of listed resources matching `filters`, ignoring limit/offset (#162). */
 export async function countCatalog(filters?: CatalogListFilters): Promise<number> {
+  const cacheKey = catalogCacheKey("count", filters);
+  const cached = pageCache.get(cacheKey);
+  if (cached !== undefined) return cached as number;
+
   const rows = await getCachedCatalogRows();
-  return applyCatalogFilters(rows, filters).length;
+  const total = applyCatalogFilters(rows, filters).length;
+  pageCache.set(cacheKey, total);
+  return total;
 }
 
 async function queryResourceMeta(id: string) {

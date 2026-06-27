@@ -79,6 +79,9 @@ const envSchema = z.object({
   // Short-lived cache for catalog/preview reads to cut DB load. Kept low so
   // newly published/delisted resources surface quickly.
   CATALOG_CACHE_TTL_MS: z.coerce.number().default(10_000),
+  // Max distinct filter/sort/pagination combinations cached for the catalog
+  // (#316). Bounds key cardinality; oldest entries are evicted (FIFO).
+  CATALOG_CACHE_MAX_KEYS: z.coerce.number().int().min(1).default(200),
 });
 
 const parsed = envSchema.safeParse(envWithDefaults);
