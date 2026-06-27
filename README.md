@@ -158,6 +158,7 @@ Wallet helpers live in `server/scripts/generate-wallet.ts` (run via `make wallet
 - **[docs/architecture.md](docs/architecture.md)** — how x402 + USDC handles payment and how the vault-registry contract is the on-chain source of truth for ownership, price, and content integrity. Includes a full system diagram.
 - **[docs/faq.md](docs/faq.md)** — common creator and AI-agent questions about fees, payouts, wallets, verification, and buying resources.
 - **[docs/x402-payment-troubleshooting.md](docs/x402-payment-troubleshooting.md)** — common x402 payment/sign failures and how to fix them (browser vs MCP, Explorer inspection).
+- **[docs/request-signature.md](docs/request-signature.md)** — optional HMAC-SHA256 request signatures for publisher mutations (off by default).
 
 ## Operations
 

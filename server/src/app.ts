@@ -18,7 +18,13 @@ export function createApp(): Express {
   app.use(corsMiddleware());
   app.use(requestContextMiddleware);
   app.use(inFlightMiddleware);
-  app.use(express.json());
+  app.use(
+    express.json({
+      verify: (req, _res, buf) => {
+        (req as Request).rawBody = buf;
+      },
+    }),
+  );
   app.use(requestTimeout(config.REQUEST_TIMEOUT_MS));
 
   // Routes

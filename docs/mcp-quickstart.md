@@ -168,3 +168,7 @@ If any step fails, the most common root causes are:
 | `No wallet. Run mindvault_setup_wallet first.` | Wallet state cleared between sessions | The wallet is in-memory only — re-create it for each session |
 
 See also: [docs/x402-payment-troubleshooting.md](x402-payment-troubleshooting.md) for x402-specific sign/pay failures.
+
+## Optional request signatures
+
+Some deployments set `REQUIRE_REQUEST_SIGNATURE=true` so publisher mutations must include `X-Timestamp` and `X-Signature` headers (HMAC-SHA256 over method, path, body, and timestamp). The MCP server signs these automatically when calling the API with your publisher key. See [request-signature.md](request-signature.md) for the full scheme.
