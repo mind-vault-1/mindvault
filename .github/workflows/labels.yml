@@ -1,0 +1,36 @@
+name: Sync labels
+
+# Applies the canonical label set in .github/labels.yml to the repository.
+# Run manually from the Actions tab after editing labels.yml. By default it adds
+# and updates labels but does NOT delete labels missing from the file — set
+# "prune" to true in a dispatch run to also remove stale/confusing labels.
+
+on:
+  workflow_dispatch:
+    inputs:
+      prune:
+        description: "Delete labels not present in .github/labels.yml"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - ".github/labels.yml"
+      - ".github/workflows/labels.yml"
+
+permissions:
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync labels from labels.yml
+        uses: micnncim/action-label-syncer@v1
+        with:
+          manifest: .github/labels.yml
+          prune: ${{ github.event_name == 'workflow_dispatch' && inputs.prune || false }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

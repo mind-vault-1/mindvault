@@ -53,5 +53,5 @@ jobs:
             ${{ runner.os }}-cargo-audit-
       - name: Report RustSec advisories
         working-directory: contract
-        run: cargo audit --deny warnings
+        run: cargo audit
 

@@ -48,12 +48,10 @@ export function useAsync<T>(
       });
 
     return () => controller.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
   useEffect(() => {
     return run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run]);
 
   const retry = useCallback(() => {

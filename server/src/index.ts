@@ -4,7 +4,8 @@ import { createApp } from "./app.js";
 import { rootLogger } from "./lib/logger.js";
 import { beginShutdown, whenDrained, inFlightCount } from "./lib/lifecycle.js";
 import { pgClient } from "./db/client.js";
-import { closeRateLimitStore } from "./lib/rateLimit/index.js";
+import { startRetryPendingWorker, stopRetryPendingWorker } from "./workers/retryPendingWorker.js";
+import { startEventListener, stopEventListener } from "./workers/eventListener.js";
 
 const app = createApp();
 
@@ -18,6 +19,9 @@ const server: Server = app.listen(config.PORT, () => {
     },
     "MindVault server started",
   );
+
+  startRetryPendingWorker();
+  startEventListener();
 });
 
 let shuttingDown = false;
@@ -25,6 +29,9 @@ let shuttingDown = false;
 async function gracefulShutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
+
+  stopRetryPendingWorker();
+  stopEventListener();
 
   // Stop passing readiness checks so load balancers drain us before we close.
   beginShutdown();

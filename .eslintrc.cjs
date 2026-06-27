@@ -25,6 +25,7 @@ module.exports = {
         "server/dist/",
         "web/dist/",
         "packages/registry-client/src/generated/",
+        "packages/registry-client/vitest.config.*",
     ],
     rules: {
         "prettier/prettier": "error",

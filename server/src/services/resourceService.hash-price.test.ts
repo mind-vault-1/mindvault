@@ -20,7 +20,8 @@ vi.mock("../db/client.js", () => ({
         updatedValues = values;
         return {
           where: vi.fn(() => ({
-            returning: () => Promise.resolve([{ id: "mocked-resource-id", ...insertedValues, ...values }]),
+            returning: () =>
+              Promise.resolve([{ id: "mocked-resource-id", ...insertedValues, ...values }]),
           })),
         };
       }),
@@ -143,11 +144,11 @@ describe("resourceService Hashing and Price logic", () => {
 
     it("normalizes query parameters and host casing to produce the same hash", () => {
       const title = "Normalized Feed";
-      
+
       // Different casings and query param order
       const url1 = "https://EXAMPLE.com/foo/?b=2&a=1";
       const url2 = "https://example.com/foo?a=1&b=2";
-      
+
       const hash1 = hashLinkResource(url1, title);
       const hash2 = hashLinkResource(url2, title);
 
@@ -156,10 +157,10 @@ describe("resourceService Hashing and Price logic", () => {
 
     it("normalizes trailing slashes on URL path to produce the same hash", () => {
       const title = "Trailing Slash Feed";
-      
+
       const url1 = "https://example.com/foo/";
       const url2 = "https://example.com/foo";
-      
+
       const hash1 = hashLinkResource(url1, title);
       const hash2 = hashLinkResource(url2, title);
 

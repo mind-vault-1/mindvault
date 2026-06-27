@@ -7,7 +7,7 @@ import type { RoutesConfig } from "@x402/core/server";
 import { getLogger } from "../lib/logger.js";
 import { network, sharedX402ResourceServer } from "../lib/x402.js";
 import { getResource } from "../services/registryClient.js";
-import { getOnChainPrice, normalizeUsdcPrice, OnChainLookupError } from "../lib/stellarRegistry.js";
+import { getOnChainPrice, normalizeUsdcPrice } from "../lib/stellarRegistry.js";
 
 // Cache middleware instances by resource ID to avoid re-creating on every request
 const middlewareCache = new Map<
@@ -37,7 +37,6 @@ export async function dynamicPaywall(req: Request, res: Response, next: NextFunc
 
   // Validate the DB price against the on-chain registry before serving a 402.
   // If they disagree we refuse the request rather than charge the wrong amount.
-  // TODO: cover this path with unit tests once a test runner is configured.
   let onChainPrice: string;
   let onChainCreator: string;
   try {
@@ -47,9 +46,7 @@ export async function dynamicPaywall(req: Request, res: Response, next: NextFunc
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const cause =
-      err instanceof OnChainLookupError && err.cause instanceof Error
-        ? err.cause.message
-        : undefined;
+      err instanceof Error && err.cause instanceof Error ? err.cause.message : undefined;
     getLogger().error(
       {
         event: "paywall_chain_lookup_failed",

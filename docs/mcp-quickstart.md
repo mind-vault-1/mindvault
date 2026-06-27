@@ -11,7 +11,7 @@ Everything below uses the tools exposed by the MindVault MCP server (`mcp/`). Th
   - `https://mindvault-hyr3.onrender.com` (vault API)
   - `https://stellar-sponsored-agent-account.onrender.com` (sponsored wallet creation)
   - `https://horizon-testnet.stellar.org` (Stellar testnet Horizon)
-- Testnet USDC funding for the publisher agent — see [Funding the agent wallet](#funding-the-agent-wallet) below.
+- Testnet USDC funding for the publisher agent — see [Funding the agent wallet](#2-funding-the-agent-wallet) below.
 
 ## The Two Agents
 
@@ -122,7 +122,37 @@ Lists all resources in the catalog with their IDs, titles, prices, and access UR
   https://mindvault-hyr3.onrender.com/r/abc123
 ```
 
-### 9. `mindvault_preview` (optional)
+### 9. `mindvault_search` (optional)
+
+Search the catalog by keyword plus filters. The MCP server forwards the filters to the backend, so the result set is narrowed before it reaches the agent.
+
+**Input:**
+
+```json
+{
+  "query": "forecast",
+  "minPrice": "0.01",
+  "maxPrice": "1.00",
+  "verificationStatus": "verified",
+  "resourceType": "link"
+}
+```
+
+**Example output:**
+
+```
+[abc123] Sample weather forecast feed — $0.05 USDC
+  Hourly forecast JSON for SF
+  https://mindvault-hyr3.onrender.com/r/abc123
+```
+
+If no resource matches, the error message includes the applied filters, for example:
+
+```
+No resources match query "forecast", min $0.01, max $1.00, status verified, type link.
+```
+
+### 10. `mindvault_preview` (optional)
 
 Show full metadata and verification status before paying.
 
@@ -132,7 +162,7 @@ Show full metadata and verification status before paying.
 { "resourceId": "abc123" }
 ```
 
-### 10. `mindvault_buy`
+### 11. `mindvault_buy`
 
 Pays the resource price in USDC via x402 and returns the protected content.
 
@@ -148,6 +178,36 @@ Pays the resource price in USDC via x402 and returns the protected content.
 
 ---
 
+### 12. `mindvault_register_onchain`
+
+Registers an already-published, verified resource on the vault-registry contract.
+`mindvault_publish` attempts this automatically, but if the on-chain step fails
+the resource stays listed and purchasable while reporting
+`Retry with mindvault_register_onchain`. This tool is that retry path: it prepares
+the unsigned register transaction (owner-only), signs it with the agent wallet
+(the resource creator), submits it, and returns the registry status and tx hash.
+
+**Input:**
+
+```json
+{ "resourceId": "abc123" }
+```
+
+**Example output:**
+
+```
+Resource registered on-chain.
+Resource: abc123
+Registry status: registered
+On-chain tx: 5f3a...c9
+```
+
+> Troubleshooting: a `400` means the resource isn't verified yet; a `409` means it's
+> already registered (no action needed). A submission failure leaves the resource
+> listed — ensure the agent wallet is funded for fees and retry.
+
+---
+
 ## Acceptance walkthrough
 
 Following the steps above, a single operator running two MCP sessions should be able to:
@@ -159,13 +219,13 @@ Following the steps above, a single operator running two MCP sessions should be 
 
 If any step fails, the most common root causes are:
 
-| Symptom | Likely cause | Fix |
-|---------|--------------|-----|
-| `USDC Balance: 0` | Faucet payment hasn't settled / trustline missing | Wait and re-check, or rerun `mindvault_setup_wallet` |
-| `publish` returns an x402 verification error | Publisher wallet under-funded | Re-fund and retry |
-| `buy` returns `402 Payment Required` | Buyer wallet under-funded for resource price | Re-fund and retry |
-| `Not registered. Run mindvault_register first.` | API key was lost (e.g. server restart) | Re-run `mindvault_register` in the same session |
-| `No wallet. Run mindvault_setup_wallet first.` | Wallet state cleared between sessions | The wallet is in-memory only — re-create it for each session |
+| Symptom                                         | Likely cause                                      | Fix                                                          |
+| ----------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------ |
+| `USDC Balance: 0`                               | Faucet payment hasn't settled / trustline missing | Wait and re-check, or rerun `mindvault_setup_wallet`         |
+| `publish` returns an x402 verification error    | Publisher wallet under-funded                     | Re-fund and retry                                            |
+| `buy` returns `402 Payment Required`            | Buyer wallet under-funded for resource price      | Re-fund and retry                                            |
+| `Not registered. Run mindvault_register first.` | API key was lost (e.g. server restart)            | Re-run `mindvault_register` in the same session              |
+| `No wallet. Run mindvault_setup_wallet first.`  | Wallet state cleared between sessions             | The wallet is in-memory only — re-create it for each session |
 
 See also: [docs/x402-payment-troubleshooting.md](x402-payment-troubleshooting.md) for x402-specific sign/pay failures.
 

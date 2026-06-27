@@ -14,6 +14,29 @@
 
 import { Networks } from "@stellar/stellar-sdk";
 
+export {
+  networks,
+  parseStellarNetwork,
+  resolveStellarNetwork,
+  getNetworkPreset,
+  type NetworkPreset,
+  type StellarDeploymentNetwork,
+  type ExplorerNetwork,
+} from "./networks.js";
+
+export {
+  X402_NETWORK_IDS,
+  normalizeX402Network,
+  inferNetworkFromX402,
+  inferNetworkFromRpcUrl,
+  inferNetworkFromHorizonUrl,
+  networkPassphraseForX402,
+  validateNetworkConfig,
+  applyNetworkEnvDefaults,
+  type NetworkConfigInput,
+  type NetworkValidationIssue,
+} from "./validateNetwork.js";
+
 // Re-export everything the bindings generator produced. The Client class,
 // the Resource type, error variants, and network defaults all flow through.
 export * from "./generated/index.js";

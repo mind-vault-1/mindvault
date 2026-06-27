@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="MindVault">
+  <rect width="512" height="512" rx="96" fill="#4f46e5"/>
+  <path
+    fill="#ffffff"
+    d="M128 160h256v48H128zm0 96h176v48H128zm0 96h224v48H128z"
+  />
+  <circle cx="368" cy="352" r="40" fill="#a5b4fc"/>
+</svg>

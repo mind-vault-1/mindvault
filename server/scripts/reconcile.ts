@@ -178,7 +178,7 @@ export function printSummary(summary: ReconciliationSummary): 0 | 1 {
   return 1;
 }
 
-async function reconcile(): Promise<ReconciliationSummary> {
+export async function reconcile(): Promise<ReconciliationSummary> {
   const summary: ReconciliationSummary = {
     checkedAt: new Date().toISOString(),
     totalChecked: 0,
@@ -310,4 +310,9 @@ async function main(): Promise<void> {
   process.exit(code);
 }
 
-main();
+// Only run when executed directly (not imported as a module in tests).
+const isMain =
+  process.argv[1]?.endsWith("reconcile.ts") || process.argv[1]?.endsWith("reconcile.js");
+if (isMain) {
+  main();
+}

@@ -28,34 +28,9 @@ is a separate Rust/Cargo workspace managed with the Stellar CLI.
 - A **Supabase** project (free tier) for the backend
 - Stellar testnet wallets funded with USDC from [faucet.circle.com](https://faucet.circle.com)
 
-## First-time setup
+## Local setup
 
-```bash
-git clone <your-fork-url> mindvault && cd mindvault
-
-# Install all JS/TS workspace packages at once
-pnpm install
-
-# Configure the backend
-cp server/.env.example server/.env
-# Fill in Supabase, Stellar, and OpenRouter credentials.
-# NEVER commit server/.env — it is gitignored and holds secret keys.
-
-# Database
-pnpm db:generate && pnpm db:migrate
-
-# Generate wallets (run twice for separate platform + agent wallets)
-pnpm generate-wallet
-```
-
-## Running
-
-From the repo root:
-
-```bash
-pnpm dev:server      # backend on :4021
-# pnpm dev:web       # frontend on :5173 (once web/ is imported)
-```
+See the complete **[Local Setup Guide](docs/local-setup.md)** to get from a fresh clone to a running server and web app.
 
 ## Smart contract development
 
@@ -67,81 +42,19 @@ pnpm contract:test   # cargo test
 cd contract && cargo test
 ```
 
+If your contract change alters the on-chain ABI (new methods, changed arguments,
+updated structs), regenerate the TypeScript bindings so consumers stay in sync:
+
+```bash
+pnpm contract:bindings   # regenerates packages/registry-client/src/generated/
+```
+
+See [`docs/registry-client-bindings.md`](docs/registry-client-bindings.md) for
+the full regeneration workflow, which files to commit, and how `server/`, `web/`,
+and `mcp/` consume the bindings.
+
 See [`contract/README.md`](contract/README.md) for the registry interface and
 deployment steps.
-
-## Deploying the vault-registry contract
-
-The contract must be deployed before the server can record resources on-chain.
-You only need to do this once per environment (testnet or mainnet).
-
-```bash
-# 1. Install the Stellar CLI if you haven't already
-#    https://developers.stellar.org/docs/build/smart-contracts/getting-started/setup
-
-# 2. Create and fund a deployer identity (skip if you already have one)
-stellar keys generate deployer --network testnet --fund
-
-# 3. Build the contract wasm
-pnpm contract:build
-# Output: contract/target/wasm32v1-none/release/vault_registry.wasm
-
-# 4. Deploy
-stellar contract deploy \
-  --wasm contract/target/wasm32v1-none/release/vault_registry.wasm \
-  --source deployer \
-  --network testnet
-# Prints the contract ID, e.g. CDQKUIADLO5S5WEHEUTTXX2M45WAHVRU2PBEBD6ZGDKMOP5A72FJ3OD4
-```
-
-Copy the printed contract ID and the deployer secret key into `server/.env`
-(see the **Environment variables** section below).
-
-## Environment variables
-
-All variables live in `server/.env` (never committed). Copy the example and fill
-in each value:
-
-```bash
-cp server/.env.example server/.env
-```
-
-| Variable | Required | Description |
-|---|---|---|
-| `PORT` | no | HTTP port, default `4021` |
-| `BASE_URL` | no | Public base URL, default `http://localhost:4021` |
-| `NETWORK` | no | `stellar:testnet` (default) or `stellar:mainnet` |
-| `FACILITATOR_URL` | no | x402 facilitator, default `https://www.x402.org/facilitator` |
-| `PAY_TO` | **yes** | Platform Stellar wallet address — receives verification fees |
-| `AGENT_SECRET_KEY` | **yes** | Platform agent secret key — pays for content verification |
-| `SOROBAN_RPC_URL` | no | Soroban RPC endpoint, default `https://soroban-testnet.stellar.org` |
-| `VAULT_REGISTRY_CONTRACT_ID` | **yes** | Deployed vault-registry contract ID (from deploy step above) |
-| `REGISTRY_CONTRACT_ID` | **yes** | Same contract ID (alias used by the registry client) |
-| `REGISTRY_SECRET_KEY` | **yes** | Secret key of the deployer / registry owner account |
-| `OPENROUTER_API_KEY` | **yes** | OpenRouter API key for the AI verification agent |
-| `OPENROUTER_MODEL` | no | Model slug, default `anthropic/claude-sonnet-4` |
-| `DATABASE_URL` | **yes** | Supabase Postgres connection string (pooler URL) |
-| `SUPABASE_URL` | **yes** | Supabase project URL |
-| `SUPABASE_SERVICE_KEY` | **yes** | Supabase service role key |
-| `SUPABASE_STORAGE_BUCKET` | no | Storage bucket name, default `resources` |
-| `MAX_FILE_SIZE_MB` | no | Upload limit in MB, default `50` |
-| `VERIFICATION_PRICE` | no | USDC fee charged per verification, default `0.10` |
-| `RATE_LIMIT_VERIFY_IP_MAX` | no | Max verify requests per IP per window, default `10` |
-| `RATE_LIMIT_VERIFY_IP_WINDOW_MS` | no | Verify IP window in ms, default `60000` |
-| `RATE_LIMIT_VERIFY_WALLET_MAX` | no | Max verify requests per payer wallet per window, default `5` |
-| `RATE_LIMIT_VERIFY_WALLET_WINDOW_MS` | no | Verify wallet window in ms, default `3600000` |
-| `RATE_LIMIT_PUBLISH_IP_MAX` | no | Max publish requests per IP per window, default `20` |
-| `RATE_LIMIT_PUBLISH_IP_WINDOW_MS` | no | Publish IP window in ms, default `60000` |
-| `RATE_LIMIT_PUBLISH_WALLET_MAX` | no | Max publish requests per publisher wallet per window, default `10` |
-| `RATE_LIMIT_PUBLISH_WALLET_WINDOW_MS` | no | Publish wallet window in ms, default `3600000` |
-
-Generate the two Stellar wallets (platform + agent) with:
-
-```bash
-pnpm generate-wallet   # run twice, save each public/secret key pair
-```
-
-Fund both with testnet USDC from [faucet.circle.com](https://faucet.circle.com).
 
 ## Running the integrated flow locally
 
@@ -200,13 +113,33 @@ curl -s -X POST http://localhost:4021/resources/<id>/ownership \
 
 1. **Fork** and create a branch: `git checkout -b feat/short-description`
 2. Keep changes focused — one logical change per PR.
-3. Make sure things build/pass before pushing:
-   - Backend: `pnpm build:server`
-   - Contract: `pnpm contract:test`
-4. Use clear commit messages (e.g. `feat: add catalog search`, `fix: cors header`).
-5. Use Conventional Commits formatting for your PR titles (e.g., `feat: add catalog search` or `fix(auth): cors header`). PR titles are automatically linted, and non-conforming titles will fail CI.
-6. Open a PR against `main` describing **what** changed and **why**, and how you
+3. **Install git hooks** (once per clone — runs automatically via `pnpm install`):
+   ```bash
+   pnpm install
+   ```
+   Husky installs a **pre-commit** hook that runs ESLint and Prettier on staged files
+   via [lint-staged](https://github.com/lint-staged/lint-staged), and a **commit-msg**
+   hook that validates [Conventional Commits](https://www.conventionalcommits.org/)
+   message formatting (matching the PR title linter in CI).
+4. Run the full validation suite before pushing:
+   ```bash
+   make validate
+   ```
+   This builds the registry client and server, runs tests, checks formatting/linting,
+   and verifies doc links — all without requiring live secrets. If you only changed
+   contracts, run `pnpm contract:test` separately (requires Rust + Stellar CLI).
+5. Use clear commit messages (e.g. `feat: add catalog search`, `fix: cors header`).
+6. Use Conventional Commits formatting for your PR titles (e.g., `feat: add catalog search` or `fix(auth): cors header`). PR titles are automatically linted, and non-conforming titles will fail CI. Commit messages are checked locally by the `commit-msg` hook.
+7. Open a PR against `main` describing **what** changed and **why**, and how you
    tested it.
+
+### Git hooks troubleshooting
+
+| Symptom                        | Fix                                                                   |
+| ------------------------------ | --------------------------------------------------------------------- |
+| Hooks not running after clone  | Run `pnpm install` (triggers the `prepare` script)                    |
+| Need to skip hooks temporarily | `git commit --no-verify` (use sparingly — CI will still catch issues) |
+| Commit message rejected        | Use `type: description` format, e.g. `feat: add PWA manifest`         |
 
 ## Good first issues
 
@@ -222,6 +155,14 @@ These are drawn from the README's "What Is Not Yet Built" — great starting poi
 
 If you want to take something larger on, open an issue first so we can align on
 the approach.
+
+## Labels & triage
+
+Issues and PRs use a small, consistent label taxonomy — `area:`, `type:`,
+`difficulty:`, and `wave:` (open-source contributor cohorts). The canonical set
+lives in [`.github/labels.yml`](.github/labels.yml) and the full triage guide is
+in [`docs/LABELS.md`](docs/LABELS.md). Browse the `good first issue` and current
+`wave:` labels to find a starting point.
 
 ## Security
 

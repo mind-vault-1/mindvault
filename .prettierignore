@@ -4,3 +4,7 @@ dist
 contract/target
 server/dist
 web/dist
+
+# Compiled output committed alongside the source vitest.config.ts
+packages/registry-client/vitest.config.js
+packages/registry-client/vitest.config.d.ts

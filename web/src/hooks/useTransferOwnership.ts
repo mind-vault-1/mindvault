@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { prepareTransferOwnership, submitTransferOwnership } from "../api/resources.js";
+import { checkNetwork } from "./useNetworkCheck.js";
 
 type Status = "idle" | "preparing" | "signing" | "submitting" | "confirmed" | "error";
 
@@ -7,9 +8,11 @@ export function useTransferOwnership(resourceId: string, apiKey: string) {
   const [status, setStatus] = useState<Status>("idle");
   const [newOwner, setNewOwner] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [networkWarning, setNetworkWarning] = useState<string | null>(null);
 
   async function transferOwnership(newCreator: string) {
     setError(null);
+    setNetworkWarning(null);
     try {
       // Step 1 — fetch unsigned XDR from the server
       setStatus("preparing");
@@ -18,6 +21,14 @@ export function useTransferOwnership(resourceId: string, apiKey: string) {
         newCreator,
         apiKey,
       );
+
+      // Step 1b — warn if wallet is on the wrong network (non-blocking)
+      const warning = await checkNetwork(networkPassphrase);
+      if (warning) {
+        setNetworkWarning(warning);
+        setStatus("idle");
+        return;
+      }
 
       // Step 2 — ask Freighter (or any SEP-43 wallet) to sign
       setStatus("signing");
@@ -47,5 +58,5 @@ export function useTransferOwnership(resourceId: string, apiKey: string) {
     }
   }
 
-  return { status, newOwner, error, transferOwnership };
+  return { status, newOwner, error, networkWarning, transferOwnership };
 }

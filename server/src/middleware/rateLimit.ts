@@ -1,6 +1,8 @@
-import type { Request, Response, NextFunction, RequestHandler } from "express";
-import { getLogger } from "../lib/logger.js";
-import type { RateLimitStore } from "../lib/rateLimit/index.js";
+import rateLimit, { type Options } from "express-rate-limit";
+import type { Request, Response } from "express";
+import { parsePayerFromXPayment } from "../lib/parseXPayment.js";
+
+export const RATE_LIMITED = "RATE_LIMITED";
 
 function clientIp(req: Request): string {
   return req.ip || req.socket.remoteAddress || "unknown";
@@ -16,6 +18,7 @@ function sendTooManyRequests(res: Response, retryAfterSeconds: number): void {
   res.setHeader("Retry-After", String(retryAfterSeconds));
   res.status(429).json({
     error: "Too many requests",
+    code: RATE_LIMITED,
     retryAfterSeconds,
   });
 }
@@ -92,11 +95,5 @@ export function extractPayerFromPaymentHeader(req: Request): string | undefined 
   if (!header || typeof header !== "string") {
     return undefined;
   }
-
-  try {
-    const decoded = JSON.parse(Buffer.from(header, "base64").toString());
-    return decoded?.payload?.authorization?.address ?? decoded?.clientAddress ?? undefined;
-  } catch {
-    return undefined;
-  }
+  return parsePayerFromXPayment(header).payer;
 }

@@ -5,6 +5,7 @@ import { eq, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { resources, verifications } from "../db/schema.js";
 import { checkOriginality } from "../services/verificationService.js";
+
 import { config } from "../config.js";
 import { network, sharedX402ResourceServer } from "../lib/x402.js";
 import { verifyIpRateLimit, verifyWalletRateLimit } from "../middleware/rateLimiters.js";
