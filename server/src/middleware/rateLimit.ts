@@ -8,7 +8,12 @@ function clientIp(req: Request): string {
   return req.ip || req.socket.remoteAddress || "unknown";
 }
 
-function sendRateLimitHeaders(res: Response, limit: number, remaining: number, resetAt: number): void {
+function sendRateLimitHeaders(
+  res: Response,
+  limit: number,
+  remaining: number,
+  resetAt: number,
+): void {
   res.setHeader("RateLimit-Limit", String(limit));
   res.setHeader("RateLimit-Remaining", String(Math.max(0, remaining)));
   res.setHeader("RateLimit-Reset", String(Math.ceil(resetAt / 1000)));

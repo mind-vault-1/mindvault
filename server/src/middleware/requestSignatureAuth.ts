@@ -23,7 +23,10 @@ function resolveBodyHash(req: Request): string {
 
   if (contentType.includes("multipart/form-data")) {
     const file = req.file as Express.Multer.File | undefined;
-    return hashMultipartBody(req.body as Record<string, unknown>, file ? { buffer: file.buffer } : undefined);
+    return hashMultipartBody(
+      req.body as Record<string, unknown>,
+      file ? { buffer: file.buffer } : undefined,
+    );
   }
 
   if (req.rawBody !== undefined) {
@@ -77,8 +80,7 @@ export function requestSignatureAuth(req: Request, res: Response, next: NextFunc
   const bodyHash = resolveBodyHash(req);
   const path = getRequestPath(req.originalUrl);
   const idempotencyHeader = req.headers["idempotency-key"];
-  const idempotencyKey =
-    typeof idempotencyHeader === "string" ? idempotencyHeader : undefined;
+  const idempotencyKey = typeof idempotencyHeader === "string" ? idempotencyHeader : undefined;
 
   const valid = verifyRequestSignature({
     secret: apiKey,

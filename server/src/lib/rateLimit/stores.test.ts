@@ -3,7 +3,7 @@ import { MemorySlidingWindowStore } from "./stores.js";
 
 describe("MemorySlidingWindowStore", () => {
   it("allows requests up to the limit within the window", async () => {
-    let now = 1_000_000;
+    const now = 1_000_000;
     const store = new MemorySlidingWindowStore(() => now);
     const limit = 3;
     const windowMs = 60_000;

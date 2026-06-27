@@ -37,12 +37,7 @@ export function buildCanonicalString(params: {
   bodyHash: string;
   idempotencyKey?: string;
 }): string {
-  const parts = [
-    params.method.toUpperCase(),
-    params.path,
-    params.timestamp,
-    params.bodyHash,
-  ];
+  const parts = [params.method.toUpperCase(), params.path, params.timestamp, params.bodyHash];
   if (params.idempotencyKey) {
     parts.push(params.idempotencyKey);
   }

@@ -3,8 +3,7 @@
  * Mirrors server/src/utils/requestSignature.ts — keep in sync when changing the scheme.
  */
 
-export const EMPTY_BODY_HASH =
-  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+export const EMPTY_BODY_HASH = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 async function sha256Hex(data: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data));
@@ -35,12 +34,7 @@ export function buildCanonicalString(params: {
   bodyHash: string;
   idempotencyKey?: string;
 }): string {
-  const parts = [
-    params.method.toUpperCase(),
-    params.path,
-    params.timestamp,
-    params.bodyHash,
-  ];
+  const parts = [params.method.toUpperCase(), params.path, params.timestamp, params.bodyHash];
   if (params.idempotencyKey) {
     parts.push(params.idempotencyKey);
   }
@@ -85,7 +79,7 @@ export async function signedPublisherFetch(
   const path = new URL(url).pathname + new URL(url).search;
   const idempotencyKey =
     init.headers instanceof Headers
-      ? init.headers.get("Idempotency-Key") ?? undefined
+      ? (init.headers.get("Idempotency-Key") ?? undefined)
       : (init.headers as Record<string, string> | undefined)?.["Idempotency-Key"];
 
   const signatureHeaders = await signPublisherRequestHeaders({

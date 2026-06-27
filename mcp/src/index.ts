@@ -129,11 +129,7 @@ async function jsonFetch(
 ): Promise<{ ok: boolean; status: number; data: any }> {
   const method = (init?.method ?? "GET").toUpperCase();
   const body =
-    typeof init?.body === "string"
-      ? init.body
-      : init?.body
-        ? JSON.stringify(init.body)
-        : undefined;
+    typeof init?.body === "string" ? init.body : init?.body ? JSON.stringify(init.body) : undefined;
   const baseHeaders: Record<string, string> = {
     "Content-Type": "application/json",
     ...(init?.headers as Record<string, string> | undefined),

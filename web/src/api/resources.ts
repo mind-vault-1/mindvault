@@ -226,11 +226,10 @@ export async function submitTransferOwnership(
   apiKey: string,
 ): Promise<{ id: string; newCreator: string; status: string }> {
   const body = JSON.stringify({ signedXdr, newCreator });
-  const res = await signedPublisherFetch(
-    `${API_BASE}/resources/${resourceId}/ownership`,
-    apiKey,
-    { method: "POST", body },
-  );
+  const res = await signedPublisherFetch(`${API_BASE}/resources/${resourceId}/ownership`, apiKey, {
+    method: "POST",
+    body,
+  });
   if (!res.ok) {
     const { error } = await res.json();
     throw new Error(error ?? "Failed to submit transfer transaction");

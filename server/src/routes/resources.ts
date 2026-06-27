@@ -558,61 +558,63 @@ router.post(
   requestSignatureAuth,
   validate(setPriceSchema),
   async (req, res) => {
-  const publisher = req.publisher!;
-  const resourceId = req.params.id as string;
+    const publisher = req.publisher!;
+    const resourceId = req.params.id as string;
 
-  const resource = await getResourceById(resourceId);
-  if (!resource) {
-    res.status(404).json({ error: "Resource not found" });
-    return;
-  }
-  if (resource.publisherId !== publisher.id) {
-    res.status(403).json({ error: "Forbidden: you do not own this resource" });
-    return;
-  }
-
-  const { signedXdr, price } = req.body;
-
-  // Submit the signed transaction via the registry client's underlying RPC server
-  const { rpc: StellarRpc, Transaction: StellarTransaction } = await import("@stellar/stellar-sdk");
-  const rpcServer = new StellarRpc.Server(config.SOROBAN_RPC_URL);
-  const signedTx = new StellarTransaction(signedXdr, NETWORK_PASSPHRASE);
-  const sendResult = await rpcServer.sendTransaction(signedTx);
-
-  if (sendResult.status !== "PENDING") {
-    res.status(502).json({ error: "Transaction rejected", detail: sendResult.status });
-    return;
-  }
-
-  // Poll for confirmation
-  const txHash = sendResult.hash;
-  let confirmed = false;
-  for (let i = 0; i < 10; i++) {
-    await new Promise((r) => setTimeout(r, 3000));
-    const txResult = await rpcServer.getTransaction(txHash);
-    if (txResult.status === StellarRpc.Api.GetTransactionStatus.SUCCESS) {
-      confirmed = true;
-      break;
-    }
-    if (txResult.status === StellarRpc.Api.GetTransactionStatus.FAILED) {
-      res.status(502).json({ error: "Transaction failed on-chain" });
+    const resource = await getResourceById(resourceId);
+    if (!resource) {
+      res.status(404).json({ error: "Resource not found" });
       return;
     }
-  }
-  if (!confirmed) {
-    res.status(504).json({ error: "Transaction confirmation timed out" });
-    return;
-  }
+    if (resource.publisherId !== publisher.id) {
+      res.status(403).json({ error: "Forbidden: you do not own this resource" });
+      return;
+    }
 
-  // Sync the DB price to match the on-chain value
-  const [updated] = await db
-    .update(resources)
-    .set({ price })
-    .where(eq(resources.id, resourceId))
-    .returning();
+    const { signedXdr, price } = req.body;
 
-  res.json({ id: updated.id, price: updated.price, status: "confirmed" });
-});
+    // Submit the signed transaction via the registry client's underlying RPC server
+    const { rpc: StellarRpc, Transaction: StellarTransaction } =
+      await import("@stellar/stellar-sdk");
+    const rpcServer = new StellarRpc.Server(config.SOROBAN_RPC_URL);
+    const signedTx = new StellarTransaction(signedXdr, NETWORK_PASSPHRASE);
+    const sendResult = await rpcServer.sendTransaction(signedTx);
+
+    if (sendResult.status !== "PENDING") {
+      res.status(502).json({ error: "Transaction rejected", detail: sendResult.status });
+      return;
+    }
+
+    // Poll for confirmation
+    const txHash = sendResult.hash;
+    let confirmed = false;
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const txResult = await rpcServer.getTransaction(txHash);
+      if (txResult.status === StellarRpc.Api.GetTransactionStatus.SUCCESS) {
+        confirmed = true;
+        break;
+      }
+      if (txResult.status === StellarRpc.Api.GetTransactionStatus.FAILED) {
+        res.status(502).json({ error: "Transaction failed on-chain" });
+        return;
+      }
+    }
+    if (!confirmed) {
+      res.status(504).json({ error: "Transaction confirmation timed out" });
+      return;
+    }
+
+    // Sync the DB price to match the on-chain value
+    const [updated] = await db
+      .update(resources)
+      .set({ price })
+      .where(eq(resources.id, resourceId))
+      .returning();
+
+    res.json({ id: updated.id, price: updated.price, status: "confirmed" });
+  },
+);
 
 // POST /resources/:id/ownership/prepare — build unsigned transfer_ownership tx (owner only)
 router.post(

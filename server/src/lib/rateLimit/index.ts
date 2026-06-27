@@ -7,11 +7,17 @@ let sharedStore: RateLimitStore | null = null;
 
 export function createRateLimitStore(): RateLimitStore {
   if (config.REDIS_URL) {
-    rootLogger.info({ event: "rate_limit_store", backend: "redis" }, "using Redis rate-limit store");
+    rootLogger.info(
+      { event: "rate_limit_store", backend: "redis" },
+      "using Redis rate-limit store",
+    );
     return new RedisSlidingWindowStore(config.REDIS_URL);
   }
 
-  rootLogger.info({ event: "rate_limit_store", backend: "memory" }, "using in-memory rate-limit store");
+  rootLogger.info(
+    { event: "rate_limit_store", backend: "memory" },
+    "using in-memory rate-limit store",
+  );
   return new MemorySlidingWindowStore();
 }
 

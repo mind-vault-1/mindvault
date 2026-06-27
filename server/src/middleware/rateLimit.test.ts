@@ -59,17 +59,17 @@ describe("extractPayerFromPaymentHeader", () => {
       },
     };
     const header = Buffer.from(JSON.stringify(payload)).toString("base64");
-    expect(
-      extractPayerFromPaymentHeader(mockRequest({ headers: { "x-payment": header } })),
-    ).toBe("GABC123EXAMPLEADDRESS");
+    expect(extractPayerFromPaymentHeader(mockRequest({ headers: { "x-payment": header } }))).toBe(
+      "GABC123EXAMPLEADDRESS",
+    );
   });
 
   it("falls back to clientAddress when authorization is absent", () => {
     const payload = { clientAddress: "GCLIENT123EXAMPLEADDRESS" };
     const header = Buffer.from(JSON.stringify(payload)).toString("base64");
-    expect(
-      extractPayerFromPaymentHeader(mockRequest({ headers: { "x-payment": header } })),
-    ).toBe("GCLIENT123EXAMPLEADDRESS");
+    expect(extractPayerFromPaymentHeader(mockRequest({ headers: { "x-payment": header } }))).toBe(
+      "GCLIENT123EXAMPLEADDRESS",
+    );
   });
 });
 
