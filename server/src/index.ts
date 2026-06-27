@@ -1,3 +1,8 @@
+// Must load before anything else so HTTP/Express/fetch instrumentation can
+// patch those modules before they're used (#307). A `node --import` preload
+// (see package.json) would guarantee strict ordering; this is the pragmatic
+// version for a `tsx`-run dev/prod entrypoint.
+import "./tracing.js";
 import type { Server } from "node:http";
 import { config } from "./config.js";
 import { createApp } from "./app.js";
