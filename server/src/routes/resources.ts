@@ -1,5 +1,6 @@
 import { Router, type Router as RouterType } from "express";
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
+import { requestSignatureAuth } from "../middleware/requestSignatureAuth.js";
 import { singleFileUpload, validateUploadContentType } from "../middleware/uploadGuards.js";
 import { validate, validateFields } from "../middleware/validate.js";
 import {
@@ -54,6 +55,7 @@ router.post(
   publishWalletRateLimit,
   singleFileUpload("file"),
   validateUploadContentType,
+  requestSignatureAuth,
   async (req, res) => {
     const publisher = req.publisher!;
 

@@ -1,5 +1,6 @@
-import rateLimit, { type Options } from "express-rate-limit";
-import type { Request, Response } from "express";
+import type { Request, Response, NextFunction, RequestHandler } from "express";
+import { getLogger } from "../lib/logger.js";
+import type { RateLimitStore } from "../lib/rateLimit/index.js";
 import { parsePayerFromXPayment } from "../lib/parseXPayment.js";
 
 export const RATE_LIMITED = "RATE_LIMITED";

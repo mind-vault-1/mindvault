@@ -4,6 +4,7 @@ import { createApp } from "./app.js";
 import { rootLogger } from "./lib/logger.js";
 import { beginShutdown, whenDrained, inFlightCount } from "./lib/lifecycle.js";
 import { pgClient } from "./db/client.js";
+import { closeRateLimitStore } from "./lib/rateLimit/index.js";
 import { startRetryPendingWorker, stopRetryPendingWorker } from "./workers/retryPendingWorker.js";
 import { startEventListener, stopEventListener } from "./workers/eventListener.js";
 

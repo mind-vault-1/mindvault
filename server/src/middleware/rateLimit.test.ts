@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
-import type { Request } from "express";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { Request, Response, NextFunction } from "express";
 import express from "express";
 import request from "supertest";
+import { MemorySlidingWindowStore } from "../lib/rateLimit/stores.js";
 import {
   extractPayerFromPaymentHeader,
   createIpRateLimiter,
@@ -149,16 +150,15 @@ describe("createWalletRateLimiter", () => {
 
 describe("rate limiters", () => {
   it("IP limiter returns 429 with canonical shape", async () => {
+    const store = new MemorySlidingWindowStore();
     const app = express();
-    app.use(createIpRateLimiter(1, 1000));
-    app.get("/", (req, res) => {
+    app.use(createIpRateLimiter(store, "test", 1, 1000));
+    app.get("/", (_req, res) => {
       res.send("ok");
     });
 
-    // First request works
     await request(app).get("/").expect(200);
 
-    // Second request is rate limited
     const res = await request(app).get("/").expect(429);
 
     expect(res.headers["retry-after"]).toBe("1");
@@ -170,21 +170,19 @@ describe("rate limiters", () => {
   });
 
   it("Wallet limiter returns 429 with canonical shape for existing wallet", async () => {
+    const store = new MemorySlidingWindowStore();
     const app = express();
     const getWallet = (req: Request) => req.headers["x-wallet"] as string | undefined;
-    app.use(createWalletRateLimiter(1, 1000, getWallet));
-    app.get("/", (req, res) => {
+    app.use(createWalletRateLimiter(store, "test", 1, 1000, getWallet));
+    app.get("/", (_req, res) => {
       res.send("ok");
     });
 
-    // Requests without wallet are skipped
     await request(app).get("/").expect(200);
     await request(app).get("/").expect(200);
 
-    // First request with wallet1 works
     await request(app).get("/").set("x-wallet", "wallet1").expect(200);
 
-    // Second request with wallet1 is rate limited
     const res = await request(app).get("/").set("x-wallet", "wallet1").expect(429);
     expect(res.headers["retry-after"]).toBe("1");
     expect(res.body).toEqual({
@@ -193,7 +191,6 @@ describe("rate limiters", () => {
       retryAfterSeconds: 1,
     });
 
-    // Request with different wallet is not rate limited
     await request(app).get("/").set("x-wallet", "wallet2").expect(200);
   });
 });
