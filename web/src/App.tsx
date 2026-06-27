@@ -18,8 +18,10 @@ import { PurchasesDashboard } from "./components/PurchasesDashboard.js";
 import { BuyModal } from "./components/BuyModal.js";
 import { useTheme } from "./hooks/useTheme.js";
 import { useAsync } from "./hooks/useAsync.js";
+import { useCatalog } from "./hooks/useCatalog.js";
 import { useWalletConnection } from "./hooks/useWalletConnection.js";
-import { fetchCatalog, fetchRegistryStatus } from "./api/resources.js";
+import { fetchRegistryStatus } from "./api/resources.js";
+import { CatalogStaleBanner } from "./components/CatalogStaleBanner.js";
 import type { CatalogFilters } from "./api/resources.js";
 
 interface Resource {
@@ -74,7 +76,9 @@ export default function App() {
     data: rawResources,
     error: resourcesError,
     retry: retryResources,
-  } = useAsync<Resource[]>((_signal) => fetchCatalog(filters), [filters]);
+    stale: catalogStale,
+    syncedAt: catalogSyncedAt,
+  } = useCatalog<Resource>(filters);
 
   // ── Registry status fetch ─────────────────────────────────────────────────
   const {
@@ -253,6 +257,10 @@ export default function App() {
 
       {tab === "catalog" && (
         <>
+          {catalogStale && resourcesStatus === "success" && (
+            <CatalogStaleBanner syncedAt={catalogSyncedAt} />
+          )}
+
           {/* ── Search + filter bar ──────────────────────────────────────────── */}
           {!isLoading && resourcesStatus === "success" && (
             <CatalogSearch
