@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { EditPriceModal } from "./components/EditPriceModal.js";
 import { TransferOwnershipModal } from "./components/TransferOwnershipModal.js";
 import { RegisterModal } from "./components/RegisterModal.js";
@@ -22,6 +23,7 @@ import { useCatalog } from "./hooks/useCatalog.js";
 import { useWalletConnection } from "./hooks/useWalletConnection.js";
 import { fetchRegistryStatus } from "./api/resources.js";
 import { CatalogStaleBanner } from "./components/CatalogStaleBanner.js";
+import { LanguageSwitcher } from "./components/LanguageSwitcher.js";
 import type { CatalogFilters } from "./api/resources.js";
 
 interface Resource {
@@ -67,6 +69,7 @@ export default function App() {
   const [showPublish, setShowPublish] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const wallet = useWalletConnection();
+  const { t } = useTranslation();
 
   // ── Public catalog fetch ──────────────────────────────────────────────────
   // Always the public listing, independent of API_KEY — owned resources have
@@ -95,10 +98,10 @@ export default function App() {
   async function handleCopyUrl(url: string) {
     try {
       await navigator.clipboard.writeText(url);
-      setToast({ message: "Resource URL copied to clipboard" });
+      setToast({ message: t("catalog.copied_toast") });
     } catch {
       setToast({
-        message: "Clipboard unavailable — copy the URL below:",
+        message: t("catalog.clipboard_fallback"),
         fallbackUrl: url,
       });
     }
@@ -131,7 +134,7 @@ export default function App() {
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="mb-6 flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">MindVault</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{t("app.title")}</h1>
           {registryStatus === "error" ? (
             <div className="flex items-center gap-1.5 text-sm text-amber-600 dark:text-amber-400">
               <svg
@@ -149,7 +152,7 @@ export default function App() {
                   d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
                 />
               </svg>
-              <span>Registry status unavailable</span>
+              <span>{t("app.registry_unavailable")}</span>
               <button
                 onClick={retryRegistry}
                 className="ml-1 text-xs font-medium underline hover:no-underline"
@@ -169,41 +172,42 @@ export default function App() {
         </div>
         <div className="flex items-center gap-2">
           <TabButton active={tab === "catalog"} onClick={() => setTab("catalog")}>
-            Catalog
+            {t("app.tab_catalog")}
           </TabButton>
           <TabButton active={tab === "purchases"} onClick={() => setTab("purchases")}>
-            Purchases
+            {t("app.tab_purchases")}
           </TabButton>
           <TabButton active={tab === "leaderboard"} onClick={() => setTab("leaderboard")}>
-            Leaderboard
+            {t("app.tab_leaderboard")}
           </TabButton>
           <TabButton active={tab === "agent"} onClick={() => setTab("agent")}>
-            Agent
+            {t("app.tab_agent")}
           </TabButton>
           {API_KEY && (
             <>
               <TabButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
-                Dashboard
+                {t("app.tab_dashboard")}
               </TabButton>
               <TabButton active={tab === "analytics"} onClick={() => setTab("analytics")}>
-                My Analytics
+                {t("app.tab_analytics")}
               </TabButton>
               <button
                 onClick={() => setShowPublish(true)}
                 className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
               >
-                Publish
+                {t("app.publish")}
               </button>
             </>
           )}
           <WalletButton wallet={wallet} />
+          <LanguageSwitcher />
           <button
             onClick={toggleTheme}
             aria-label="Toggle light/dark theme"
             title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
             className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
           >
-            {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
+            {theme === "dark" ? `☀️ ${t("app.theme_light")}` : `🌙 ${t("app.theme_dark")}`}
           </button>
         </div>
       </div>
@@ -213,10 +217,10 @@ export default function App() {
         <div className="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="border-b border-gray-200 px-6 py-4 dark:border-gray-700">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-              Creator Leaderboard
+              {t("leaderboard.title")}
             </h2>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Top creators ranked by total USDC earned
+              {t("leaderboard.description")}
             </p>
           </div>
           <Leaderboard />
@@ -239,10 +243,10 @@ export default function App() {
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="border-b border-gray-200 pb-4 dark:border-gray-700">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-              Verification Agent
+              {t("agent.title")}
             </h2>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Live stats and activity for the MindVault originality-verification agent
+              {t("agent.description")}
             </p>
           </div>
           <AgentStatusPage />
@@ -293,12 +297,12 @@ export default function App() {
                 filters.minPrice ||
                 filters.maxPrice) ? (
                 <div className="col-span-full py-12 text-center text-sm text-gray-400 dark:text-gray-500">
-                  No resources match your filters.{" "}
+                  {t("catalog.no_matches")}{" "}
                   <button
                     onClick={() => setFilters(DEFAULT_FILTERS)}
                     className="text-indigo-500 underline hover:text-indigo-700 dark:text-indigo-400"
                   >
-                    Clear filters
+                    {t("catalog.clear_filters")}
                   </button>
                 </div>
               ) : filteredResources.length === 0 ? (
@@ -327,11 +331,10 @@ export default function App() {
                   </div>
                   <div className="max-w-sm space-y-1">
                     <p className="text-base font-semibold text-gray-700 dark:text-gray-200">
-                      The catalog is empty
+                      {t("catalog.empty_title")}
                     </p>
                     <p className="text-sm text-gray-400 dark:text-gray-500">
-                      No resources have been published yet. Be the first to share yours with the
-                      world.
+                      {t("catalog.empty_description")}
                     </p>
                   </div>
                   <a
@@ -340,7 +343,7 @@ export default function App() {
                     rel="noopener noreferrer"
                     className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:bg-indigo-500 dark:hover:bg-indigo-600"
                   >
-                    Publish a resource
+                    {t("catalog.publish_cta")}
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
                       className="h-3.5 w-3.5"
