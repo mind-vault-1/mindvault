@@ -86,6 +86,7 @@ describe("resourceService Hashing and Price logic", () => {
       // Verify update was called with the uploaded storage path
       expect(updatedValues).toEqual({
         storagePath: "mocked/storage/path",
+        thumbnailPath: null,
       });
 
       // Verify returned resource contains correct properties

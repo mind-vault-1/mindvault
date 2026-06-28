@@ -7,7 +7,9 @@ let selectCount = 0;
 const builder = {
   from: () => builder,
   innerJoin: () => builder,
-  where: () => Promise.resolve(currentRows),
+  where: () => builder,
+  orderBy: () => builder,
+  then: (resolve: any) => resolve(currentRows),
 };
 
 vi.mock("../db/client.js", () => ({

@@ -93,24 +93,26 @@ describe("createTtlCache", () => {
   });
 
   describe("metrics (#284)", () => {
-    it("increments cache_hits_total on get() hit", () => {
+    it("increments cache_hits_total on get() hit", async () => {
       const cache = createTtlCache<string>({ defaultTtlMs: 1000, cacheName: "test" });
       cache.set("k", "v");
       cache.get("k");
-      expect(cacheHits.get().values).toEqual(
+      const hits = await cacheHits.get();
+      expect(hits.values).toEqual(
         expect.arrayContaining([expect.objectContaining({ labels: { cache: "test" }, value: 1 })]),
       );
     });
 
-    it("increments cache_misses_total on get() miss", () => {
+    it("increments cache_misses_total on get() miss", async () => {
       const cache = createTtlCache<string>({ defaultTtlMs: 1000, cacheName: "test" });
       cache.get("nonexistent");
-      expect(cacheMisses.get().values).toEqual(
+      const misses = await cacheMisses.get();
+      expect(misses.values).toEqual(
         expect.arrayContaining([expect.objectContaining({ labels: { cache: "test" }, value: 1 })]),
       );
     });
 
-    it("increments cache_misses_total on expired entry", () => {
+    it("increments cache_misses_total on expired entry", async () => {
       const clock = fakeClock();
       const cache = createTtlCache<string>({
         defaultTtlMs: 100,
@@ -120,18 +122,21 @@ describe("createTtlCache", () => {
       cache.set("k", "v");
       clock.advance(100);
       cache.get("k");
-      expect(cacheMisses.get().values).toEqual(
+      const misses = await cacheMisses.get();
+      expect(misses.values).toEqual(
         expect.arrayContaining([expect.objectContaining({ labels: { cache: "test" }, value: 1 })]),
       );
     });
 
-    it("does not register metrics when cacheName is omitted", () => {
+    it("does not register metrics when cacheName is omitted", async () => {
       const cache = createTtlCache<string>({ defaultTtlMs: 1000 });
       cache.set("k", "v");
       cache.get("k");
       cache.get("missing");
-      const hits = cacheHits.get().values.filter((v) => v.value > 0);
-      const misses = cacheMisses.get().values.filter((v) => v.value > 0);
+      const hitsMetric = await cacheHits.get();
+      const hits = hitsMetric.values.filter((v) => v.value > 0);
+      const missesMetric = await cacheMisses.get();
+      const misses = missesMetric.values.filter((v) => v.value > 0);
       expect(hits.length).toBe(0);
       expect(misses.length).toBe(0);
     });

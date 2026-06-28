@@ -57,8 +57,10 @@ let verificationStatusFilter: string | undefined;
 const builder = {
   from: () => builder,
   innerJoin: () => builder,
-  where: () =>
-    Promise.resolve(
+  where: () => builder,
+  orderBy: () => builder,
+  then: (resolve: any) =>
+    resolve(
       catalogRows.filter((row) => {
         if (!row.listed) return false;
         if (verificationStatusFilter && row.verificationStatus !== verificationStatusFilter) {
