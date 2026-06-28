@@ -1,7 +1,7 @@
 import { Router, type Router as RouterType } from "express";
 import { paymentMiddleware } from "@x402/express";
 import type { RoutesConfig } from "@x402/core/server";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { resources, verifications } from "../db/schema.js";
 import { checkOriginality } from "../services/verificationService.js";
@@ -82,25 +82,27 @@ router.get("/agent/status", async (_req, res) => {
     .from(verifications)
     .orderBy(desc(verifications.checkedAt));
 
-  // Get resource titles for recent activity
-  const recentWithTitles = await Promise.all(
-    allVerifications.slice(0, 10).map(async (v) => {
-      const resource = await db
-        .select({ title: resources.title })
-        .from(resources)
-        .where(eq(resources.id, v.resourceId))
-        .then((rows) => rows[0]);
+  // Get resource titles for recent activity in a single batched query
+  const recentVerifications = allVerifications.slice(0, 10);
+  const recentResourceIds = [...new Set(recentVerifications.map((v) => v.resourceId))];
 
-      return {
-        id: v.id,
-        resourceTitle: resource?.title || "Unknown",
-        isOriginal: v.isOriginal,
-        confidence: v.confidence,
-        flags: v.flags ? JSON.parse(v.flags) : [],
-        checkedAt: v.checkedAt,
-      };
-    }),
-  );
+  const titleRows =
+    recentResourceIds.length > 0
+      ? await db
+          .select({ id: resources.id, title: resources.title })
+          .from(resources)
+          .where(inArray(resources.id, recentResourceIds))
+      : [];
+  const titleById = new Map(titleRows.map((r) => [r.id, r.title]));
+
+  const recentWithTitles = recentVerifications.map((v) => ({
+    id: v.id,
+    resourceTitle: titleById.get(v.resourceId) || "Unknown",
+    isOriginal: v.isOriginal,
+    confidence: v.confidence,
+    flags: v.flags ? JSON.parse(v.flags) : [],
+    checkedAt: v.checkedAt,
+  }));
 
   const totalVerifications = allVerifications.length;
   const verified = allVerifications.filter((v) => v.isOriginal).length;
