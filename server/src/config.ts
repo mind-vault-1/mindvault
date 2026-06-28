@@ -61,6 +61,11 @@ const envSchema = z.object({
 
   // Verification
   VERIFICATION_PRICE: z.string().default("0.10"),
+  // OpenRouter token pricing (USD per 1M tokens) used to estimate the cost of
+  // each verification (#283). Defaults track anthropic/claude-sonnet-4 list
+  // pricing; override per model if you change OPENROUTER_MODEL.
+  VERIFICATION_PROMPT_COST_PER_1M: z.coerce.number().nonnegative().default(3),
+  VERIFICATION_COMPLETION_COST_PER_1M: z.coerce.number().nonnegative().default(15),
 
   // Rate limiting (verify-content + publish)
   RATE_LIMIT_VERIFY_IP_MAX: z.coerce.number().default(10),

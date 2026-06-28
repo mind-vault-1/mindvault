@@ -143,6 +143,16 @@ export const openApiSpec = {
             type: "array",
             items: { type: "string" },
           },
+          usage: {
+            type: "object",
+            description: "Model token usage and estimated cost for this verification",
+            properties: {
+              promptTokens: { type: "integer" },
+              completionTokens: { type: "integer" },
+              totalTokens: { type: "integer" },
+              estimatedCostUsd: { type: "number", format: "float" },
+            },
+          },
         },
       },
       AgentStatusResponse: {
@@ -168,6 +178,17 @@ export const openApiSpec = {
               rejected: { type: "integer" },
               totalEarned: { type: "string" },
               avgConfidence: { type: "string" },
+            },
+          },
+          usage: {
+            type: "object",
+            description: "Aggregate model token usage and estimated spend across all verifications",
+            properties: {
+              totalPromptTokens: { type: "integer" },
+              totalCompletionTokens: { type: "integer" },
+              totalTokens: { type: "integer" },
+              estimatedCostUsd: { type: "string" },
+              model: { type: "string" },
             },
           },
           recentActivity: {

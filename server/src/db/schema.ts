@@ -1,4 +1,13 @@
-import { pgTable, text, real, boolean, timestamp, pgEnum, index } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  real,
+  integer,
+  boolean,
+  timestamp,
+  pgEnum,
+  index,
+} from "drizzle-orm/pg-core";
 import { createId } from "@paralleldrive/cuid2";
 
 export const resourceTypeEnum = pgEnum("resource_type", ["file", "link"]);
@@ -80,6 +89,12 @@ export const verifications = pgTable("verifications", {
   isOriginal: boolean("is_original").notNull(),
   confidence: real("confidence").notNull(), // 0.0 - 1.0
   flags: text("flags"), // JSON stringified array of issues
+  // Token usage + estimated spend for the verification model call (#283).
+  // Nullable so historical rows predating usage tracking remain valid.
+  promptTokens: integer("prompt_tokens"),
+  completionTokens: integer("completion_tokens"),
+  totalTokens: integer("total_tokens"),
+  estimatedCost: text("estimated_cost"), // USD, stringified for precision
   checkedAt: timestamp("checked_at").defaultNow().notNull(),
 });
 
