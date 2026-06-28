@@ -7,6 +7,7 @@ import { resources, verifications } from "../db/schema.js";
 import { checkOriginality } from "../services/verificationService.js";
 
 import { config } from "../config.js";
+import { getLogger } from "../lib/logger.js";
 import { network, sharedX402ResourceServer } from "../lib/x402.js";
 import { verifyIpRateLimit, verifyWalletRateLimit } from "../middleware/rateLimiters.js";
 import { validate } from "../middleware/validate.js";
@@ -39,6 +40,22 @@ router.post(
     const { content, resourceId } = req.body;
 
     const result = await checkOriginality(content, "text");
+    const { usage } = result;
+
+    // Structured usage log so verification spend is visible (#283). No content
+    // or secrets are logged — only token counts and the estimated cost.
+    getLogger().info(
+      {
+        event: "verification_usage",
+        resourceId: resourceId ?? null,
+        model: config.OPENROUTER_MODEL,
+        promptTokens: usage.promptTokens,
+        completionTokens: usage.completionTokens,
+        totalTokens: usage.totalTokens,
+        estimatedCostUsd: usage.estimatedCostUsd,
+      },
+      "verification token usage",
+    );
 
     // If a resourceId is provided, save the verification result
     if (resourceId) {
@@ -49,6 +66,10 @@ router.post(
           isOriginal: result.isOriginal,
           confidence: result.confidence,
           flags: JSON.stringify(result.flags),
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          totalTokens: usage.totalTokens,
+          estimatedCost: usage.estimatedCostUsd.toString(),
         })
         .returning();
 
@@ -77,6 +98,10 @@ router.get("/agent/status", async (_req, res) => {
       isOriginal: verifications.isOriginal,
       confidence: verifications.confidence,
       flags: verifications.flags,
+      promptTokens: verifications.promptTokens,
+      completionTokens: verifications.completionTokens,
+      totalTokens: verifications.totalTokens,
+      estimatedCost: verifications.estimatedCost,
       checkedAt: verifications.checkedAt,
     })
     .from(verifications)
@@ -114,6 +139,18 @@ router.get("/agent/status", async (_req, res) => {
       ? allVerifications.reduce((sum, v) => sum + v.confidence, 0) / totalVerifications
       : 0;
 
+  // Aggregate model token usage + estimated spend across all verifications (#283).
+  const totalPromptTokens = allVerifications.reduce((sum, v) => sum + (v.promptTokens ?? 0), 0);
+  const totalCompletionTokens = allVerifications.reduce(
+    (sum, v) => sum + (v.completionTokens ?? 0),
+    0,
+  );
+  const totalTokens = allVerifications.reduce((sum, v) => sum + (v.totalTokens ?? 0), 0);
+  const totalEstimatedCost = allVerifications.reduce(
+    (sum, v) => sum + (v.estimatedCost ? Number(v.estimatedCost) : 0),
+    0,
+  );
+
   res.json({
     agent: {
       name: "MindVault Verification Agent",
@@ -130,6 +167,13 @@ router.get("/agent/status", async (_req, res) => {
       rejected,
       totalEarned: totalEarned.toFixed(4),
       avgConfidence: avgConfidence.toFixed(2),
+    },
+    usage: {
+      totalPromptTokens,
+      totalCompletionTokens,
+      totalTokens,
+      estimatedCostUsd: totalEstimatedCost.toFixed(6),
+      model: config.OPENROUTER_MODEL,
     },
     recentActivity: recentWithTitles,
   });
