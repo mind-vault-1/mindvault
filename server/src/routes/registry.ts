@@ -1,4 +1,3 @@
-// TODO: add tests
 import { Router, type Router as RouterType } from "express";
 import { getLogger } from "../lib/logger.js";
 import { registryClient } from "../services/registryClient.js";
