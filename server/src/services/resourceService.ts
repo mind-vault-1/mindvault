@@ -69,6 +69,18 @@ export async function createFileResource(data: {
 
   const storagePath = await uploadFile(resource.id, data.fileBuffer, data.filename, data.mimeType);
 
+  if (data.mimeType.startsWith("image/")) {
+    try {
+      const sharp = (await import("sharp")).default;
+      const thumbBuffer = await sharp(data.fileBuffer)
+        .resize(400, 400, { fit: "inside", withoutEnlargement: true })
+        .toBuffer();
+      await uploadFile(resource.id, thumbBuffer, `thumb_${data.filename}`, data.mimeType);
+    } catch (err) {
+      // Ignore thumbnail generation errors
+    }
+  }
+
   const [updated] = await db
     .update(resources)
     .set({ storagePath })
