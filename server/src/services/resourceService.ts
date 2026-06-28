@@ -53,6 +53,15 @@ export async function createFileResource(data: {
 }) {
   const contentHash = hashFileResource(data.fileBuffer, data.title);
 
+  let thumbnailBuffer: Buffer | undefined;
+  if (data.mimeType.startsWith("image/")) {
+    const sharp = (await import("sharp")).default;
+    thumbnailBuffer = await sharp(data.fileBuffer)
+      .resize({ width: 256, height: 256, fit: "inside" })
+      .webp({ quality: 80 })
+      .toBuffer();
+  }
+
   const [resource] = await db
     .insert(resources)
     .values({
@@ -69,9 +78,19 @@ export async function createFileResource(data: {
 
   const storagePath = await uploadFile(resource.id, data.fileBuffer, data.filename, data.mimeType);
 
+  let thumbnailPath: string | null = null;
+  if (thumbnailBuffer) {
+    thumbnailPath = await uploadFile(
+      `${resource.id}-thumb`,
+      thumbnailBuffer,
+      `thumb.webp`,
+      `image/webp`,
+    );
+  }
+
   const [updated] = await db
     .update(resources)
-    .set({ storagePath })
+    .set({ storagePath, thumbnailPath })
     .where(eq(resources.id, resource.id))
     .returning();
 
@@ -302,6 +321,7 @@ async function queryResourceMeta(id: string) {
       price: resources.price,
       resourceType: resources.resourceType,
       mimeType: resources.mimeType,
+      thumbnailPath: resources.thumbnailPath,
       verificationStatus: resources.verificationStatus,
       publisherName: publishers.name,
       publisherWallet: resources.walletAddress,

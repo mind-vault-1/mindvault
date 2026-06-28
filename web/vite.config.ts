@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { visualizer } from "rollup-plugin-visualizer";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -23,6 +24,10 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       react(),
+      visualizer({
+        filename: "dist/stats.html",
+        template: "treemap",
+      }),
       VitePWA({
         registerType: "autoUpdate",
         includeAssets: ["icon.svg"],
@@ -76,6 +81,9 @@ export default defineConfig(({ mode }) => {
       proxy: {
         "/resources": "http://localhost:4021",
       },
+    },
+    build: {
+      chunkSizeWarningLimit: 500, // 500kB warning limit for bundle size budget
     },
   };
 });

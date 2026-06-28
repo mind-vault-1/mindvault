@@ -1,6 +1,6 @@
 {
-  "id": "dc575d6e-1b84-42a4-9292-257fa670ae23",
-  "prevId": "156010cb-d0e1-435d-ae6c-0b74865bec12",
+  "id": "b5913273-b349-49b8-a7e0-9f3f3afa0f45",
+  "prevId": "dc575d6e-1b84-42a4-9292-257fa670ae23",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -173,6 +173,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "thumbnail_path": {
+          "name": "thumbnail_path",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "content_hash": {
           "name": "content_hash",
           "type": "text",
@@ -220,6 +226,12 @@
           "notNull": true,
           "default": "'none'"
         },
+        "onchain_tx_hash": {
+          "name": "onchain_tx_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp",
@@ -228,7 +240,35 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "idx_resources_catalog_filter_sort": {
+          "name": "idx_resources_catalog_filter_sort",
+          "columns": [
+            {
+              "expression": "listed",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "verification_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "resources_publisher_id_publishers_id_fk": {
           "name": "resources_publisher_id_publishers_id_fk",
