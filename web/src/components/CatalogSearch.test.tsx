@@ -112,3 +112,144 @@ describe("CatalogSearch", () => {
     expect(screen.getByText(/of/)).toBeInTheDocument();
   });
 });
+
+// ── Keyboard navigation (#311) ──────────────────────────────────────────────
+
+const sampleResults = [
+  { id: "r1", title: "Introduction to Stellar", subtitle: "$5.00 USDC" },
+  { id: "r2", title: "Advanced Soroban", subtitle: "$15.00 USDC" },
+  { id: "r3", title: "Stellar Basics", subtitle: "$2.50 USDC" },
+];
+
+function renderWithResults() {
+  const onChange = vi.fn();
+  const onReset = vi.fn();
+  const onActivate = vi.fn();
+  render(
+    <CatalogSearch
+      filters={{ search: "Stellar" }}
+      total={3}
+      filtered={3}
+      onChange={onChange}
+      onReset={onReset}
+      results={sampleResults}
+      onActivate={onActivate}
+    />,
+  );
+  return { onChange, onReset, onActivate };
+}
+
+describe("CatalogSearch – keyboard navigation", () => {
+  it("renders results as a listbox when results are provided", () => {
+    renderWithResults();
+    const listbox = screen.getByRole("listbox", { name: "Search results" });
+    expect(listbox).toBeInTheDocument();
+    // Query options within the listbox only, not from the select elements.
+    const { getAllByRole: getAllByRoleInListbox } = { getAllByRole: (role: string) => Array.from(listbox.querySelectorAll(`[role="${role}"]`)) };
+    expect(getAllByRoleInListbox("option")).toHaveLength(3);
+  });
+
+  it("marks the search input as a combobox with expanded state", () => {
+    renderWithResults();
+    const input = screen.getByRole("combobox", { name: "Search resources" });
+    expect(input).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("navigates down through results with ArrowDown", async () => {
+    renderWithResults();
+    const input = screen.getByRole("combobox", { name: "Search resources" });
+    input.focus();
+
+    await userEvent.keyboard("{ArrowDown}");
+    const options = screen.getAllByRole("option");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.keyboard("{ArrowDown}");
+    expect(options[1]).toHaveAttribute("aria-selected", "true");
+    expect(options[0]).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("wraps from last to first on ArrowDown", async () => {
+    renderWithResults();
+    const input = screen.getByRole("combobox", { name: "Search resources" });
+    input.focus();
+
+    // Navigate to the last item
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
+    const options = screen.getAllByRole("option");
+    expect(options[2]).toHaveAttribute("aria-selected", "true");
+
+    // One more should wrap to first
+    await userEvent.keyboard("{ArrowDown}");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("navigates up with ArrowUp, wrapping from first to last", async () => {
+    renderWithResults();
+    const input = screen.getByRole("combobox", { name: "Search resources" });
+    input.focus();
+
+    // ArrowUp from no selection should go to last
+    await userEvent.keyboard("{ArrowUp}");
+    const options = screen.getAllByRole("option");
+    expect(options[2]).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("activates the focused result on Enter and calls onActivate", async () => {
+    const { onActivate } = renderWithResults();
+    const input = screen.getByRole("combobox", { name: "Search resources" });
+    input.focus();
+
+    await userEvent.keyboard("{ArrowDown}");
+    await userEvent.keyboard("{Enter}");
+
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(onActivate).toHaveBeenCalledWith(sampleResults[0]);
+  });
+
+  it("activates a result on click and calls onActivate", async () => {
+    const { onActivate } = renderWithResults();
+    const options = screen.getAllByRole("option");
+
+    await userEvent.click(options[1]);
+
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(onActivate).toHaveBeenCalledWith(sampleResults[1]);
+  });
+
+  it("clears active selection on Escape", async () => {
+    renderWithResults();
+    const input = screen.getByRole("combobox", { name: "Search resources" });
+    input.focus();
+
+    await userEvent.keyboard("{ArrowDown}");
+    const options = screen.getAllByRole("option");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.keyboard("{Escape}");
+    expect(options[0]).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("does not render a listbox when no results prop is given", () => {
+    renderComponent();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("shows result subtitles when provided", () => {
+    renderWithResults();
+    expect(screen.getByText("$5.00 USDC")).toBeInTheDocument();
+  });
+
+  it("focus is visible on the active option", async () => {
+    renderWithResults();
+    const input = screen.getByRole("combobox", { name: "Search resources" });
+    input.focus();
+
+    await userEvent.keyboard("{ArrowDown}");
+    const options = screen.getAllByRole("option");
+    // Active item should have tabIndex=0 so it can receive focus
+    expect(options[0]).toHaveAttribute("tabindex", "0");
+    // Non-active items should have tabIndex=-1
+    expect(options[1]).toHaveAttribute("tabindex", "-1");
+  });
+});
