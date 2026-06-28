@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { createTtlCache } from "./ttlCache.js";
+import { cacheHits, cacheMisses } from "./metrics.js";
+
+beforeEach(() => {
+  cacheHits.reset();
+  cacheMisses.reset();
+});
 
 // A controllable clock so expiry is deterministic without real timers.
 function fakeClock(start = 0) {
@@ -84,5 +90,50 @@ describe("createTtlCache", () => {
 
     expect(cache.get("a")).toBe("updated");
     expect(cache.get("b")).toBe("2");
+  });
+
+  describe("metrics (#284)", () => {
+    it("increments cache_hits_total on get() hit", () => {
+      const cache = createTtlCache<string>({ defaultTtlMs: 1000, cacheName: "test" });
+      cache.set("k", "v");
+      cache.get("k");
+      expect(cacheHits.get().values).toEqual(
+        expect.arrayContaining([expect.objectContaining({ labels: { cache: "test" }, value: 1 })]),
+      );
+    });
+
+    it("increments cache_misses_total on get() miss", () => {
+      const cache = createTtlCache<string>({ defaultTtlMs: 1000, cacheName: "test" });
+      cache.get("nonexistent");
+      expect(cacheMisses.get().values).toEqual(
+        expect.arrayContaining([expect.objectContaining({ labels: { cache: "test" }, value: 1 })]),
+      );
+    });
+
+    it("increments cache_misses_total on expired entry", () => {
+      const clock = fakeClock();
+      const cache = createTtlCache<string>({
+        defaultTtlMs: 100,
+        now: clock.now,
+        cacheName: "test",
+      });
+      cache.set("k", "v");
+      clock.advance(100);
+      cache.get("k");
+      expect(cacheMisses.get().values).toEqual(
+        expect.arrayContaining([expect.objectContaining({ labels: { cache: "test" }, value: 1 })]),
+      );
+    });
+
+    it("does not register metrics when cacheName is omitted", () => {
+      const cache = createTtlCache<string>({ defaultTtlMs: 1000 });
+      cache.set("k", "v");
+      cache.get("k");
+      cache.get("missing");
+      const hits = cacheHits.get().values.filter((v) => v.value > 0);
+      const misses = cacheMisses.get().values.filter((v) => v.value > 0);
+      expect(hits.length).toBe(0);
+      expect(misses.length).toBe(0);
+    });
   });
 });

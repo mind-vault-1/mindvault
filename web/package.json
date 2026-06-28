@@ -15,8 +15,10 @@
     "@stellar/stellar-sdk": "^15.0.1",
     "@x402/fetch": "^2.9.0",
     "@x402/stellar": "^2.9.0",
+    "i18next": "^26.3.3",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-i18next": "^17.0.8"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",

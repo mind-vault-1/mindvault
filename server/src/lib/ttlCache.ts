@@ -1,3 +1,5 @@
+import { cacheHits, cacheMisses } from "./metrics.js";
+
 // Generic in-memory cache with per-entry expiry. Generalizes the bespoke
 // price cache in stellarRegistry.ts so other short-lived caches (catalog reads,
 // idempotency records) share one well-tested implementation.
@@ -30,6 +32,12 @@ export interface TtlCacheOptions {
    * keyed by high-cardinality inputs (e.g. per-filter catalog responses, #316).
    */
   maxSize?: number;
+  /**
+   * When set, tracks get() hits/misses via prom-client counters under this
+   * label value. The metrics are already registered in metrics.ts as
+   * cache_hits_total and cache_misses_total.
+   */
+  cacheName?: string;
 }
 
 // Factory so callers (and tests) hold their own isolated instance rather than
@@ -39,15 +47,21 @@ export function createTtlCache<T>(options: TtlCacheOptions): TtlCache<T> {
   const now = options.now ?? Date.now;
   const defaultTtlMs = options.defaultTtlMs;
   const maxSize = options.maxSize;
+  const cacheName = options.cacheName;
 
   return {
     get(key) {
       const entry = store.get(key);
-      if (!entry) return undefined;
-      if (now() >= entry.expiresAt) {
-        store.delete(key);
+      if (!entry) {
+        if (cacheName) cacheMisses.inc({ cache: cacheName });
         return undefined;
       }
+      if (now() >= entry.expiresAt) {
+        store.delete(key);
+        if (cacheName) cacheMisses.inc({ cache: cacheName });
+        return undefined;
+      }
+      if (cacheName) cacheHits.inc({ cache: cacheName });
       return entry.value;
     },
     set(key, value, ttlMs) {
