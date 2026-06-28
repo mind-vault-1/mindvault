@@ -1,0 +1,8 @@
+# MindVault CODEOWNERS
+
+/contract/ @archanavdev
+/server/ @archanavdev
+/web/ @archanavdev
+/mcp/ @archanavdev
+/packages/ @archanavdev
+/.github/ @archanavdev

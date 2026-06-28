@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { resources, publishers, verifications } from "../db/schema.js";
 import { uploadFile, deleteFile } from "../storage/supabaseStorage.js";
@@ -11,7 +11,10 @@ import { config } from "../config.js";
 // work while keeping newly published/delisted items fresh within seconds.
 const CATALOG_KEY = "catalog";
 const metaKey = (id: string) => `meta:${id}`;
-const readCache = createTtlCache<unknown>({ defaultTtlMs: config.CATALOG_CACHE_TTL_MS });
+const readCache = createTtlCache<unknown>({
+  defaultTtlMs: config.CATALOG_CACHE_TTL_MS,
+  cacheName: "catalog_read",
+});
 
 // Per-filter-combination catalog response cache (#316). Keyed by a normalized
 // filter/sort/pagination key so identical queries skip the filter/sort/paginate
@@ -20,6 +23,7 @@ const readCache = createTtlCache<unknown>({ defaultTtlMs: config.CATALOG_CACHE_T
 const pageCache = createTtlCache<unknown>({
   defaultTtlMs: config.CATALOG_CACHE_TTL_MS,
   maxSize: config.CATALOG_CACHE_MAX_KEYS,
+  cacheName: "catalog_page",
 });
 
 // Drop cached reads affected by a write. The catalog (the listed set) and every
@@ -64,6 +68,18 @@ export async function createFileResource(data: {
     .returning();
 
   const storagePath = await uploadFile(resource.id, data.fileBuffer, data.filename, data.mimeType);
+
+  if (data.mimeType.startsWith("image/")) {
+    try {
+      const sharp = (await import("sharp")).default;
+      const thumbBuffer = await sharp(data.fileBuffer)
+        .resize(400, 400, { fit: "inside", withoutEnlargement: true })
+        .toBuffer();
+      await uploadFile(resource.id, thumbBuffer, `thumb_${data.filename}`, data.mimeType);
+    } catch (err) {
+      // Ignore thumbnail generation errors
+    }
+  }
 
   const [updated] = await db
     .update(resources)
@@ -136,6 +152,9 @@ function sortRows<T extends { price: string; title: string; createdAt: Date | st
   rows: T[],
   sort: CatalogSort,
 ): T[] {
+  // "newest" is the default — handled by ORDER BY created_at DESC in queryCatalog (#287).
+  if (sort === "newest" || !sort) return rows;
+
   const sorted = [...rows];
   switch (sort) {
     case "price_asc":
@@ -146,10 +165,6 @@ function sortRows<T extends { price: string; title: string; createdAt: Date | st
       break;
     case "title":
       sorted.sort((a, b) => a.title.localeCompare(b.title));
-      break;
-    case "newest":
-    default:
-      sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       break;
   }
   return sorted;
@@ -170,7 +185,8 @@ async function queryCatalog() {
     })
     .from(resources)
     .innerJoin(publishers, eq(resources.publisherId, publishers.id))
-    .where(eq(resources.listed, true));
+    .where(eq(resources.listed, true))
+    .orderBy(desc(resources.createdAt));
 }
 
 async function getCachedCatalogRows(): Promise<Awaited<ReturnType<typeof queryCatalog>>> {

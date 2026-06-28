@@ -1,4 +1,4 @@
-import { pgTable, text, real, boolean, timestamp, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, real, boolean, timestamp, pgEnum, index } from "drizzle-orm/pg-core";
 import { createId } from "@paralleldrive/cuid2";
 
 export const resourceTypeEnum = pgEnum("resource_type", ["file", "link"]);
@@ -30,29 +30,39 @@ export const publishers = pgTable("publishers", {
 });
 
 // Resources — digital assets published on the marketplace
-export const resources = pgTable("resources", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => createId()),
-  publisherId: text("publisher_id")
-    .notNull()
-    .references(() => publishers.id),
-  title: text("title").notNull(),
-  description: text("description"),
-  price: text("price").notNull(), // USDC amount as string, e.g. "0.50"
-  walletAddress: text("wallet_address").notNull(), // payTo for this resource
-  resourceType: resourceTypeEnum("resource_type").notNull(),
-  storagePath: text("storage_path"), // Supabase Storage path (for type "file")
-  contentHash: text("content_hash"), // SHA-256 of canonical content (URL for links, file bytes for files)
-  externalUrl: text("external_url"), // For type "link"
-  mimeType: text("mime_type"),
-  verificationStatus: verificationStatusEnum("verification_status").notNull().default("pending"),
-  verificationId: text("verification_id"),
-  listed: boolean("listed").notNull().default(false),
-  onchainStatus: onchainStatusEnum("onchain_status").notNull().default("none"),
-  onchainTxHash: text("onchain_tx_hash"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const resources = pgTable(
+  "resources",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    publisherId: text("publisher_id")
+      .notNull()
+      .references(() => publishers.id),
+    title: text("title").notNull(),
+    description: text("description"),
+    price: text("price").notNull(),
+    walletAddress: text("wallet_address").notNull(),
+    resourceType: resourceTypeEnum("resource_type").notNull(),
+    storagePath: text("storage_path"),
+    contentHash: text("content_hash"),
+    externalUrl: text("external_url"),
+    mimeType: text("mime_type"),
+    verificationStatus: verificationStatusEnum("verification_status").notNull().default("pending"),
+    verificationId: text("verification_id"),
+    listed: boolean("listed").notNull().default(false),
+    onchainStatus: onchainStatusEnum("onchain_status").notNull().default("none"),
+    onchainTxHash: text("onchain_tx_hash"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    catalogFilterSortIdx: index("idx_resources_catalog_filter_sort").on(
+      table.listed,
+      table.verificationStatus,
+      table.createdAt,
+    ),
+  }),
+);
 
 // Verifications — AI originality check results
 export const verifications = pgTable("verifications", {

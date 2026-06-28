@@ -1,0 +1,46 @@
+{
+  "app": {
+    "title": "MindVault",
+    "tab_catalog": "Catalog",
+    "tab_purchases": "Purchases",
+    "tab_leaderboard": "Leaderboard",
+    "tab_agent": "Agent",
+    "tab_dashboard": "Dashboard",
+    "tab_analytics": "My Analytics",
+    "publish": "Publish",
+    "theme_light": "Light",
+    "theme_dark": "Dark",
+    "registry_unavailable": "Registry status unavailable",
+    "registry_count": "Registry: {{count}} resource(s) registered on-chain"
+  },
+  "catalog": {
+    "empty_title": "The catalog is empty",
+    "empty_description": "No resources have been published yet. Be the first to share yours with the world.",
+    "publish_cta": "Publish a resource",
+    "no_matches": "No resources match your filters.",
+    "clear_filters": "Clear filters",
+    "preview": "Preview",
+    "buy": "Buy",
+    "copy_url": "Copy URL",
+    "owner": "Owner",
+    "copied_toast": "Resource URL copied to clipboard",
+    "clipboard_fallback": "Clipboard unavailable — copy the URL below:"
+  },
+  "leaderboard": {
+    "title": "Creator Leaderboard",
+    "description": "Top creators ranked by total USDC earned"
+  },
+  "agent": {
+    "title": "Verification Agent",
+    "description": "Live stats and activity for the MindVault originality-verification agent"
+  },
+  "error_boundary": {
+    "title": "Something went wrong",
+    "description": "An unexpected error occurred. Try reloading the page, or click the button below to retry.",
+    "reload": "Reload"
+  },
+  "language": {
+    "switch_to": "Español",
+    "label": "Language"
+  }
+}

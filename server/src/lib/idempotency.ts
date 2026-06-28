@@ -26,6 +26,7 @@ export function idempotencyCacheKey(publisherId: string, key: string): string {
 
 const defaultStore = createTtlCache<IdempotencyRecord>({
   defaultTtlMs: config.IDEMPOTENCY_TTL_MS,
+  cacheName: "idempotency",
 });
 
 export function getIdempotencyStore(): TtlCache<IdempotencyRecord> {

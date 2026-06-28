@@ -29,6 +29,13 @@
       "when": 1779918493871,
       "tag": "0003_striped_ultragirl",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780000000000,
+      "tag": "0004_catalog_filter_sort_index",
+      "breakpoints": true
     }
   ]
 }

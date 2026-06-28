@@ -1,6 +1,7 @@
 import { afterEach } from "vitest";
 import { cleanup } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
+import "../i18n/config.js";
 
 // jsdom doesn't implement matchMedia; useTheme() calls it unconditionally on mount.
 window.matchMedia ??= () =>

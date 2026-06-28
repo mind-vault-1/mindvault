@@ -1,0 +1,46 @@
+{
+  "app": {
+    "title": "MindVault",
+    "tab_catalog": "Catálogo",
+    "tab_purchases": "Compras",
+    "tab_leaderboard": "Clasificación",
+    "tab_agent": "Agente",
+    "tab_dashboard": "Panel",
+    "tab_analytics": "Mis Analíticas",
+    "publish": "Publicar",
+    "theme_light": "Claro",
+    "theme_dark": "Oscuro",
+    "registry_unavailable": "Estado del registro no disponible",
+    "registry_count": "Registro: {{count}} recurso(s) registrados en cadena"
+  },
+  "catalog": {
+    "empty_title": "El catálogo está vacío",
+    "empty_description": "Aún no se han publicado recursos. Sea el primero en compartir los suyos con el mundo.",
+    "publish_cta": "Publicar un recurso",
+    "no_matches": "Ningún recurso coincide con sus filtros.",
+    "clear_filters": "Limpiar filtros",
+    "preview": "Vista previa",
+    "buy": "Comprar",
+    "copy_url": "Copiar URL",
+    "owner": "Propietario",
+    "copied_toast": "URL del recurso copiada al portapapeles",
+    "clipboard_fallback": "Portapapeles no disponible — copie la URL a continuación:"
+  },
+  "leaderboard": {
+    "title": "Clasificación de Creadores",
+    "description": "Los mejores creadores clasificados por USDC ganado"
+  },
+  "agent": {
+    "title": "Agente de Verificación",
+    "description": "Estadísticas en vivo y actividad del agente de verificación de originalidad de MindVault"
+  },
+  "error_boundary": {
+    "title": "Algo salió mal",
+    "description": "Ocurrió un error inesperado. Intente recargar la página o haga clic en el botón para reintentar.",
+    "reload": "Recargar"
+  },
+  "language": {
+    "switch_to": "English",
+    "label": "Idioma"
+  }
+}
