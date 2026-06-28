@@ -61,6 +61,11 @@ export const resources = pgTable(
       table.verificationStatus,
       table.createdAt,
     ),
+    // Publisher dashboards list a single publisher's resources (#285).
+    publisherIdx: index("idx_resources_publisher_id").on(table.publisherId),
+    // Verification-status filters that aren't anchored to `listed` can't use the
+    // composite catalog index, so they get their own (#285).
+    verificationStatusIdx: index("idx_resources_verification_status").on(table.verificationStatus),
   }),
 );
 
@@ -79,15 +84,22 @@ export const verifications = pgTable("verifications", {
 });
 
 // Payments — tracks x402 payments for resources
-export const payments = pgTable("payments", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => createId()),
-  resourceId: text("resource_id")
-    .notNull()
-    .references(() => resources.id),
-  payerAddress: text("payer_address").notNull(),
-  recipientAddress: text("recipient_address").notNull(),
-  amount: text("amount").notNull(), // USDC amount
-  paidAt: timestamp("paid_at").defaultNow().notNull(),
-});
+export const payments = pgTable(
+  "payments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    resourceId: text("resource_id")
+      .notNull()
+      .references(() => resources.id),
+    payerAddress: text("payer_address").notNull(),
+    recipientAddress: text("recipient_address").notNull(),
+    amount: text("amount").notNull(), // USDC amount
+    paidAt: timestamp("paid_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    // Payment history is queried per payer wallet (#285).
+    payerAddressIdx: index("idx_payments_payer_address").on(table.payerAddress),
+  }),
+);
