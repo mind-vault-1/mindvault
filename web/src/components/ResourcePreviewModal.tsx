@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef, useCallback, useState } from "react";
 import { fetchResourceMeta } from "../api/resources.js";
 import { useAsync } from "../hooks/useAsync.js";
 import { ErrorBanner } from "./ErrorBanner.js";
@@ -12,12 +12,94 @@ interface ResourcePreviewModalProps {
   onBuy?: () => void;
 }
 
+// ---------------------------------------------------------------------------
+// LazyImage – renders with a skeleton placeholder until the image has loaded.
+// Falls back to a text placeholder when src is missing or the load fails.
+// ---------------------------------------------------------------------------
+
+interface LazyImageProps {
+  src?: string | null;
+  alt: string;
+  className?: string;
+}
+
+function LazyImage({ src, alt, className = "" }: LazyImageProps) {
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  // Use IntersectionObserver to defer the src assignment until the element
+  // enters the viewport, avoiding any network fetch before it is visible.
+  useEffect(() => {
+    if (!src || !imgRef.current) return;
+
+    const img = imgRef.current;
+    let observer: IntersectionObserver | null = null;
+
+    if (typeof IntersectionObserver !== "undefined") {
+      observer = new IntersectionObserver(
+        ([entry]) => {
+          if (entry.isIntersecting) {
+            img.src = src;
+            observer?.disconnect();
+          }
+        },
+        { threshold: 0.1 },
+      );
+      observer.observe(img);
+    } else {
+      // Fallback for environments without IntersectionObserver (e.g. jsdom).
+      img.src = src;
+    }
+
+    return () => observer?.disconnect();
+  }, [src]);
+
+  if (!src || errored) {
+    return (
+      <div
+        aria-label={alt}
+        className={`flex items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-900 text-gray-400 dark:text-gray-600 text-xs ${className}`}
+      >
+        No preview
+      </div>
+    );
+  }
+
+  return (
+    <div className={`relative overflow-hidden rounded-lg ${className}`}>
+      {/* Skeleton shown until image loads */}
+      {!loaded && (
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 animate-pulse bg-gray-200 dark:bg-gray-700 rounded-lg"
+        />
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        ref={imgRef}
+        alt={alt}
+        loading="lazy"
+        onLoad={() => setLoaded(true)}
+        onError={() => setErrored(true)}
+        className={`w-full h-full object-cover transition-opacity duration-300 ${loaded ? "opacity-100" : "opacity-0"}`}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ResourcePreviewModal
+// ---------------------------------------------------------------------------
+
 export function ResourcePreviewModal({
   resourceId,
   onClose,
   onCopyUrl,
   onBuy,
 }: ResourcePreviewModalProps) {
+  // Fetch is initiated only when the modal mounts (i.e. when it opens), so
+  // content is loaded on-demand, not before the modal is rendered (#310).
   const { status, data, error, retry } = useAsync(
     (signal) => fetchResourceMeta(resourceId, signal),
     [resourceId],
@@ -128,32 +210,21 @@ export function ResourcePreviewModal({
         </div>
 
         <div className="mt-4">
+          {/* Skeleton placeholder while loading (#310) */}
           {(status === "idle" || status === "loading") && (
             <div
               role="status"
               aria-busy="true"
-              className="flex flex-col items-center justify-center py-12"
+              aria-label="Loading preview…"
+              className="space-y-3"
             >
-              <svg
-                className="h-8 w-8 animate-spin text-indigo-500"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
+              {/* Thumbnail skeleton */}
+              <div className="h-32 w-full animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700" />
+              {/* Title skeleton */}
+              <div className="h-5 w-3/4 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+              {/* Meta skeletons */}
+              <div className="h-4 w-1/2 animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
+              <div className="h-4 w-full animate-pulse rounded bg-gray-200 dark:bg-gray-700" />
               <span className="sr-only">Loading preview…</span>
             </div>
           )}
@@ -164,6 +235,15 @@ export function ResourcePreviewModal({
 
           {status === "success" && data && (
             <div className="space-y-4">
+              {/* Lazy-loaded thumbnail (#310) */}
+              {data.thumbnailUrl && (
+                <LazyImage
+                  src={data.thumbnailUrl}
+                  alt={`${data.title} thumbnail`}
+                  className="h-32 w-full"
+                />
+              )}
+
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                   {data.title}
