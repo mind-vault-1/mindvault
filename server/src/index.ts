@@ -13,6 +13,7 @@ import { pgClient } from "./db/client.js";
 import { startPoolMetrics, stopPoolMetrics } from "./db/client.js";
 import { startRetryPendingWorker, stopRetryPendingWorker } from "./workers/retryPendingWorker.js";
 import { startEventListener, stopEventListener } from "./workers/eventListener.js";
+import { closeRateLimitStore } from "./lib/rateLimit/index.js";
 
 initSentry();
 
