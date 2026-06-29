@@ -54,10 +54,11 @@ export function initSentry(): void {
       }
 
       // Scrub breadcrumbs
-      if (event.breadcrumbs?.values) {
-        for (const breadcrumb of event.breadcrumbs.values) {
+      const breadcrumbs = event.breadcrumbs?.values;
+      if (breadcrumbs && Array.isArray(breadcrumbs)) {
+        for (const breadcrumb of breadcrumbs) {
           if (breadcrumb.data && typeof breadcrumb.data === "object") {
-            for (const [key, value] of Object.entries(breadcrumb.data as Record<string, unknown>)) {
+            for (const [key] of Object.entries(breadcrumb.data as Record<string, unknown>)) {
               if (isSensitiveKey(key)) {
                 (breadcrumb.data as Record<string, unknown>)[key] = "[Filtered]";
               }

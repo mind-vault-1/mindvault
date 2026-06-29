@@ -21,13 +21,6 @@ function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEYS.some((sensitive) => lower.includes(sensitive));
 }
 
-function scrubValue(value: unknown): unknown {
-  if (typeof value === "string" && value.length > 20) {
-    return "[Filtered]";
-  }
-  return value;
-}
-
 export function initSentry(): void {
   if (!config.SENTRY_DSN) return;
 
@@ -56,7 +49,7 @@ export function initSentry(): void {
 
       // Scrub extra data and contexts
       if (event.extra) {
-        for (const [key, value] of Object.entries(event.extra)) {
+        for (const [key] of Object.entries(event.extra)) {
           if (isSensitiveKey(key)) {
             event.extra[key] = "[Filtered]";
           }
@@ -64,10 +57,11 @@ export function initSentry(): void {
       }
 
       // Scrub breadcrumbs
-      if (event.breadcrumbs?.values) {
-        for (const breadcrumb of event.breadcrumbs.values) {
+      const breadcrumbs = event.breadcrumbs?.values;
+      if (breadcrumbs && Array.isArray(breadcrumbs)) {
+        for (const breadcrumb of breadcrumbs) {
           if (breadcrumb.data && typeof breadcrumb.data === "object") {
-            for (const [key, value] of Object.entries(breadcrumb.data as Record<string, unknown>)) {
+            for (const [key] of Object.entries(breadcrumb.data as Record<string, unknown>)) {
               if (isSensitiveKey(key)) {
                 (breadcrumb.data as Record<string, unknown>)[key] = "[Filtered]";
               }
