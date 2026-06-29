@@ -1,4 +1,13 @@
-import { pgTable, text, real, boolean, timestamp, pgEnum } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  real,
+  integer,
+  boolean,
+  timestamp,
+  pgEnum,
+  index,
+} from "drizzle-orm/pg-core";
 import { createId } from "@paralleldrive/cuid2";
 
 export const resourceTypeEnum = pgEnum("resource_type", ["file", "link"]);
@@ -30,29 +39,44 @@ export const publishers = pgTable("publishers", {
 });
 
 // Resources — digital assets published on the marketplace
-export const resources = pgTable("resources", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => createId()),
-  publisherId: text("publisher_id")
-    .notNull()
-    .references(() => publishers.id),
-  title: text("title").notNull(),
-  description: text("description"),
-  price: text("price").notNull(), // USDC amount as string, e.g. "0.50"
-  walletAddress: text("wallet_address").notNull(), // payTo for this resource
-  resourceType: resourceTypeEnum("resource_type").notNull(),
-  storagePath: text("storage_path"), // Supabase Storage path (for type "file")
-  contentHash: text("content_hash"), // SHA-256 of canonical content (URL for links, file bytes for files)
-  externalUrl: text("external_url"), // For type "link"
-  mimeType: text("mime_type"),
-  verificationStatus: verificationStatusEnum("verification_status").notNull().default("pending"),
-  verificationId: text("verification_id"),
-  listed: boolean("listed").notNull().default(false),
-  onchainStatus: onchainStatusEnum("onchain_status").notNull().default("none"),
-  onchainTxHash: text("onchain_tx_hash"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const resources = pgTable(
+  "resources",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    publisherId: text("publisher_id")
+      .notNull()
+      .references(() => publishers.id),
+    title: text("title").notNull(),
+    description: text("description"),
+    price: text("price").notNull(),
+    walletAddress: text("wallet_address").notNull(),
+    resourceType: resourceTypeEnum("resource_type").notNull(),
+    storagePath: text("storage_path"),
+    contentHash: text("content_hash"),
+    externalUrl: text("external_url"),
+    mimeType: text("mime_type"),
+    verificationStatus: verificationStatusEnum("verification_status").notNull().default("pending"),
+    verificationId: text("verification_id"),
+    listed: boolean("listed").notNull().default(false),
+    onchainStatus: onchainStatusEnum("onchain_status").notNull().default("none"),
+    onchainTxHash: text("onchain_tx_hash"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    catalogFilterSortIdx: index("idx_resources_catalog_filter_sort").on(
+      table.listed,
+      table.verificationStatus,
+      table.createdAt,
+    ),
+    // Publisher dashboards list a single publisher's resources (#285).
+    publisherIdx: index("idx_resources_publisher_id").on(table.publisherId),
+    // Verification-status filters that aren't anchored to `listed` can't use the
+    // composite catalog index, so they get their own (#285).
+    verificationStatusIdx: index("idx_resources_verification_status").on(table.verificationStatus),
+  }),
+);
 
 // Verifications — AI originality check results
 export const verifications = pgTable("verifications", {
@@ -65,19 +89,32 @@ export const verifications = pgTable("verifications", {
   isOriginal: boolean("is_original").notNull(),
   confidence: real("confidence").notNull(), // 0.0 - 1.0
   flags: text("flags"), // JSON stringified array of issues
+  // Token usage + estimated spend for the verification model call (#283).
+  // Nullable so historical rows predating usage tracking remain valid.
+  promptTokens: integer("prompt_tokens"),
+  completionTokens: integer("completion_tokens"),
+  totalTokens: integer("total_tokens"),
+  estimatedCost: text("estimated_cost"), // USD, stringified for precision
   checkedAt: timestamp("checked_at").defaultNow().notNull(),
 });
 
 // Payments — tracks x402 payments for resources
-export const payments = pgTable("payments", {
-  id: text("id")
-    .primaryKey()
-    .$defaultFn(() => createId()),
-  resourceId: text("resource_id")
-    .notNull()
-    .references(() => resources.id),
-  payerAddress: text("payer_address").notNull(),
-  recipientAddress: text("recipient_address").notNull(),
-  amount: text("amount").notNull(), // USDC amount
-  paidAt: timestamp("paid_at").defaultNow().notNull(),
-});
+export const payments = pgTable(
+  "payments",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    resourceId: text("resource_id")
+      .notNull()
+      .references(() => resources.id),
+    payerAddress: text("payer_address").notNull(),
+    recipientAddress: text("recipient_address").notNull(),
+    amount: text("amount").notNull(), // USDC amount
+    paidAt: timestamp("paid_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    // Payment history is queried per payer wallet (#285).
+    payerAddressIdx: index("idx_payments_payer_address").on(table.payerAddress),
+  }),
+);

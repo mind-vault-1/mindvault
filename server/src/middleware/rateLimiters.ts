@@ -14,6 +14,7 @@ export const verifyIpRateLimit: RequestHandler = createIpRateLimiter(
   "verify",
   config.RATE_LIMIT_VERIFY_IP_MAX,
   config.RATE_LIMIT_VERIFY_IP_WINDOW_MS,
+  "verify_ip",
 );
 
 export const verifyWalletRateLimit: RequestHandler = createWalletRateLimiter(
@@ -22,6 +23,7 @@ export const verifyWalletRateLimit: RequestHandler = createWalletRateLimiter(
   config.RATE_LIMIT_VERIFY_WALLET_MAX,
   config.RATE_LIMIT_VERIFY_WALLET_WINDOW_MS,
   extractPayerFromPaymentHeader,
+  "verify_wallet",
 );
 
 export const publishIpRateLimit: RequestHandler = createIpRateLimiter(
@@ -29,6 +31,7 @@ export const publishIpRateLimit: RequestHandler = createIpRateLimiter(
   "publish",
   config.RATE_LIMIT_PUBLISH_IP_MAX,
   config.RATE_LIMIT_PUBLISH_IP_WINDOW_MS,
+  "publish_ip",
 );
 
 export const publishWalletRateLimit: RequestHandler = createWalletRateLimiter(
@@ -37,4 +40,5 @@ export const publishWalletRateLimit: RequestHandler = createWalletRateLimiter(
   config.RATE_LIMIT_PUBLISH_WALLET_MAX,
   config.RATE_LIMIT_PUBLISH_WALLET_WINDOW_MS,
   (req) => req.publisher?.walletAddress,
+  "publish_wallet",
 );

@@ -1,5 +1,16 @@
-import React from "react";
+import React, { useCallback, useId, useRef, useState } from "react";
 import type { CatalogFilters } from "../api/resources.js";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface SearchResult {
+  id: string;
+  title: string;
+  /** Optional secondary text shown below the title in the results list. */
+  subtitle?: string;
+}
 
 interface Props {
   filters: CatalogFilters;
@@ -7,15 +18,119 @@ interface Props {
   filtered: number;
   onChange: (filters: CatalogFilters) => void;
   onReset: () => void;
+  /** When provided, renders a keyboard-navigable results list below the search box. */
+  results?: SearchResult[];
+  /** Called when a result is activated (Enter key or click). */
+  onActivate?: (result: SearchResult) => void;
 }
 
-export function CatalogSearch({ filters, total, filtered, onChange, onReset }: Props) {
+// ---------------------------------------------------------------------------
+// CatalogSearch
+// ---------------------------------------------------------------------------
+
+export function CatalogSearch({
+  filters,
+  total,
+  filtered,
+  onChange,
+  onReset,
+  results,
+  onActivate,
+}: Props) {
   const hasActiveFilters =
     !!filters.search ||
     !!filters.minPrice ||
     !!filters.maxPrice ||
     (filters.verificationStatus && filters.verificationStatus !== "all") ||
     (filters.resourceType && filters.resourceType !== "all");
+
+  // ── Keyboard navigation state ──────────────────────────────────────────────
+
+  const listboxId = useId();
+  // Index of the currently focused result (-1 means none).
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const itemRefs = useRef<(HTMLLIElement | null)[]>([]);
+
+  const hasResults = results && results.length > 0;
+
+  // Reset the active index whenever the results list changes.
+  const prevResultsRef = useRef<SearchResult[] | undefined>(undefined);
+  if (results !== prevResultsRef.current) {
+    prevResultsRef.current = results;
+    // Only reset if there's a real change (avoids resetting on stable renders).
+    if (activeIndex !== -1) setActiveIndex(-1);
+  }
+
+  const moveActive = useCallback(
+    (delta: number, resultCount: number) => {
+      setActiveIndex((prev) => {
+        const next = prev + delta;
+        if (next < 0) return resultCount - 1;
+        if (next >= resultCount) return 0;
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (!hasResults) return;
+      const count = results!.length;
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveIndex((prev) => (prev + 1 >= count ? 0 : prev + 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveIndex((prev) => (prev - 1 < 0 ? count - 1 : prev - 1));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (activeIndex >= 0 && activeIndex < count) {
+          onActivate?.(results![activeIndex]);
+          setActiveIndex(-1);
+        }
+      } else if (e.key === "Escape") {
+        setActiveIndex(-1);
+      }
+    },
+    [hasResults, results, activeIndex, onActivate],
+  );
+
+  const handleItemKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLLIElement>, index: number, result: SearchResult) => {
+      const count = results?.length ?? 0;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = (index + 1) % count;
+        setActiveIndex(next);
+        itemRefs.current[next]?.focus();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (index === 0) {
+          setActiveIndex(-1);
+          inputRef.current?.focus();
+        } else {
+          const prev = index - 1;
+          setActiveIndex(prev);
+          itemRefs.current[prev]?.focus();
+        }
+      } else if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onActivate?.(result);
+        setActiveIndex(-1);
+        inputRef.current?.focus();
+      } else if (e.key === "Escape") {
+        setActiveIndex(-1);
+        inputRef.current?.focus();
+      }
+    },
+    [results, onActivate],
+  );
+
+  const activeDescendant =
+    hasResults && activeIndex >= 0 ? `${listboxId}-item-${activeIndex}` : undefined;
 
   return (
     <div className="mb-6 space-y-3">
@@ -39,13 +154,66 @@ export function CatalogSearch({ filters, total, filtered, onChange, onReset }: P
           </svg>
         </span>
         <input
+          ref={inputRef}
           type="search"
+          role={hasResults ? "combobox" : undefined}
           aria-label="Search resources"
+          aria-expanded={hasResults ? true : undefined}
+          aria-controls={hasResults ? listboxId : undefined}
+          aria-activedescendant={activeDescendant}
+          aria-autocomplete={hasResults ? "list" : undefined}
           placeholder="Search by title…"
           value={filters.search ?? ""}
           onChange={(e) => onChange({ ...filters, search: e.target.value })}
+          onKeyDown={handleInputKeyDown}
           className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-4 text-sm text-gray-900 placeholder-gray-400 shadow-sm focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-500 dark:focus:border-indigo-500 dark:focus:ring-indigo-800"
         />
+
+        {/* Keyboard-navigable results list (#311) */}
+        {hasResults && (
+          <ul
+            id={listboxId}
+            role="listbox"
+            aria-label="Search results"
+            className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800"
+          >
+            {results!.map((result, index) => {
+              const isActive = index === activeIndex;
+              const itemId = `${listboxId}-item-${index}`;
+              return (
+                <li
+                  key={result.id}
+                  id={itemId}
+                  ref={(el) => {
+                    itemRefs.current[index] = el;
+                  }}
+                  role="option"
+                  aria-selected={isActive}
+                  tabIndex={isActive ? 0 : -1}
+                  onKeyDown={(e) => handleItemKeyDown(e, index, result)}
+                  onClick={() => {
+                    onActivate?.(result);
+                    setActiveIndex(-1);
+                    inputRef.current?.focus();
+                  }}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  className={`cursor-pointer select-none px-4 py-2 text-sm transition-colors ${
+                    isActive
+                      ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300"
+                      : "text-gray-900 hover:bg-gray-50 dark:text-gray-100 dark:hover:bg-gray-700"
+                  }`}
+                >
+                  <span className="block font-medium">{result.title}</span>
+                  {result.subtitle && (
+                    <span className="block text-xs text-gray-500 dark:text-gray-400">
+                      {result.subtitle}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
 
       {/* Filter row */}

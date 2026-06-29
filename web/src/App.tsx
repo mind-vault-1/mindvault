@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { EditPriceModal } from "./components/EditPriceModal.js";
 import { TransferOwnershipModal } from "./components/TransferOwnershipModal.js";
 import { RegisterModal } from "./components/RegisterModal.js";
@@ -22,6 +23,7 @@ import { useCatalog } from "./hooks/useCatalog.js";
 import { useWalletConnection } from "./hooks/useWalletConnection.js";
 import { fetchRegistryStatus } from "./api/resources.js";
 import { CatalogStaleBanner } from "./components/CatalogStaleBanner.js";
+import { LanguageSwitcher } from "./components/LanguageSwitcher.js";
 import type { CatalogFilters } from "./api/resources.js";
 
 interface Resource {
@@ -65,8 +67,10 @@ export default function App() {
   const [overrides, setOverrides] = useState<Record<string, Partial<Resource>>>({});
   const [tab, setTab] = useState<Tab>("catalog");
   const [showPublish, setShowPublish] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const wallet = useWalletConnection();
+  const { t } = useTranslation();
 
   // ── Public catalog fetch ──────────────────────────────────────────────────
   // Always the public listing, independent of API_KEY — owned resources have
@@ -95,10 +99,10 @@ export default function App() {
   async function handleCopyUrl(url: string) {
     try {
       await navigator.clipboard.writeText(url);
-      setToast({ message: "Resource URL copied to clipboard" });
+      setToast({ message: t("catalog.copied_toast") });
     } catch {
       setToast({
-        message: "Clipboard unavailable — copy the URL below:",
+        message: t("catalog.clipboard_fallback"),
         fallbackUrl: url,
       });
     }
@@ -127,11 +131,20 @@ export default function App() {
   const isLoading = resourcesStatus === "idle" || resourcesStatus === "loading";
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8 dark:bg-gray-900">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      {/* ── Skip to content link ───────────────────────────────────────────── */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-indigo-600 focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+      >
+        Skip to main content
+      </a>
+
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="p-8">
+      <header className="mb-6 flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">MindVault</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{t("app.title")}</h1>
           {registryStatus === "error" ? (
             <div className="flex items-center gap-1.5 text-sm text-amber-600 dark:text-amber-400">
               <svg
@@ -149,7 +162,7 @@ export default function App() {
                   d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
                 />
               </svg>
-              <span>Registry status unavailable</span>
+              <span>{t("app.registry_unavailable")}</span>
               <button
                 onClick={retryRegistry}
                 className="ml-1 text-xs font-medium underline hover:no-underline"
@@ -168,55 +181,174 @@ export default function App() {
           ) : null}
         </div>
         <div className="flex items-center gap-2">
-          <TabButton active={tab === "catalog"} onClick={() => setTab("catalog")}>
-            Catalog
-          </TabButton>
-          <TabButton active={tab === "purchases"} onClick={() => setTab("purchases")}>
-            Purchases
-          </TabButton>
-          <TabButton active={tab === "leaderboard"} onClick={() => setTab("leaderboard")}>
-            Leaderboard
-          </TabButton>
-          <TabButton active={tab === "agent"} onClick={() => setTab("agent")}>
-            Agent
-          </TabButton>
-          {API_KEY && (
-            <>
-              <TabButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
-                Dashboard
-              </TabButton>
-              <TabButton active={tab === "analytics"} onClick={() => setTab("analytics")}>
-                My Analytics
-              </TabButton>
-              <button
-                onClick={() => setShowPublish(true)}
-                className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
-              >
-                Publish
-              </button>
-            </>
-          )}
-          <WalletButton wallet={wallet} />
+          {/* Mobile menu button */}
           <button
-            onClick={toggleTheme}
-            aria-label="Toggle light/dark theme"
-            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-            className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-menu"
+            aria-label="Toggle navigation menu"
+            className="lg:hidden rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
           >
-            {theme === "dark" ? "☀️ Light" : "🌙 Dark"}
+            {mobileMenuOpen ? (
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            )}
           </button>
-        </div>
-      </div>
 
-      {/* ── Leaderboard tab ────────────────────────────────────────────────── */}
+          {/* Desktop navigation */}
+          <div className="hidden lg:flex items-center gap-2">
+            <TabButton active={tab === "catalog"} onClick={() => setTab("catalog")}>
+              {t("app.tab_catalog")}
+            </TabButton>
+            <TabButton active={tab === "purchases"} onClick={() => setTab("purchases")}>
+              {t("app.tab_purchases")}
+            </TabButton>
+            <TabButton active={tab === "leaderboard"} onClick={() => setTab("leaderboard")}>
+              {t("app.tab_leaderboard")}
+            </TabButton>
+            <TabButton active={tab === "agent"} onClick={() => setTab("agent")}>
+              {t("app.tab_agent")}
+            </TabButton>
+            {API_KEY && (
+              <>
+                <TabButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
+                  {t("app.tab_dashboard")}
+                </TabButton>
+                <TabButton active={tab === "analytics"} onClick={() => setTab("analytics")}>
+                  {t("app.tab_analytics")}
+                </TabButton>
+                <button
+                  onClick={() => setShowPublish(true)}
+                  className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+                >
+                  {t("app.publish")}
+                </button>
+              </>
+            )}
+            <WalletButton wallet={wallet} />
+            <LanguageSwitcher />
+            <button
+              onClick={toggleTheme}
+              aria-label="Toggle light/dark theme"
+              title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+            >
+              {theme === "dark" ? `☀️ ${t("app.theme_light")}` : `🌙 ${t("app.theme_dark")}`}
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile menu */}
+        {mobileMenuOpen && (
+          <nav
+            id="mobile-menu"
+            className="lg:hidden mt-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800"
+            role="navigation"
+            aria-label="Main navigation"
+          >
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => { setTab("catalog"); setMobileMenuOpen(false); }}
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-left transition-colors ${
+                  tab === "catalog"
+                    ? "bg-indigo-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                }`}
+              >
+                {t("app.tab_catalog")}
+              </button>
+              <button
+                onClick={() => { setTab("purchases"); setMobileMenuOpen(false); }}
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-left transition-colors ${
+                  tab === "purchases"
+                    ? "bg-indigo-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                }`}
+              >
+                {t("app.tab_purchases")}
+              </button>
+              <button
+                onClick={() => { setTab("leaderboard"); setMobileMenuOpen(false); }}
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-left transition-colors ${
+                  tab === "leaderboard"
+                    ? "bg-indigo-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                }`}
+              >
+                {t("app.tab_leaderboard")}
+              </button>
+              <button
+                onClick={() => { setTab("agent"); setMobileMenuOpen(false); }}
+                className={`rounded-lg px-4 py-2 text-sm font-medium text-left transition-colors ${
+                  tab === "agent"
+                    ? "bg-indigo-600 text-white"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                }`}
+              >
+                {t("app.tab_agent")}
+              </button>
+              {API_KEY && (
+                <>
+                  <button
+                    onClick={() => { setTab("dashboard"); setMobileMenuOpen(false); }}
+                    className={`rounded-lg px-4 py-2 text-sm font-medium text-left transition-colors ${
+                      tab === "dashboard"
+                        ? "bg-indigo-600 text-white"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                    }`}
+                  >
+                    {t("app.tab_dashboard")}
+                  </button>
+                  <button
+                    onClick={() => { setTab("analytics"); setMobileMenuOpen(false); }}
+                    className={`rounded-lg px-4 py-2 text-sm font-medium text-left transition-colors ${
+                      tab === "analytics"
+                        ? "bg-indigo-600 text-white"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                    }`}
+                  >
+                    {t("app.tab_analytics")}
+                  </button>
+                  <button
+                    onClick={() => { setShowPublish(true); setMobileMenuOpen(false); }}
+                    className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                  >
+                    {t("app.publish")}
+                  </button>
+                </>
+              )}
+              <div className="flex items-center gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                <WalletButton wallet={wallet} />
+                <LanguageSwitcher />
+                <button
+                  onClick={toggleTheme}
+                  aria-label="Toggle light/dark theme"
+                  title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+                  className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  {theme === "dark" ? `☀️ ${t("app.theme_light")}` : `🌙 ${t("app.theme_dark")}`}
+                </button>
+              </div>
+            </div>
+          </nav>
+        )}
+      </header>
+
+      {/* ── Main content ───────────────────────────────────────────────────── */}
+      <main id="main-content">
       {tab === "leaderboard" && (
         <div className="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="border-b border-gray-200 px-6 py-4 dark:border-gray-700">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-              Creator Leaderboard
+              {t("leaderboard.title")}
             </h2>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Top creators ranked by total USDC earned
+              {t("leaderboard.description")}
             </p>
           </div>
           <Leaderboard />
@@ -239,10 +371,10 @@ export default function App() {
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <div className="border-b border-gray-200 pb-4 dark:border-gray-700">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-              Verification Agent
+              {t("agent.title")}
             </h2>
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Live stats and activity for the MindVault originality-verification agent
+              {t("agent.description")}
             </p>
           </div>
           <AgentStatusPage />
@@ -293,12 +425,12 @@ export default function App() {
                 filters.minPrice ||
                 filters.maxPrice) ? (
                 <div className="col-span-full py-12 text-center text-sm text-gray-400 dark:text-gray-500">
-                  No resources match your filters.{" "}
+                  {t("catalog.no_matches")}{" "}
                   <button
                     onClick={() => setFilters(DEFAULT_FILTERS)}
                     className="text-indigo-500 underline hover:text-indigo-700 dark:text-indigo-400"
                   >
-                    Clear filters
+                    {t("catalog.clear_filters")}
                   </button>
                 </div>
               ) : filteredResources.length === 0 ? (
@@ -327,11 +459,10 @@ export default function App() {
                   </div>
                   <div className="max-w-sm space-y-1">
                     <p className="text-base font-semibold text-gray-700 dark:text-gray-200">
-                      The catalog is empty
+                      {t("catalog.empty_title")}
                     </p>
                     <p className="text-sm text-gray-400 dark:text-gray-500">
-                      No resources have been published yet. Be the first to share yours with the
-                      world.
+                      {t("catalog.empty_description")}
                     </p>
                   </div>
                   <a
@@ -340,7 +471,7 @@ export default function App() {
                     rel="noopener noreferrer"
                     className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:bg-indigo-500 dark:hover:bg-indigo-600"
                   >
-                    Publish a resource
+                    {t("catalog.publish_cta")}
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
                       className="h-3.5 w-3.5"
@@ -525,6 +656,7 @@ export default function App() {
           onDismiss={() => setToast(null)}
         />
       )}
+      </main>
     </div>
   );
 }

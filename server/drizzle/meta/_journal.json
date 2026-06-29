@@ -29,6 +29,27 @@
       "when": 1779918493871,
       "tag": "0003_striped_ultragirl",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780000000000,
+      "tag": "0004_catalog_filter_sort_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780100000000,
+      "tag": "0005_resource_payment_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780100000001,
+      "tag": "0006_verification_token_usage",
+      "breakpoints": true
     }
   ]
 }

@@ -12,7 +12,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -20,7 +20,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Cache Cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -36,7 +36,7 @@ jobs:
         run: cargo build --target wasm32-unknown-unknown --release
 
       - name: Upload wasm artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: vault-registry-wasm
           path: contract/target/wasm32-unknown-unknown/release/*.wasm

@@ -164,6 +164,22 @@ lives in [`.github/labels.yml`](.github/labels.yml) and the full triage guide is
 in [`docs/LABELS.md`](docs/LABELS.md). Browse the `good first issue` and current
 `wave:` labels to find a starting point.
 
+## Releases
+
+MindVault uses automated releases powered by [release-please](https://github.com/google-github-actions/release-please-action). Releases are triggered automatically when commits following [Conventional Commits](https://www.conventionalcommits.org/) are merged to `main`.
+
+- **feat:** triggers a minor version bump (e.g., 1.0.0 → 1.1.0)
+- **fix:** triggers a patch version bump (e.g., 1.0.0 → 1.0.1)
+- **chore:** and other types do not trigger version bumps
+
+The release workflow:
+1. Detects new commits on `main`
+2. Determines the next semantic version based on commit types
+3. Creates a git tag and GitHub release
+4. Generates/updates `CHANGELOG.md` with release notes
+
+No manual release steps are required—just follow the Conventional Commits format for your PR titles and commit messages.
+
 ## Security
 
 - Never commit secrets. Only `*.env.example` files belong in git.

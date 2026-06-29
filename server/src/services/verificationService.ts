@@ -8,10 +8,49 @@ const client = new OpenAIClient({
   apiKey: config.OPENROUTER_API_KEY,
 });
 
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  // Estimated spend for this call in USD, derived from the configured per-token
+  // pricing for the active OpenRouter model (#283).
+  estimatedCostUsd: number;
+}
+
 export interface VerificationResult {
   isOriginal: boolean;
   confidence: number;
   flags: string[];
+  usage: TokenUsage;
+}
+
+const ZERO_USAGE: TokenUsage = {
+  promptTokens: 0,
+  completionTokens: 0,
+  totalTokens: 0,
+  estimatedCostUsd: 0,
+};
+
+/** Estimate the USD cost of a verification from its prompt/completion tokens. */
+export function estimateCostUsd(promptTokens: number, completionTokens: number): number {
+  const cost =
+    (promptTokens / 1_000_000) * config.VERIFICATION_PROMPT_COST_PER_1M +
+    (completionTokens / 1_000_000) * config.VERIFICATION_COMPLETION_COST_PER_1M;
+  // Avoid noisy floating point tails; sub-cent precision is plenty here.
+  return Number(cost.toFixed(8));
+}
+
+function toUsage(
+  raw: { prompt_tokens?: number; completion_tokens?: number } | undefined,
+): TokenUsage {
+  const promptTokens = raw?.prompt_tokens ?? 0;
+  const completionTokens = raw?.completion_tokens ?? 0;
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: promptTokens + completionTokens,
+    estimatedCostUsd: estimateCostUsd(promptTokens, completionTokens),
+  };
 }
 
 export async function checkOriginality(
@@ -56,9 +95,16 @@ Respond with JSON only.`,
     ],
   });
 
+  const usage = toUsage(response.usage);
+
   const text = response.choices[0]?.message?.content?.trim();
   if (!text) {
-    return { isOriginal: false, confidence: 0, flags: ["No response from verification model"] };
+    return {
+      isOriginal: false,
+      confidence: 0,
+      flags: ["No response from verification model"],
+      usage,
+    };
   }
 
   try {
@@ -69,8 +115,16 @@ Respond with JSON only.`,
       isOriginal: Boolean(parsed.is_original),
       confidence: Number(parsed.confidence) || 0,
       flags: Array.isArray(parsed.flags) ? parsed.flags : [],
+      usage,
     };
   } catch {
-    return { isOriginal: false, confidence: 0, flags: ["Failed to parse verification response"] };
+    return {
+      isOriginal: false,
+      confidence: 0,
+      flags: ["Failed to parse verification response"],
+      usage,
+    };
   }
 }
+
+export { ZERO_USAGE };

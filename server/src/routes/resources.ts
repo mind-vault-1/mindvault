@@ -199,6 +199,9 @@ router.get("/resources/:id/meta", async (req, res) => {
   res.json({
     ...meta,
     accessUrl: `${config.BASE_URL}/resources/${meta.id}`,
+    ...(meta.mimeType?.startsWith("image/")
+      ? { thumbnailUrl: `${config.BASE_URL}/resources/${meta.id}/thumbnail` }
+      : {}),
   });
 });
 
@@ -210,6 +213,27 @@ router.get("/resources/:id/verification", async (req, res) => {
     return;
   }
   res.json(details);
+});
+
+// GET /resources/:id/thumbnail — resource thumbnail (public)
+router.get("/resources/:id/thumbnail", async (req, res) => {
+  const resource = await getResourceById(req.params.id as string);
+  if (!resource || !resource.storagePath || !resource.mimeType?.startsWith("image/")) {
+    res.status(404).json({ error: "Thumbnail not found" });
+    return;
+  }
+
+  const filename = resource.storagePath.split("/").pop();
+  const thumbStoragePath = `${resource.id}/thumb_${filename}`;
+
+  try {
+    const { buffer, mimeType } = await downloadFile(thumbStoragePath);
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Cache-Control", "public, max-age=31536000");
+    res.send(buffer);
+  } catch (err) {
+    res.status(404).json({ error: "Thumbnail not found" });
+  }
 });
 
 // GET /resources/:id — access resource (x402 paywalled)

@@ -1,12 +1,13 @@
 import { Router, type Router as RouterType } from "express";
 import { paymentMiddleware } from "@x402/express";
 import type { RoutesConfig } from "@x402/core/server";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { resources, verifications } from "../db/schema.js";
 import { checkOriginality } from "../services/verificationService.js";
 
 import { config } from "../config.js";
+import { getLogger } from "../lib/logger.js";
 import { network, sharedX402ResourceServer } from "../lib/x402.js";
 import { verifyIpRateLimit, verifyWalletRateLimit } from "../middleware/rateLimiters.js";
 import { validate } from "../middleware/validate.js";
@@ -39,6 +40,22 @@ router.post(
     const { content, resourceId } = req.body;
 
     const result = await checkOriginality(content, "text");
+    const { usage } = result;
+
+    // Structured usage log so verification spend is visible (#283). No content
+    // or secrets are logged — only token counts and the estimated cost.
+    getLogger().info(
+      {
+        event: "verification_usage",
+        resourceId: resourceId ?? null,
+        model: config.OPENROUTER_MODEL,
+        promptTokens: usage.promptTokens,
+        completionTokens: usage.completionTokens,
+        totalTokens: usage.totalTokens,
+        estimatedCostUsd: usage.estimatedCostUsd,
+      },
+      "verification token usage",
+    );
 
     // If a resourceId is provided, save the verification result
     if (resourceId) {
@@ -49,6 +66,10 @@ router.post(
           isOriginal: result.isOriginal,
           confidence: result.confidence,
           flags: JSON.stringify(result.flags),
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          totalTokens: usage.totalTokens,
+          estimatedCost: usage.estimatedCostUsd.toString(),
         })
         .returning();
 
@@ -77,30 +98,36 @@ router.get("/agent/status", async (_req, res) => {
       isOriginal: verifications.isOriginal,
       confidence: verifications.confidence,
       flags: verifications.flags,
+      promptTokens: verifications.promptTokens,
+      completionTokens: verifications.completionTokens,
+      totalTokens: verifications.totalTokens,
+      estimatedCost: verifications.estimatedCost,
       checkedAt: verifications.checkedAt,
     })
     .from(verifications)
     .orderBy(desc(verifications.checkedAt));
 
-  // Get resource titles for recent activity
-  const recentWithTitles = await Promise.all(
-    allVerifications.slice(0, 10).map(async (v) => {
-      const resource = await db
-        .select({ title: resources.title })
-        .from(resources)
-        .where(eq(resources.id, v.resourceId))
-        .then((rows) => rows[0]);
+  // Get resource titles for recent activity in a single batched query
+  const recentVerifications = allVerifications.slice(0, 10);
+  const recentResourceIds = [...new Set(recentVerifications.map((v) => v.resourceId))];
 
-      return {
-        id: v.id,
-        resourceTitle: resource?.title || "Unknown",
-        isOriginal: v.isOriginal,
-        confidence: v.confidence,
-        flags: v.flags ? JSON.parse(v.flags) : [],
-        checkedAt: v.checkedAt,
-      };
-    }),
-  );
+  const titleRows =
+    recentResourceIds.length > 0
+      ? await db
+          .select({ id: resources.id, title: resources.title })
+          .from(resources)
+          .where(inArray(resources.id, recentResourceIds))
+      : [];
+  const titleById = new Map(titleRows.map((r) => [r.id, r.title]));
+
+  const recentWithTitles = recentVerifications.map((v) => ({
+    id: v.id,
+    resourceTitle: titleById.get(v.resourceId) || "Unknown",
+    isOriginal: v.isOriginal,
+    confidence: v.confidence,
+    flags: v.flags ? JSON.parse(v.flags) : [],
+    checkedAt: v.checkedAt,
+  }));
 
   const totalVerifications = allVerifications.length;
   const verified = allVerifications.filter((v) => v.isOriginal).length;
@@ -111,6 +138,18 @@ router.get("/agent/status", async (_req, res) => {
     totalVerifications > 0
       ? allVerifications.reduce((sum, v) => sum + v.confidence, 0) / totalVerifications
       : 0;
+
+  // Aggregate model token usage + estimated spend across all verifications (#283).
+  const totalPromptTokens = allVerifications.reduce((sum, v) => sum + (v.promptTokens ?? 0), 0);
+  const totalCompletionTokens = allVerifications.reduce(
+    (sum, v) => sum + (v.completionTokens ?? 0),
+    0,
+  );
+  const totalTokens = allVerifications.reduce((sum, v) => sum + (v.totalTokens ?? 0), 0);
+  const totalEstimatedCost = allVerifications.reduce(
+    (sum, v) => sum + (v.estimatedCost ? Number(v.estimatedCost) : 0),
+    0,
+  );
 
   res.json({
     agent: {
@@ -128,6 +167,13 @@ router.get("/agent/status", async (_req, res) => {
       rejected,
       totalEarned: totalEarned.toFixed(4),
       avgConfidence: avgConfidence.toFixed(2),
+    },
+    usage: {
+      totalPromptTokens,
+      totalCompletionTokens,
+      totalTokens,
+      estimatedCostUsd: totalEstimatedCost.toFixed(6),
+      model: config.OPENROUTER_MODEL,
     },
     recentActivity: recentWithTitles,
   });

@@ -1,0 +1,24 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google-github-actions/release-please-action@v4
+        with:
+          release-type: node
+          package-name: mindvault
+          extra-files: |
+            package.json
+            server/package.json
+            web/package.json
+            mcp/package.json
+            packages/registry-client/package.json

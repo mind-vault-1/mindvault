@@ -42,7 +42,7 @@ vi.mock("@mindvault/registry-client", async (importOriginal) => {
   };
 });
 
-import { browse, search, preview, txStatus } from "./index.js";
+import { browse, search, preview, txStatus, buy, registerOnchain, _setAgentWallet, _setAgentApiKey } from "./index.js";
 
 function mockResponse(data: unknown, ok = true, status = 200): Response {
   const body = JSON.stringify(data);
@@ -356,5 +356,372 @@ describe("txStatus", () => {
         body: expect.stringContaining("getTransaction"),
       }),
     );
+  });
+});
+
+// ── mindvault_buy (#313) ────────────────────────────────────────────────────
+
+const testWallet = { publicKey: "GPUB...TEST", secretKey: "SECRET...KEY" };
+
+describe("buy – happy path (402 → sign → retry → success)", () => {
+  beforeEach(() => {
+    _setAgentWallet(testWallet);
+    _setAgentApiKey(null);
+  });
+
+  afterEach(() => {
+    _setAgentWallet(null);
+    _setAgentApiKey(null);
+    vi.restoreAllMocks();
+  });
+
+  it("returns parsed resource JSON on a successful paid fetch", async () => {
+    const resourceData = {
+      id: "res-001",
+      title: "Introduction to Stellar",
+      price: "5.00",
+      accessUrl: "https://example.com/stellar-intro",
+    };
+
+    // mock: meta fetch (balance check) → balance covers price
+    // mock: Horizon balance check → sufficient balance
+    // mock: paid fetch → success
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/accounts/")) {
+        // Horizon balance: enough USDC
+        return Promise.resolve(
+          mockResponse({
+            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+          }),
+        );
+      }
+      if (u.includes("/meta")) {
+        return Promise.resolve(mockResponse({ ...resourceData, price: "5.00", title: "Introduction to Stellar" }));
+      }
+      // The paid fetch to access the resource
+      return Promise.resolve(mockResponse(resourceData));
+    });
+
+    // wrapFetchWithPayment should return a fetch that eventually succeeds
+    const { wrapFetchWithPayment } = await import("@x402/fetch");
+    vi.mocked(wrapFetchWithPayment).mockImplementation(() => {
+      return (_url: any, _init?: any) => Promise.resolve(mockResponse(resourceData));
+    });
+
+    const result = await buy("res-001");
+    const parsed = JSON.parse(result);
+    expect(parsed).toHaveProperty("id", "res-001");
+    expect(parsed).toHaveProperty("title", "Introduction to Stellar");
+  });
+
+  it("returns an insufficient-funds message when wallet balance is too low", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/accounts/")) {
+        // Horizon: insufficient balance
+        return Promise.resolve(
+          mockResponse({
+            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "1.00" }],
+          }),
+        );
+      }
+      if (u.includes("/meta")) {
+        return Promise.resolve(
+          mockResponse({ id: "res-001", title: "Intro to Stellar", price: "50.00" }),
+        );
+      }
+      return Promise.resolve(mockResponse({}, false, 402));
+    });
+
+    const result = await buy("res-001");
+    expect(result).toContain("Insufficient USDC");
+    expect(result).toContain("50 USDC");
+    expect(result).toContain("1 USDC");
+    expect(result).toContain("shortfall" || "Shortfall");
+  });
+
+  it("throws when the paid fetch fails (non-ok response)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/accounts/")) {
+        return Promise.resolve(
+          mockResponse({
+            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "999.00" }],
+          }),
+        );
+      }
+      if (u.includes("/meta")) {
+        return Promise.resolve(mockResponse({ id: "res-001", title: "Doc", price: "5.00" }));
+      }
+      return Promise.resolve(mockResponse({ error: "payment rejected" }, false, 402));
+    });
+
+    const { wrapFetchWithPayment } = await import("@x402/fetch");
+    vi.mocked(wrapFetchWithPayment).mockImplementation(() => {
+      return (_url: any, _init?: any) =>
+        Promise.resolve(mockResponse({ error: "payment rejected" }, false, 402));
+    });
+
+    await expect(buy("res-001")).rejects.toThrow("Buy failed");
+  });
+
+  it("throws when no wallet is configured", async () => {
+    _setAgentWallet(null);
+    await expect(buy("res-001")).rejects.toThrow("No wallet");
+  });
+});
+
+describe("buy – output shape for agent consumption", () => {
+  beforeEach(() => {
+    _setAgentWallet(testWallet);
+  });
+
+  afterEach(() => {
+    _setAgentWallet(null);
+    vi.restoreAllMocks();
+  });
+
+  it("output is valid JSON with the resource fields", async () => {
+    const resourcePayload = {
+      id: "res-007",
+      title: "Zero-knowledge Proofs",
+      price: "20.00",
+      accessUrl: "https://example.com/zkp",
+      contentUrl: "https://paywall.example.com/content/res-007",
+    };
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/accounts/")) {
+        return Promise.resolve(
+          mockResponse({
+            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+          }),
+        );
+      }
+      return Promise.resolve(mockResponse(resourcePayload));
+    });
+
+    const { wrapFetchWithPayment } = await import("@x402/fetch");
+    vi.mocked(wrapFetchWithPayment).mockImplementation(() => {
+      return () => Promise.resolve(mockResponse(resourcePayload));
+    });
+
+    const result = await buy("res-007");
+    // Output must be parseable JSON – agents rely on this.
+    expect(() => JSON.parse(result)).not.toThrow();
+    const parsed = JSON.parse(result);
+    expect(parsed).toHaveProperty("id");
+    expect(parsed).toHaveProperty("accessUrl");
+  });
+});
+
+// ── mindvault_register_onchain (#313) ───────────────────────────────────────
+
+describe("registerOnchain – happy path", () => {
+  beforeEach(() => {
+    _setAgentWallet(testWallet);
+    _setAgentApiKey("test-api-key");
+  });
+
+  afterEach(() => {
+    _setAgentWallet(null);
+    _setAgentApiKey(null);
+    vi.restoreAllMocks();
+  });
+
+  it("returns a success message with on-chain tx hash", async () => {
+    const unsignedXdr = "AAAAAQAAAAD...unsigned";
+    const txHash = "abc123txhash";
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((url, init) => {
+      const u = String(url);
+      if (u.includes("/register/prepare")) {
+        return Promise.resolve(
+          mockResponse({
+            unsignedXdr,
+            networkPassphrase: "Test SDF Network ; September 2015",
+          }),
+        );
+      }
+      if (u.includes("/register")) {
+        return Promise.resolve(
+          mockResponse({ onchainStatus: "registered", txHash }),
+        );
+      }
+      return Promise.resolve(mockResponse({}));
+    });
+
+    // Mock stellar-sdk Transaction + Keypair signing
+    vi.doMock("@stellar/stellar-sdk", () => ({
+      Keypair: {
+        fromSecret: vi.fn().mockReturnValue({ sign: vi.fn() }),
+      },
+      Transaction: vi.fn().mockImplementation(() => ({
+        sign: vi.fn(),
+        toXDR: vi.fn().mockReturnValue("AAAAAQAAAAD...signed"),
+      })),
+    }));
+
+    const result = await registerOnchain("res-001");
+    expect(result).toContain("registered");
+    expect(result).toContain("res-001");
+  });
+
+  it("throws when no wallet is configured", async () => {
+    _setAgentWallet(null);
+    await expect(registerOnchain("res-001")).rejects.toThrow("No wallet");
+  });
+
+  it("throws when no API key is configured", async () => {
+    _setAgentApiKey(null);
+    await expect(registerOnchain("res-001")).rejects.toThrow("Not registered");
+  });
+
+  it("throws when resourceId is empty", async () => {
+    await expect(registerOnchain("")).rejects.toThrow("resourceId is required");
+  });
+});
+
+describe("registerOnchain – error and retry messaging", () => {
+  beforeEach(() => {
+    _setAgentWallet(testWallet);
+    _setAgentApiKey("test-api-key");
+  });
+
+  afterEach(() => {
+    _setAgentWallet(null);
+    _setAgentApiKey(null);
+    vi.restoreAllMocks();
+  });
+
+  it("throws with actionable message when resource is not verified (400)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      if (String(url).includes("/register/prepare")) {
+        return Promise.resolve(
+          mockResponse({ error: "Resource must be verified first" }, false, 400),
+        );
+      }
+      return Promise.resolve(mockResponse({}));
+    });
+
+    const err = await registerOnchain("res-unverified").catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain("400");
+    expect(err.message).toContain("verified");
+  });
+
+  it("throws with actionable message when resource is already registered (409)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      if (String(url).includes("/register/prepare")) {
+        return Promise.resolve(
+          mockResponse({ error: "Already registered" }, false, 409),
+        );
+      }
+      return Promise.resolve(mockResponse({}));
+    });
+
+    const err = await registerOnchain("res-already").catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain("already registered");
+  });
+
+  it("throws with actionable message when prepare lacks unsignedXdr", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      if (String(url).includes("/register/prepare")) {
+        return Promise.resolve(mockResponse({ networkPassphrase: "Test" }));
+      }
+      return Promise.resolve(mockResponse({}));
+    });
+
+    const err = await registerOnchain("res-001").catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain("unsigned transaction");
+  });
+
+  it("throws with tx hash hint when submission fails", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/register/prepare")) {
+        return Promise.resolve(
+          mockResponse({
+            unsignedXdr: "AAAAAQ...xdr",
+            networkPassphrase: "Test SDF Network ; September 2015",
+          }),
+        );
+      }
+      if (u.includes("/register")) {
+        return Promise.resolve(
+          mockResponse({ detail: "node timeout", txHash: "failhash123" }, false, 504),
+        );
+      }
+      return Promise.resolve(mockResponse({}));
+    });
+
+    vi.doMock("@stellar/stellar-sdk", () => ({
+      Keypair: {
+        fromSecret: vi.fn().mockReturnValue({ sign: vi.fn() }),
+      },
+      Transaction: vi.fn().mockImplementation(() => ({
+        sign: vi.fn(),
+        toXDR: vi.fn().mockReturnValue("AAAAAQ...signed"),
+      })),
+    }));
+
+    const err = await registerOnchain("res-timeout").catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain("504");
+    expect(err.message).toContain("remains listed");
+  });
+
+  it("throws with ownership error message (403)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      if (String(url).includes("/register/prepare")) {
+        return Promise.resolve(
+          mockResponse({ error: "Not the owner" }, false, 403),
+        );
+      }
+      return Promise.resolve(mockResponse({}));
+    });
+
+    const err = await registerOnchain("res-other").catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toContain("different publisher");
+  });
+
+  it("output shape is valid for agent consumption on success", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/register/prepare")) {
+        return Promise.resolve(
+          mockResponse({
+            unsignedXdr: "AAAAAQ...xdr",
+            networkPassphrase: "Test SDF Network ; September 2015",
+          }),
+        );
+      }
+      if (u.includes("/register")) {
+        return Promise.resolve(
+          mockResponse({ onchainStatus: "registered", txHash: "goodhash456" }),
+        );
+      }
+      return Promise.resolve(mockResponse({}));
+    });
+
+    vi.doMock("@stellar/stellar-sdk", () => ({
+      Keypair: { fromSecret: vi.fn().mockReturnValue({ sign: vi.fn() }) },
+      Transaction: vi.fn().mockImplementation(() => ({
+        sign: vi.fn(),
+        toXDR: vi.fn().mockReturnValue("AAAAAQ...signed"),
+      })),
+    }));
+
+    const result = await registerOnchain("res-success");
+    // Output is a multi-line human-readable string (not JSON) that the agent
+    // can parse to determine next steps.
+    expect(typeof result).toBe("string");
+    expect(result).toContain("registered");
+    expect(result).toContain("res-success");
   });
 });

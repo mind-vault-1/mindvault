@@ -55,8 +55,20 @@ const envSchema = z.object({
     .string()
     .min(1, "REGISTRY_SECRET_KEY (deployer / owner secret) is required"),
 
+  // Metrics endpoint token — if set, requests to /metrics must supply it via
+  // Bearer auth or ?token=. If unset, the endpoint is disabled.
+  METRICS_TOKEN: z.string().optional(),
+
+  // Sentry error tracking — when DSN is set, unhandled errors are reported.
+  SENTRY_DSN: z.string().url().optional(),
+
   // Verification
   VERIFICATION_PRICE: z.string().default("0.10"),
+  // OpenRouter token pricing (USD per 1M tokens) used to estimate the cost of
+  // each verification (#283). Defaults track anthropic/claude-sonnet-4 list
+  // pricing; override per model if you change OPENROUTER_MODEL.
+  VERIFICATION_PROMPT_COST_PER_1M: z.coerce.number().nonnegative().default(3),
+  VERIFICATION_COMPLETION_COST_PER_1M: z.coerce.number().nonnegative().default(15),
 
   // Rate limiting (verify-content + publish)
   RATE_LIMIT_VERIFY_IP_MAX: z.coerce.number().default(10),

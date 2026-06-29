@@ -100,7 +100,7 @@ All env vars are optional — the defaults point to the hosted testnet backend:
 
 An agent can set up a wallet, register as a publisher, publish a resource (paying for verification), and then another agent can discover and buy that resource. The full agent-to-agent economy runs through x402.
 
-For a copy-pasteable, end-to-end agent session — wallet setup → register → publish → browse → buy — see **[docs/mcp-quickstart.md](docs/mcp-quickstart.md)**.
+For a copy-pasteable, end-to-end agent session — wallet setup → register → publish → browse → buy — see **[docs/mcp-quickstart.md](docs/mcp-quickstart.md)**. For a step-by-step demo with example outputs for every tool call, see **[docs/mcp-agent-to-agent-demo.md](docs/mcp-agent-to-agent-demo.md)**.
 
 ## Project Structure
 

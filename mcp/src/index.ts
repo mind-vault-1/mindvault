@@ -83,6 +83,17 @@ interface PersistedState {
 let agentWallet: AgentWallet | null = null;
 let agentApiKey: string | null = null;
 
+/**
+ * Test-only helpers — not part of the public tool surface.
+ * Allow unit tests to seed module-level state without touching the filesystem.
+ */
+export function _setAgentWallet(w: AgentWallet | null): void {
+  agentWallet = w;
+}
+export function _setAgentApiKey(k: string | null): void {
+  agentApiKey = k;
+}
+
 function loadState(): void {
   if (!existsSync(STATE_FILE)) return;
   try {
@@ -500,7 +511,7 @@ async function publish(args: {
     .join("\n");
 }
 
-async function buy(resourceId: string): Promise<string> {
+export async function buy(resourceId: string): Promise<string> {
   const wallet = requireWallet();
 
   // Check the wallet can cover the price before attempting payment so a
@@ -533,7 +544,7 @@ async function buy(resourceId: string): Promise<string> {
  * register transaction (owner-only), signs it with the agent wallet — which is
  * the resource creator for agent-published resources — and submits it.
  */
-async function registerOnchain(resourceId: string): Promise<string> {
+export async function registerOnchain(resourceId: string): Promise<string> {
   const wallet = requireWallet();
   if (!agentApiKey) throw new Error("Not registered. Run mindvault_register first.");
   if (!resourceId) throw new Error("resourceId is required.");
