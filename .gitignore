@@ -3,6 +3,7 @@ node_modules/
 
 # Builds
 dist/
+web/stats.html
 target/
 *.wasm
 
