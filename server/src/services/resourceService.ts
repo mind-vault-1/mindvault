@@ -133,6 +133,7 @@ export type CatalogListFilters = {
   maxPrice?: string;
   search?: string;
   resourceType?: "file" | "link";
+  owner?: string;
   sort?: CatalogSort;
   limit?: number;
   offset?: number;
@@ -181,6 +182,7 @@ async function queryCatalog() {
       mimeType: resources.mimeType,
       verificationStatus: resources.verificationStatus,
       publisherName: publishers.name,
+      walletAddress: resources.walletAddress,
       createdAt: resources.createdAt,
     })
     .from(resources)
@@ -206,11 +208,14 @@ function applyCatalogFilters<
     price: string;
     verificationStatus: string;
     resourceType: string;
+    publisherName: string;
+    walletAddress: string;
   },
 >(rows: T[], filters?: CatalogListFilters): T[] {
   if (!filters) return rows;
 
   const search = filters.search?.toLowerCase();
+  const owner = filters.owner?.toLowerCase();
   // Prices are stored as decimal strings (e.g. "0.50"); compare numerically and
   // inclusively, parsing only at the point of comparison.
   const min = filters.minPrice !== undefined ? parseFloat(filters.minPrice) : undefined;
@@ -229,6 +234,15 @@ function applyCatalogFilters<
       return false;
     }
     if (filters.resourceType && r.resourceType !== filters.resourceType) return false;
+    if (
+      owner &&
+      !(
+        r.publisherName?.toLowerCase().includes(owner) ||
+        r.walletAddress?.toLowerCase().includes(owner)
+      )
+    ) {
+      return false;
+    }
     return true;
   });
 }
@@ -248,6 +262,10 @@ function catalogCacheKey(kind: "list" | "count", filters?: CatalogListFilters): 
     if (q) norm.q = q;
   }
   if (filters.resourceType) norm.rt = filters.resourceType;
+  if (filters.owner) {
+    const o = filters.owner.trim().toLowerCase();
+    if (o) norm.owner = o;
+  }
   if (filters.sort) norm.sort = filters.sort;
   // Count ignores pagination (#162), so omit limit/offset from the count key so
   // all pages of the same filter share one cached total.

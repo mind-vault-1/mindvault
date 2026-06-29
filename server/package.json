@@ -39,12 +39,14 @@
     "@opentelemetry/sdk-node": "^0.55.0",
     "@opentelemetry/semantic-conventions": "^1.28.0",
     "@paralleldrive/cuid2": "^3.3.0",
+    "@sentry/node": "^10.62.0",
     "@stellar/stellar-sdk": "^15.0.1",
     "@supabase/supabase-js": "^2.101.1",
     "@x402/core": "^2.9.0",
     "@x402/express": "^2.9.0",
     "@x402/fetch": "^2.9.0",
     "@x402/stellar": "^2.9.0",
+    "compression": "^1.8.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.1",
     "drizzle-orm": "^0.45.2",
@@ -61,6 +63,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/multer": "^2.1.0",

@@ -1,4 +1,5 @@
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
+import compression from "compression";
 import { config } from "./config.js";
 import { corsMiddleware } from "./cors.js";
 import { securityHeaders } from "./middleware/security.js";
@@ -7,6 +8,7 @@ import { requestContextMiddleware } from "./middleware/requestContext.js";
 import { inFlightMiddleware } from "./middleware/inFlight.js";
 import { requestTimeout } from "./middleware/timeout.js";
 import { requestDurationMiddleware } from "./middleware/requestDuration.js";
+import { captureServerException } from "./lib/sentry.js";
 import healthRouter from "./routes/health.js";
 import publisherRouter from "./routes/publishers.js";
 import registryRouter from "./routes/registry.js";
@@ -20,6 +22,7 @@ export function createApp(): Express {
   const app = express();
 
   app.use(securityHeaders());
+  app.use(compression());
   app.use(corsMiddleware());
   app.use(requestContextMiddleware);
   app.use(inFlightMiddleware);
@@ -42,6 +45,7 @@ export function createApp(): Express {
   // Global error handler
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     getLogger().error({ err, event: "unhandled_error" }, "unhandled error");
+    captureServerException(err);
     res.status(500).json({ error: "Internal server error" });
   });
 

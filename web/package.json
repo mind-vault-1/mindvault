@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@mindvault/registry-client": "workspace:*",
+    "@sentry/react": "^10.62.0",
     "@stellar/freighter-api": "^6.0.1",
     "@stellar/stellar-sdk": "^15.0.1",
     "@x402/fetch": "^2.9.0",
