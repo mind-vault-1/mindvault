@@ -19,26 +19,31 @@ export function Leaderboard() {
 
   if (status === "idle" || status === "loading") {
     return (
-      <div className="flex justify-center py-20">
+      <div className="flex justify-center py-20" aria-live="polite" aria-busy="true">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-400 border-t-transparent" />
+        <span className="sr-only">Loading leaderboard...</span>
       </div>
     );
   }
 
   if (status === "error") {
-    return <ErrorBanner message={error ?? "Failed to load leaderboard."} onRetry={retry} />;
+    return (
+      <div aria-live="assertive">
+        <ErrorBanner message={error ?? "Failed to load leaderboard."} onRetry={retry} />
+      </div>
+    );
   }
 
   if (!entries || entries.length === 0) {
     return (
-      <div className="py-20 text-center text-sm text-gray-400 dark:text-gray-500">
+      <div className="py-20 text-center text-sm text-gray-400 dark:text-gray-500" aria-live="polite">
         No publishers yet. Be the first to publish a resource!
       </div>
     );
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto" aria-live="polite">
       <table className="w-full text-left text-sm">
         <thead>
           <tr className="border-b border-gray-200 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:border-gray-700 dark:text-gray-400">
