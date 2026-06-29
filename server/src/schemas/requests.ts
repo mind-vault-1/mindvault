@@ -86,6 +86,7 @@ export const catalogQuerySchema = z
       .optional(),
     search: z.string().optional(),
     resourceType: z.enum(["file", "link"]).optional(),
+    owner: z.string().optional(),
     sort: z.enum(catalogSortValues).optional(),
     limit: z.coerce.number().int().min(1).max(CATALOG_MAX_LIMIT).optional(),
     offset: z.coerce.number().int().min(0).optional(),
