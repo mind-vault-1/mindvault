@@ -12,6 +12,7 @@ vi.mock("../config.js", () => ({
     PAY_TO: "GTEST123456789",
     NETWORK: "testnet",
     VERIFICATION_PRICE: "0.10",
+    OPENROUTER_MODEL: "test-model",
   },
 }));
 
@@ -74,6 +75,13 @@ function createTestApp() {
   return app;
 }
 
+const mockUsage = {
+  promptTokens: 10,
+  completionTokens: 5,
+  totalTokens: 15,
+  estimatedCostUsd: 0.001,
+};
+
 describe("POST /verify-content — AI content verification endpoint", () => {
   beforeEach(() => {
     mockCheckOriginality.mockReset();
@@ -84,6 +92,7 @@ describe("POST /verify-content — AI content verification endpoint", () => {
       isOriginal: true,
       confidence: 0.95,
       flags: ["Content appears to be a legitimate resource listing"],
+      usage: mockUsage,
     });
 
     const res = await request(createTestApp())
@@ -95,6 +104,7 @@ describe("POST /verify-content — AI content verification endpoint", () => {
       isOriginal: true,
       confidence: 0.95,
       flags: ["Content appears to be a legitimate resource listing"],
+      usage: mockUsage,
     });
     expect(mockCheckOriginality).toHaveBeenCalledWith(
       "A comprehensive dataset for machine learning",
@@ -107,6 +117,7 @@ describe("POST /verify-content — AI content verification endpoint", () => {
       isOriginal: false,
       confidence: 0.15,
       flags: ["Content appears to be spam or gibberish"],
+      usage: mockUsage,
     });
 
     const res = await request(createTestApp())
@@ -118,6 +129,7 @@ describe("POST /verify-content — AI content verification endpoint", () => {
       isOriginal: false,
       confidence: 0.15,
       flags: ["Content appears to be spam or gibberish"],
+      usage: mockUsage,
     });
   });
 
@@ -126,6 +138,7 @@ describe("POST /verify-content — AI content verification endpoint", () => {
       isOriginal: true,
       confidence: 0.88,
       flags: ["Genuine resource"],
+      usage: mockUsage,
     });
 
     const res = await request(createTestApp()).post("/verify-content").send({
@@ -142,6 +155,7 @@ describe("POST /verify-content — AI content verification endpoint", () => {
       isOriginal: false,
       confidence: 0.22,
       flags: ["Low effort listing"],
+      usage: mockUsage,
     });
 
     const res = await request(createTestApp()).post("/verify-content").send({
@@ -158,6 +172,7 @@ describe("POST /verify-content — AI content verification endpoint", () => {
       isOriginal: false,
       confidence: 0,
       flags: ["No response from verification model"],
+      usage: mockUsage,
     });
 
     const res = await request(createTestApp())

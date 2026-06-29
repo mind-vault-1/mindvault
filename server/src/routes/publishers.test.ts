@@ -3,9 +3,11 @@ import express from "express";
 import request from "supertest";
 import { createHash } from "node:crypto";
 
-const PUBLISHERS_MARKER = { __table: "publishers" };
-const RESOURCES_MARKER = { __table: "resources" };
-const PAYMENTS_MARKER = { __table: "payments" };
+const { PUBLISHERS_MARKER, RESOURCES_MARKER, PAYMENTS_MARKER } = vi.hoisted(() => ({
+  PUBLISHERS_MARKER: { __table: "publishers" },
+  RESOURCES_MARKER: { __table: "resources" },
+  PAYMENTS_MARKER: { __table: "payments" },
+}));
 
 vi.mock("../db/schema.js", () => ({
   publishers: PUBLISHERS_MARKER,

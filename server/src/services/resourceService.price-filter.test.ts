@@ -5,7 +5,8 @@ let currentRows: any[] = [];
 const builder = {
   from: () => builder,
   innerJoin: () => builder,
-  where: () => Promise.resolve(currentRows),
+  where: () => builder,
+  orderBy: () => Promise.resolve(currentRows),
 };
 
 vi.mock("../db/client.js", () => ({
