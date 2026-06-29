@@ -27,6 +27,7 @@ export interface ResourceMeta {
   onchainStatus: string;
   onchainTxHash?: string | null;
   contentHash?: string | null;
+  thumbnailUrl?: string | null;
   createdAt: string;
   accessUrl: string;
 }

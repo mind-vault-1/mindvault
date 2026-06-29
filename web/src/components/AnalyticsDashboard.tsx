@@ -9,17 +9,19 @@ interface Props {
 export function AnalyticsDashboard({ apiKey }: Props) {
   const { data, loading, error } = useAnalytics(apiKey);
 
-  if (loading) return (
-    <p className="mt-8 text-center text-sm text-gray-500" aria-live="polite" aria-busy="true">
-      Loading analytics…
-    </p>
-  );
+  if (loading)
+    return (
+      <p className="mt-8 text-center text-sm text-gray-500" aria-live="polite" aria-busy="true">
+        Loading analytics…
+      </p>
+    );
 
-  if (error) return (
-    <p className="mt-8 text-center text-sm text-red-500" aria-live="assertive">
-      Error: {error}
-    </p>
-  );
+  if (error)
+    return (
+      <p className="mt-8 text-center text-sm text-red-500" aria-live="assertive">
+        Error: {error}
+      </p>
+    );
 
   if (!data) return null;
 
@@ -28,7 +30,10 @@ export function AnalyticsDashboard({ apiKey }: Props) {
   // Empty state
   if (summary.totalResources === 0)
     return (
-      <div className="mt-8 rounded-xl border border-dashed border-gray-200 p-10 text-center text-gray-500" aria-live="polite">
+      <div
+        className="mt-8 rounded-xl border border-dashed border-gray-200 p-10 text-center text-gray-500"
+        aria-live="polite"
+      >
         <p className="text-lg font-medium">No resources yet</p>
         <p className="mt-1 text-sm">
           Publish your first resource to start earning USDC directly to your Stellar wallet.

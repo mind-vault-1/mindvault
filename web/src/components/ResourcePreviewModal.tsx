@@ -75,7 +75,6 @@ function LazyImage({ src, alt, className = "" }: LazyImageProps) {
           className="absolute inset-0 animate-pulse bg-gray-200 dark:bg-gray-700 rounded-lg"
         />
       )}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         ref={imgRef}
         alt={alt}
@@ -212,12 +211,7 @@ export function ResourcePreviewModal({
         <div className="mt-4">
           {/* Skeleton placeholder while loading (#310) */}
           {(status === "idle" || status === "loading") && (
-            <div
-              role="status"
-              aria-busy="true"
-              aria-label="Loading preview…"
-              className="space-y-3"
-            >
+            <div role="status" aria-busy="true" aria-label="Loading preview…" className="space-y-3">
               {/* Thumbnail skeleton */}
               <div className="h-32 w-full animate-pulse rounded-lg bg-gray-200 dark:bg-gray-700" />
               {/* Title skeleton */}

@@ -145,7 +145,9 @@ describe("CatalogSearch – keyboard navigation", () => {
     const listbox = screen.getByRole("listbox", { name: "Search results" });
     expect(listbox).toBeInTheDocument();
     // Query options within the listbox only, not from the select elements.
-    const { getAllByRole: getAllByRoleInListbox } = { getAllByRole: (role: string) => Array.from(listbox.querySelectorAll(`[role="${role}"]`)) };
+    const { getAllByRole: getAllByRoleInListbox } = {
+      getAllByRole: (role: string) => Array.from(listbox.querySelectorAll(`[role="${role}"]`)),
+    };
     expect(getAllByRoleInListbox("option")).toHaveLength(3);
   });
 

@@ -128,12 +128,10 @@ describe("POST /verify-content — AI content verification endpoint", () => {
       flags: ["Genuine resource"],
     });
 
-    const res = await request(createTestApp())
-      .post("/verify-content")
-      .send({
-        content: "High-quality API documentation",
-        resourceId: "res-123",
-      });
+    const res = await request(createTestApp()).post("/verify-content").send({
+      content: "High-quality API documentation",
+      resourceId: "res-123",
+    });
 
     expect(res.status).toBe(200);
     expect(res.body.isOriginal).toBe(true);
@@ -146,12 +144,10 @@ describe("POST /verify-content — AI content verification endpoint", () => {
       flags: ["Low effort listing"],
     });
 
-    const res = await request(createTestApp())
-      .post("/verify-content")
-      .send({
-        content: "test",
-        resourceId: "res-456",
-      });
+    const res = await request(createTestApp()).post("/verify-content").send({
+      content: "test",
+      resourceId: "res-456",
+    });
 
     expect(res.status).toBe(200);
     expect(res.body.isOriginal).toBe(false);

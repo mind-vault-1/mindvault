@@ -144,7 +144,9 @@ describe("POST /publishers — registration (#294)", () => {
   });
 
   it("returns 409 when the email is already registered", async () => {
-    mockRegisterPublisher.mockRejectedValue(new Error("duplicate key value violates unique constraint"));
+    mockRegisterPublisher.mockRejectedValue(
+      new Error("duplicate key value violates unique constraint"),
+    );
 
     const res = await request(createTestApp()).post("/publishers").send({
       name: "Alice",
