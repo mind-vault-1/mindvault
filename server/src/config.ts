@@ -59,6 +59,9 @@ const envSchema = z.object({
   // Bearer auth or ?token=. If unset, the endpoint is disabled.
   METRICS_TOKEN: z.string().optional(),
 
+  // Sentry error tracking — when DSN is set, unhandled errors are reported.
+  SENTRY_DSN: z.string().url().optional(),
+
   // Verification
   VERIFICATION_PRICE: z.string().default("0.10"),
   // OpenRouter token pricing (USD per 1M tokens) used to estimate the cost of

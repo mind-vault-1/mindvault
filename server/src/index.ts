@@ -5,6 +5,7 @@
 import "./tracing.js";
 import type { Server } from "node:http";
 import { config } from "./config.js";
+import { initSentry, captureServerException } from "./lib/sentry.js";
 import { createApp } from "./app.js";
 import { rootLogger } from "./lib/logger.js";
 import { beginShutdown, whenDrained, inFlightCount } from "./lib/lifecycle.js";
@@ -12,6 +13,8 @@ import { pgClient } from "./db/client.js";
 import { startPoolMetrics, stopPoolMetrics } from "./db/client.js";
 import { startRetryPendingWorker, stopRetryPendingWorker } from "./workers/retryPendingWorker.js";
 import { startEventListener, stopEventListener } from "./workers/eventListener.js";
+
+initSentry();
 
 const app = createApp();
 
@@ -84,3 +87,13 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
 process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
+
+process.on("unhandledRejection", (reason) => {
+  rootLogger.error({ event: "unhandled_rejection", reason }, "unhandled promise rejection");
+  captureServerException(reason instanceof Error ? reason : new Error(String(reason)));
+});
+
+process.on("uncaughtException", (err) => {
+  rootLogger.error({ event: "uncaught_exception", err }, "uncaught exception");
+  captureServerException(err);
+});
