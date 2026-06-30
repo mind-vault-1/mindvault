@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "bundle:stats": "tsc && vite build && open stats.html",
     "preview": "vite preview",
     "test": "vitest run"
   },

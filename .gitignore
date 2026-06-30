@@ -7,6 +7,9 @@ web/stats.html
 target/
 *.wasm
 
+# Bundle analysis report (generated locally by `pnpm --filter @mindvault/web bundle:stats`)
+web/stats.html
+
 # Secrets — never commit real env files (only .env.example is tracked)
 .env
 .env.local

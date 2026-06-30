@@ -54,6 +54,7 @@ export const resources = pgTable(
     walletAddress: text("wallet_address").notNull(),
     resourceType: resourceTypeEnum("resource_type").notNull(),
     storagePath: text("storage_path"),
+    thumbnailPath: text("thumbnail_path"),
     contentHash: text("content_hash"),
     externalUrl: text("external_url"),
     mimeType: text("mime_type"),

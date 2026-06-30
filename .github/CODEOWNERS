@@ -1,8 +1,30 @@
 # MindVault CODEOWNERS
+#
+# Maps repository paths to required reviewers so GitHub automatically
+# requests review from the right owner(s) on every pull request.
+# Patterns are matched top-to-bottom; the last matching rule wins.
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
+# Default owner for anything not covered by a more specific rule below.
+* @archanavdev
+
+# Smart-contract workspace — any change here must be reviewed carefully
+# because the contract is deployed on-chain and upgrades are permanent.
 /contract/ @archanavdev
+
+# Server — core API, DB schema, migrations, and business logic.
 /server/ @archanavdev
+
+# Web frontend
 /web/ @archanavdev
+
+# Model Context Protocol server
 /mcp/ @archanavdev
+
+# Shared packages (generated Soroban bindings, registry-client).
+# Binding drift in packages/ breaks server/, web/, and mcp/ simultaneously.
 /packages/ @archanavdev
+
+# GitHub configuration — workflows, branch-protection rules, issue templates.
+# Changes here affect the whole team's process, so require an extra review.
 /.github/ @archanavdev

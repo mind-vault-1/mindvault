@@ -69,21 +69,28 @@ export async function createFileResource(data: {
 
   const storagePath = await uploadFile(resource.id, data.fileBuffer, data.filename, data.mimeType);
 
+  let thumbnailPath: string | undefined;
   if (data.mimeType.startsWith("image/")) {
     try {
       const sharp = (await import("sharp")).default;
       const thumbBuffer = await sharp(data.fileBuffer)
         .resize(400, 400, { fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 80 })
         .toBuffer();
-      await uploadFile(resource.id, thumbBuffer, `thumb_${data.filename}`, data.mimeType);
-    } catch (err) {
-      // Ignore thumbnail generation errors
+      thumbnailPath = await uploadFile(
+        resource.id,
+        thumbBuffer,
+        `thumb_${data.filename.replace(/\.[^.]+$/, "")}.jpg`,
+        "image/jpeg",
+      );
+    } catch {
+      // Thumbnail generation is non-blocking; the original upload already succeeded.
     }
   }
 
   const [updated] = await db
     .update(resources)
-    .set({ storagePath })
+    .set({ storagePath, ...(thumbnailPath !== undefined && { thumbnailPath }) })
     .where(eq(resources.id, resource.id))
     .returning();
 
@@ -180,6 +187,7 @@ async function queryCatalog() {
       price: resources.price,
       resourceType: resources.resourceType,
       mimeType: resources.mimeType,
+      thumbnailPath: resources.thumbnailPath,
       verificationStatus: resources.verificationStatus,
       publisherName: publishers.name,
       walletAddress: resources.walletAddress,
@@ -335,6 +343,7 @@ async function queryResourceMeta(id: string) {
       verificationStatus: resources.verificationStatus,
       publisherName: publishers.name,
       publisherWallet: resources.walletAddress,
+      thumbnailPath: resources.thumbnailPath,
       onchainStatus: resources.onchainStatus,
       onchainTxHash: resources.onchainTxHash,
       contentHash: resources.contentHash,
@@ -393,6 +402,10 @@ export async function delistResource(
 
   if (resource.storagePath) {
     await deleteFile(resource.storagePath);
+  }
+
+  if (resource.thumbnailPath) {
+    await deleteFile(resource.thumbnailPath);
   }
 
   // Only registered resources exist on-chain; anything else delists DB-only.
