@@ -97,17 +97,19 @@ describe("createTtlCache", () => {
       const cache = createTtlCache<string>({ defaultTtlMs: 1000, cacheName: "test" });
       cache.set("k", "v");
       cache.get("k");
-      expect(cacheHits.get().values).toEqual(
-        expect.arrayContaining([expect.objectContaining({ labels: { cache: "test" }, value: 1 })]),
-      );
+      expect(cacheHits.hashMap["cache:test,"]).toEqual({
+        value: 1,
+        labels: { cache: "test" },
+      });
     });
 
     it("increments cache_misses_total on get() miss", () => {
       const cache = createTtlCache<string>({ defaultTtlMs: 1000, cacheName: "test" });
       cache.get("nonexistent");
-      expect(cacheMisses.get().values).toEqual(
-        expect.arrayContaining([expect.objectContaining({ labels: { cache: "test" }, value: 1 })]),
-      );
+      expect(cacheMisses.hashMap["cache:test,"]).toEqual({
+        value: 1,
+        labels: { cache: "test" },
+      });
     });
 
     it("increments cache_misses_total on expired entry", () => {
@@ -120,9 +122,10 @@ describe("createTtlCache", () => {
       cache.set("k", "v");
       clock.advance(100);
       cache.get("k");
-      expect(cacheMisses.get().values).toEqual(
-        expect.arrayContaining([expect.objectContaining({ labels: { cache: "test" }, value: 1 })]),
-      );
+      expect(cacheMisses.hashMap["cache:test,"]).toEqual({
+        value: 1,
+        labels: { cache: "test" },
+      });
     });
 
     it("does not register metrics when cacheName is omitted", () => {
@@ -130,10 +133,8 @@ describe("createTtlCache", () => {
       cache.set("k", "v");
       cache.get("k");
       cache.get("missing");
-      const hits = cacheHits.get().values.filter((v) => v.value > 0);
-      const misses = cacheMisses.get().values.filter((v) => v.value > 0);
-      expect(hits.length).toBe(0);
-      expect(misses.length).toBe(0);
+      expect(Object.keys(cacheHits.hashMap)).toHaveLength(0);
+      expect(Object.keys(cacheMisses.hashMap)).toHaveLength(0);
     });
   });
 });

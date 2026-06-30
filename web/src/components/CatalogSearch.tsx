@@ -62,17 +62,14 @@ export function CatalogSearch({
     if (activeIndex !== -1) setActiveIndex(-1);
   }
 
-  const moveActive = useCallback(
-    (delta: number, resultCount: number) => {
-      setActiveIndex((prev) => {
-        const next = prev + delta;
-        if (next < 0) return resultCount - 1;
-        if (next >= resultCount) return 0;
-        return next;
-      });
-    },
-    [],
-  );
+  const moveActive = useCallback((delta: number, resultCount: number) => {
+    setActiveIndex((prev) => {
+      const next = prev + delta;
+      if (next < 0) return resultCount - 1;
+      if (next >= resultCount) return 0;
+      return next;
+    });
+  }, []);
 
   const handleInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {

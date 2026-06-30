@@ -1,4 +1,5 @@
 import { type Resource, Networks } from "@mindvault/registry-client";
+import { signedPublisherFetch } from "./requestSignature.js";
 
 export type { Resource };
 export { Networks as registryNetworks };
@@ -26,6 +27,7 @@ export interface ResourceMeta {
   onchainStatus: string;
   onchainTxHash?: string | null;
   contentHash?: string | null;
+  thumbnailUrl?: string | null;
   createdAt: string;
   accessUrl: string;
 }
@@ -86,13 +88,10 @@ export async function submitRegister(
   signedXdr: string,
   apiKey: string,
 ): Promise<{ id: string; onchainStatus: string; onchainTxHash?: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/register`, {
+  const body = JSON.stringify({ signedXdr });
+  const res = await signedPublisherFetch(`${API_BASE}/resources/${resourceId}/register`, apiKey, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify({ signedXdr }),
+    body,
   });
   if (!res.ok) {
     const { error } = await res.json();
@@ -160,13 +159,10 @@ export async function submitRegisterTx(
   signedXdr: string,
   apiKey: string,
 ): Promise<{ id: string; onchainStatus: string; txHash: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/register`, {
+  const body = JSON.stringify({ signedXdr });
+  const res = await signedPublisherFetch(`${API_BASE}/resources/${resourceId}/register`, apiKey, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify({ signedXdr }),
+    body,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -188,14 +184,12 @@ export async function prepareSetPrice(
   price: string,
   apiKey: string,
 ): Promise<{ unsignedXdr: string; networkPassphrase: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/price/prepare`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify({ price }),
-  });
+  const body = JSON.stringify({ price });
+  const res = await signedPublisherFetch(
+    `${API_BASE}/resources/${resourceId}/price/prepare`,
+    apiKey,
+    { method: "POST", body },
+  );
   if (!res.ok) {
     const { error } = await res.json();
     throw new Error(error ?? "Failed to prepare transaction");
@@ -214,14 +208,12 @@ export async function prepareTransferOwnership(
   newCreator: string,
   apiKey: string,
 ): Promise<{ unsignedXdr: string; networkPassphrase: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/ownership/prepare`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify({ newCreator }),
-  });
+  const body = JSON.stringify({ newCreator });
+  const res = await signedPublisherFetch(
+    `${API_BASE}/resources/${resourceId}/ownership/prepare`,
+    apiKey,
+    { method: "POST", body },
+  );
   if (!res.ok) {
     const { error } = await res.json();
     throw new Error(error ?? "Failed to prepare transfer transaction");
@@ -235,13 +227,10 @@ export async function submitTransferOwnership(
   newCreator: string,
   apiKey: string,
 ): Promise<{ id: string; newCreator: string; status: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/ownership`, {
+  const body = JSON.stringify({ signedXdr, newCreator });
+  const res = await signedPublisherFetch(`${API_BASE}/resources/${resourceId}/ownership`, apiKey, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify({ signedXdr, newCreator }),
+    body,
   });
   if (!res.ok) {
     const { error } = await res.json();
@@ -310,13 +299,10 @@ export async function submitSetPrice(
   price: string,
   apiKey: string,
 ): Promise<{ id: string; price: string; status: string }> {
-  const res = await fetch(`${API_BASE}/resources/${resourceId}/price`, {
+  const body = JSON.stringify({ signedXdr, price });
+  const res = await signedPublisherFetch(`${API_BASE}/resources/${resourceId}/price`, apiKey, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-    },
-    body: JSON.stringify({ signedXdr, price }),
+    body,
   });
   if (!res.ok) {
     const { error } = await res.json();

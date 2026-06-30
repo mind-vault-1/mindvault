@@ -3,9 +3,11 @@ import express from "express";
 import request from "supertest";
 import { createHash } from "node:crypto";
 
-const PUBLISHERS_MARKER = { __table: "publishers" };
-const RESOURCES_MARKER = { __table: "resources" };
-const PAYMENTS_MARKER = { __table: "payments" };
+const { PUBLISHERS_MARKER, RESOURCES_MARKER, PAYMENTS_MARKER } = vi.hoisted(() => ({
+  PUBLISHERS_MARKER: { __table: "publishers" },
+  RESOURCES_MARKER: { __table: "resources" },
+  PAYMENTS_MARKER: { __table: "payments" },
+}));
 
 vi.mock("../db/schema.js", () => ({
   publishers: PUBLISHERS_MARKER,
@@ -144,7 +146,9 @@ describe("POST /publishers — registration (#294)", () => {
   });
 
   it("returns 409 when the email is already registered", async () => {
-    mockRegisterPublisher.mockRejectedValue(new Error("duplicate key value violates unique constraint"));
+    mockRegisterPublisher.mockRejectedValue(
+      new Error("duplicate key value violates unique constraint"),
+    );
 
     const res = await request(createTestApp()).post("/publishers").send({
       name: "Alice",

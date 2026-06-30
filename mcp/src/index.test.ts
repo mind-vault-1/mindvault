@@ -42,7 +42,16 @@ vi.mock("@mindvault/registry-client", async (importOriginal) => {
   };
 });
 
-import { browse, search, preview, txStatus, buy, registerOnchain, _setAgentWallet, _setAgentApiKey } from "./index.js";
+import {
+  browse,
+  search,
+  preview,
+  txStatus,
+  buy,
+  registerOnchain,
+  _setAgentWallet,
+  _setAgentApiKey,
+} from "./index.js";
 
 function mockResponse(data: unknown, ok = true, status = 200): Response {
   const body = JSON.stringify(data);
@@ -397,7 +406,9 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
         );
       }
       if (u.includes("/meta")) {
-        return Promise.resolve(mockResponse({ ...resourceData, price: "5.00", title: "Introduction to Stellar" }));
+        return Promise.resolve(
+          mockResponse({ ...resourceData, price: "5.00", title: "Introduction to Stellar" }),
+        );
       }
       // The paid fetch to access the resource
       return Promise.resolve(mockResponse(resourceData));
@@ -546,9 +557,7 @@ describe("registerOnchain – happy path", () => {
         );
       }
       if (u.includes("/register")) {
-        return Promise.resolve(
-          mockResponse({ onchainStatus: "registered", txHash }),
-        );
+        return Promise.resolve(mockResponse({ onchainStatus: "registered", txHash }));
       }
       return Promise.resolve(mockResponse({}));
     });
@@ -615,9 +624,7 @@ describe("registerOnchain – error and retry messaging", () => {
   it("throws with actionable message when resource is already registered (409)", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
       if (String(url).includes("/register/prepare")) {
-        return Promise.resolve(
-          mockResponse({ error: "Already registered" }, false, 409),
-        );
+        return Promise.resolve(mockResponse({ error: "Already registered" }, false, 409));
       }
       return Promise.resolve(mockResponse({}));
     });
@@ -678,9 +685,7 @@ describe("registerOnchain – error and retry messaging", () => {
   it("throws with ownership error message (403)", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
       if (String(url).includes("/register/prepare")) {
-        return Promise.resolve(
-          mockResponse({ error: "Not the owner" }, false, 403),
-        );
+        return Promise.resolve(mockResponse({ error: "Not the owner" }, false, 403));
       }
       return Promise.resolve(mockResponse({}));
     });

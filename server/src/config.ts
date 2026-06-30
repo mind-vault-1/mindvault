@@ -80,6 +80,14 @@ const envSchema = z.object({
   RATE_LIMIT_PUBLISH_WALLET_MAX: z.coerce.number().default(10),
   RATE_LIMIT_PUBLISH_WALLET_WINDOW_MS: z.coerce.number().default(3_600_000),
 
+  // Optional Redis URL for a shared sliding-window rate-limit store (multi-instance).
+  REDIS_URL: z.string().url().optional(),
+
+  // Optional HMAC-SHA256 request signatures for publisher mutations (off by default).
+  REQUIRE_REQUEST_SIGNATURE: z.coerce.boolean().default(false),
+  // Max clock skew for X-Timestamp when signatures are required (default 5 minutes).
+  SIGNATURE_MAX_SKEW_MS: z.coerce.number().default(300_000),
+
   // Per-request timeout — slow upstreams (RPC, facilitator) return 503 instead
   // of hanging the connection.
   REQUEST_TIMEOUT_MS: z.coerce.number().default(30_000),

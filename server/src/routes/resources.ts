@@ -1,5 +1,6 @@
 import { Router, type Router as RouterType } from "express";
 import { apiKeyAuth } from "../middleware/apiKeyAuth.js";
+import { requestSignatureAuth } from "../middleware/requestSignatureAuth.js";
 import { singleFileUpload, validateUploadContentType } from "../middleware/uploadGuards.js";
 import { validate, validateFields } from "../middleware/validate.js";
 import {
@@ -54,6 +55,7 @@ router.post(
   publishWalletRateLimit,
   singleFileUpload("file"),
   validateUploadContentType,
+  requestSignatureAuth,
   async (req, res) => {
     const publisher = req.publisher!;
 
@@ -298,7 +300,7 @@ router.get("/resources/:id", dynamicPaywall, async (req, res) => {
 });
 
 // DELETE /resources/:id — delist a resource (authenticated, owner only)
-router.delete("/resources/:id", apiKeyAuth, async (req, res) => {
+router.delete("/resources/:id", apiKeyAuth, requestSignatureAuth, async (req, res) => {
   const resource = await delistResource(req.params.id as string, req.publisher!.id);
   if (!resource) {
     res.status(404).json({ error: "Resource not found or not owned by you" });
@@ -366,6 +368,7 @@ router.get("/resources/:id/register/prepare", apiKeyAuth, async (req, res) => {
 router.post(
   "/resources/:id/register",
   apiKeyAuth,
+  requestSignatureAuth,
   validate(registerResourceSchema),
   async (req, res) => {
     const publisher = req.publisher!;
@@ -551,6 +554,7 @@ router.post(
 router.post(
   "/resources/:id/price/prepare",
   apiKeyAuth,
+  requestSignatureAuth,
   validate(preparePriceSchema),
   async (req, res) => {
     const publisher = req.publisher!;
@@ -574,67 +578,75 @@ router.post(
 );
 
 // POST /resources/:id/price — submit signed set_price tx and sync DB price
-router.post("/resources/:id/price", apiKeyAuth, validate(setPriceSchema), async (req, res) => {
-  const publisher = req.publisher!;
-  const resourceId = req.params.id as string;
+router.post(
+  "/resources/:id/price",
+  apiKeyAuth,
+  requestSignatureAuth,
+  validate(setPriceSchema),
+  async (req, res) => {
+    const publisher = req.publisher!;
+    const resourceId = req.params.id as string;
 
-  const resource = await getResourceById(resourceId);
-  if (!resource) {
-    res.status(404).json({ error: "Resource not found" });
-    return;
-  }
-  if (resource.publisherId !== publisher.id) {
-    res.status(403).json({ error: "Forbidden: you do not own this resource" });
-    return;
-  }
-
-  const { signedXdr, price } = req.body;
-
-  // Submit the signed transaction via the registry client's underlying RPC server
-  const { rpc: StellarRpc, Transaction: StellarTransaction } = await import("@stellar/stellar-sdk");
-  const rpcServer = new StellarRpc.Server(config.SOROBAN_RPC_URL);
-  const signedTx = new StellarTransaction(signedXdr, NETWORK_PASSPHRASE);
-  const sendResult = await rpcServer.sendTransaction(signedTx);
-
-  if (sendResult.status !== "PENDING") {
-    res.status(502).json({ error: "Transaction rejected", detail: sendResult.status });
-    return;
-  }
-
-  // Poll for confirmation
-  const txHash = sendResult.hash;
-  let confirmed = false;
-  for (let i = 0; i < 10; i++) {
-    await new Promise((r) => setTimeout(r, 3000));
-    const txResult = await rpcServer.getTransaction(txHash);
-    if (txResult.status === StellarRpc.Api.GetTransactionStatus.SUCCESS) {
-      confirmed = true;
-      break;
-    }
-    if (txResult.status === StellarRpc.Api.GetTransactionStatus.FAILED) {
-      res.status(502).json({ error: "Transaction failed on-chain" });
+    const resource = await getResourceById(resourceId);
+    if (!resource) {
+      res.status(404).json({ error: "Resource not found" });
       return;
     }
-  }
-  if (!confirmed) {
-    res.status(504).json({ error: "Transaction confirmation timed out" });
-    return;
-  }
+    if (resource.publisherId !== publisher.id) {
+      res.status(403).json({ error: "Forbidden: you do not own this resource" });
+      return;
+    }
 
-  // Sync the DB price to match the on-chain value
-  const [updated] = await db
-    .update(resources)
-    .set({ price })
-    .where(eq(resources.id, resourceId))
-    .returning();
+    const { signedXdr, price } = req.body;
 
-  res.json({ id: updated.id, price: updated.price, status: "confirmed" });
-});
+    // Submit the signed transaction via the registry client's underlying RPC server
+    const { rpc: StellarRpc, Transaction: StellarTransaction } =
+      await import("@stellar/stellar-sdk");
+    const rpcServer = new StellarRpc.Server(config.SOROBAN_RPC_URL);
+    const signedTx = new StellarTransaction(signedXdr, NETWORK_PASSPHRASE);
+    const sendResult = await rpcServer.sendTransaction(signedTx);
+
+    if (sendResult.status !== "PENDING") {
+      res.status(502).json({ error: "Transaction rejected", detail: sendResult.status });
+      return;
+    }
+
+    // Poll for confirmation
+    const txHash = sendResult.hash;
+    let confirmed = false;
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const txResult = await rpcServer.getTransaction(txHash);
+      if (txResult.status === StellarRpc.Api.GetTransactionStatus.SUCCESS) {
+        confirmed = true;
+        break;
+      }
+      if (txResult.status === StellarRpc.Api.GetTransactionStatus.FAILED) {
+        res.status(502).json({ error: "Transaction failed on-chain" });
+        return;
+      }
+    }
+    if (!confirmed) {
+      res.status(504).json({ error: "Transaction confirmation timed out" });
+      return;
+    }
+
+    // Sync the DB price to match the on-chain value
+    const [updated] = await db
+      .update(resources)
+      .set({ price })
+      .where(eq(resources.id, resourceId))
+      .returning();
+
+    res.json({ id: updated.id, price: updated.price, status: "confirmed" });
+  },
+);
 
 // POST /resources/:id/ownership/prepare — build unsigned transfer_ownership tx (owner only)
 router.post(
   "/resources/:id/ownership/prepare",
   apiKeyAuth,
+  requestSignatureAuth,
   validate(prepareOwnershipSchema),
   async (req, res) => {
     const publisher = req.publisher!;
@@ -661,6 +673,7 @@ router.post(
 router.post(
   "/resources/:id/ownership",
   apiKeyAuth,
+  requestSignatureAuth,
   validate(transferOwnershipSchema),
   async (req, res) => {
     const publisher = req.publisher!;

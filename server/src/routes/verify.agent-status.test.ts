@@ -36,8 +36,10 @@ const resourceTitleRows = [{ id: "r1", title: "Resource One" }];
 let resourceQueryCount = 0;
 let lastResourceIdsArg: unknown;
 
-const VERIFICATIONS_MARKER = { __table: "verifications" };
-const RESOURCES_MARKER = { __table: "resources" };
+const { VERIFICATIONS_MARKER, RESOURCES_MARKER } = vi.hoisted(() => ({
+  VERIFICATIONS_MARKER: { __table: "verifications" },
+  RESOURCES_MARKER: { __table: "resources" },
+}));
 
 vi.mock("../db/schema.js", () => ({
   verifications: VERIFICATIONS_MARKER,

@@ -36,7 +36,10 @@ export function Leaderboard() {
 
   if (!entries || entries.length === 0) {
     return (
-      <div className="py-20 text-center text-sm text-gray-400 dark:text-gray-500" aria-live="polite">
+      <div
+        className="py-20 text-center text-sm text-gray-400 dark:text-gray-500"
+        aria-live="polite"
+      >
         No publishers yet. Be the first to publish a resource!
       </div>
     );

@@ -150,6 +150,7 @@ Wallet helpers live in `server/scripts/generate-wallet.ts` (run via `make wallet
 - **[docs/faq.md](docs/faq.md)** — common creator and AI-agent questions about fees, payouts, wallets, verification, and buying resources.
 - **[docs/x402-browser-payment-walkthrough.md](docs/x402-browser-payment-walkthrough.md)** — browser buyer path from catalog through wallet signing, settlement, and resource delivery.
 - **[docs/x402-payment-troubleshooting.md](docs/x402-payment-troubleshooting.md)** — common x402 payment/sign failures and how to fix them (browser vs MCP, Explorer inspection).
+- **[docs/request-signature.md](docs/request-signature.md)** — optional HMAC-SHA256 request signatures for publisher mutations (off by default).
 
 ## Operations
 
