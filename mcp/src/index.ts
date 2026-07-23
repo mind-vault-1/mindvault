@@ -67,6 +67,10 @@ if (!REGISTRY_CONTRACT_ID) {
   process.exit(1);
 }
 
+// Opt-in tool-level metrics (set MINDVAULT_METRICS=1). Disabled by default so
+// there is zero bookkeeping unless an operator turns it on.
+const metrics = createMetricsRecorder(metricsEnabledFromEnv(process.env));
+
 // ── State persistence ─────────────────────────────────────────────────────────
 
 const STATE_DIR = join(homedir(), ".mindvault");
@@ -438,6 +442,7 @@ async function publish(args: {
       resourceId: resource.id,
     }),
   });
+  metrics.recordPayment(verifyRes.ok);
 
   const verifyData = await verifyRes.json().catch(() => null);
 
@@ -530,6 +535,7 @@ export async function buy(resourceId: string): Promise<string> {
 
   const paidFetch = makePaidFetch(wallet);
   const res = await paidFetch(`${BASE_URL}/resources/${resourceId}`);
+  metrics.recordPayment(res.ok);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Buy failed [${res.status}]: ${text}`);
@@ -900,8 +906,72 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Clear the persisted wallet and publisher API key from both memory and disk (~/.mindvault/state.json). Use this to revoke credentials or start fresh. After reset, run mindvault_setup_wallet and mindvault_register again.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
+    {
+      name: "mindvault_metrics",
+      description:
+        "Return opt-in tool-level metrics: per-tool call/error counts and durations, plus payment attempt/failure totals. Enable by setting MINDVAULT_METRICS=1 on the server. Output contains only tool names, counts, and durations — never arguments, wallets, or API keys. Pass reset=true to clear counters after reading.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          reset: {
+            type: "boolean",
+            description:
+              "Clear all counters after returning the current snapshot (default: false).",
+          },
+        },
+        required: [],
+      },
+    },
   ],
 }));
+
+async function dispatchTool(name: string, args: any): Promise<string> {
+  switch (name) {
+    case "mindvault_setup_wallet":
+      return setupWallet();
+    case "mindvault_wallet_info":
+      return walletInfo();
+    case "mindvault_browse":
+      return browse();
+    case "mindvault_search": {
+      const filters = normalizeSearchFilters(args);
+      return filters ? search(filters) : "Provide a non-empty search query.";
+    }
+    case "mindvault_preview":
+      return preview(args.resourceId as string);
+    case "mindvault_register":
+      return register(
+        args.name as string,
+        args.email as string,
+        args.walletAddress as string | undefined,
+      );
+    case "mindvault_publish":
+      return publish({
+        title: args.title as string,
+        description: args.description as string | undefined,
+        price: args.price as string,
+        externalUrl: args.externalUrl as string,
+      });
+    case "mindvault_buy":
+      return buy(args.resourceId as string);
+    case "mindvault_register_onchain":
+      return registerOnchain(args.resourceId as string);
+    case "mindvault_agent_status":
+      return agentStatus();
+    case "mindvault_registry_info":
+      return registryInfo();
+    case "mindvault_registry_lookup":
+      return registryLookup(args.resourceId as string);
+    case "mindvault_tx_status":
+      return txStatus(args.txHash as string);
+    case "mindvault_reset":
+      return resetState();
+    case "mindvault_metrics":
+      return toolMetrics(args.reset === true);
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
