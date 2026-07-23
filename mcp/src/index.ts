@@ -76,48 +76,72 @@ const metrics = createMetricsRecorder(metricsEnabledFromEnv(process.env));
 const STATE_DIR = join(homedir(), ".mindvault");
 const STATE_FILE = join(STATE_DIR, "state.json");
 
-interface AgentWallet {
-  publicKey: string;
-  secretKey: string;
+// Named wallet profiles (testnet/mainnet/publisher/buyer/…) with one active at a
+// time. `agentWallet`/`agentApiKey` from earlier versions map onto the active
+// profile; legacy single-wallet state is migrated on load (see profiles.ts).
+let profiles: Record<string, WalletProfile> = {};
+let activeProfileName: string = DEFAULT_PROFILE;
+
+/** The active profile object, created lazily on first write. */
+function activeProfile(): WalletProfile {
+  return (profiles[activeProfileName] ??= {});
 }
 
-interface PersistedState {
-  wallet?: AgentWallet;
-  apiKey?: string;
+function currentWallet(): AgentWallet | null {
+  return profiles[activeProfileName]?.wallet ?? null;
 }
 
-let agentWallet: AgentWallet | null = null;
-let agentApiKey: string | null = null;
+function currentApiKey(): string | null {
+  return profiles[activeProfileName]?.apiKey ?? null;
+}
 
 /**
  * Test-only helpers — not part of the public tool surface.
- * Allow unit tests to seed module-level state without touching the filesystem.
+ * Seed/clear the active profile's wallet and API key without touching the filesystem.
  */
 export function _setAgentWallet(w: AgentWallet | null): void {
-  agentWallet = w;
+  if (w) activeProfile().wallet = w;
+  else delete activeProfile().wallet;
 }
 export function _setAgentApiKey(k: string | null): void {
-  agentApiKey = k;
+  if (k) activeProfile().apiKey = k;
+  else delete activeProfile().apiKey;
+}
+/** Test-only: reset the whole profile store to a clean default. */
+export function _resetProfiles(): void {
+  profiles = {};
+  activeProfileName = DEFAULT_PROFILE;
 }
 
 function loadState(): void {
   if (!existsSync(STATE_FILE)) return;
   try {
     const raw = readFileSync(STATE_FILE, "utf-8");
-    const state: PersistedState = JSON.parse(raw);
-    if (state.wallet?.publicKey && state.wallet?.secretKey) agentWallet = state.wallet;
-    if (state.apiKey) agentApiKey = state.apiKey;
+    const { state, migrated } = migrateState(JSON.parse(raw));
+    profiles = state.profiles;
+    activeProfileName = state.activeProfile;
+    if (migrated) saveState(); // re-persist legacy state in the current format
   } catch {
     // Corrupted state — ignore and start fresh
   }
 }
 
+/** Profiles worth persisting: any with credentials, plus the active one. */
+function persistableProfiles(): Record<string, WalletProfile> {
+  const out: Record<string, WalletProfile> = {};
+  for (const [name, profile] of Object.entries(profiles)) {
+    if (profile.wallet || profile.apiKey || name === activeProfileName) out[name] = profile;
+  }
+  return out;
+}
+
 function saveState(): void {
   try {
     mkdirSync(STATE_DIR, { recursive: true });
-    const state: PersistedState = {
-      ...(agentWallet && { wallet: agentWallet }),
-      ...(agentApiKey && { apiKey: agentApiKey }),
+    const state: ProfileState = {
+      version: STATE_VERSION,
+      activeProfile: activeProfileName,
+      profiles: persistableProfiles(),
     };
     writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
   } catch (err) {
@@ -125,15 +149,41 @@ function saveState(): void {
   }
 }
 
-function resetState(): string {
-  agentWallet = null;
-  agentApiKey = null;
-  try {
-    if (existsSync(STATE_FILE)) unlinkSync(STATE_FILE);
-  } catch (err) {
-    return `State cleared from memory. Warning: could not delete state file (${STATE_FILE}): ${err}`;
+/**
+ * Clear credentials. By default only the active profile is cleared; pass
+ * `all: true` to wipe every profile and delete the state file.
+ */
+function resetState(all: boolean): string {
+  if (all) {
+    profiles = {};
+    activeProfileName = DEFAULT_PROFILE;
+    try {
+      if (existsSync(STATE_FILE)) unlinkSync(STATE_FILE);
+    } catch (err) {
+      return `All profiles cleared from memory. Warning: could not delete state file (${STATE_FILE}): ${err}`;
+    }
+    return `Reset complete. All profiles removed from memory and disk.\nState file: ${STATE_FILE}`;
   }
-  return `State reset. Wallet and publisher API key removed from memory and disk.\nState file: ${STATE_FILE}`;
+
+  const name = activeProfileName;
+  delete profiles[name];
+  saveState();
+  return [
+    `Profile "${name}" cleared (wallet and publisher API key removed).`,
+    `Remaining profiles: ${Object.keys(profiles).length}.`,
+    `State file: ${STATE_FILE}`,
+  ].join("\n");
+}
+
+/** Resolve/validate a profile name argument, defaulting to the active profile. */
+function resolveProfileName(name: unknown): string {
+  if (name === undefined || name === null || name === "") return activeProfileName;
+  if (!isValidProfileName(name)) {
+    throw new Error(
+      `Invalid profile name. Use 1–64 characters from letters, digits, dot, dash, or underscore.`,
+    );
+  }
+  return name;
 }
 
 loadState();
@@ -168,8 +218,23 @@ async function jsonFetch(
 }
 
 function requireWallet(): AgentWallet {
-  if (!agentWallet) throw new Error("No wallet. Run mindvault_setup_wallet first.");
-  return agentWallet;
+  const wallet = currentWallet();
+  if (!wallet) {
+    throw new Error(
+      `No wallet in profile "${activeProfileName}". Run mindvault_setup_wallet first.`,
+    );
+  }
+  return wallet;
+}
+
+function requireApiKey(): string {
+  const apiKey = currentApiKey();
+  if (!apiKey) {
+    throw new Error(
+      `Not registered in profile "${activeProfileName}". Run mindvault_register first.`,
+    );
+  }
+  return apiKey;
 }
 
 function makePaidFetch(wallet: AgentWallet) {
@@ -316,18 +381,66 @@ export async function txStatus(txHash: string): Promise<string> {
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
-async function setupWallet(): Promise<string> {
+async function setupWallet(profileArg?: string): Promise<string> {
+  const target = resolveProfileName(profileArg);
   const res = await jsonFetch(`${SPONSORED_ACCOUNT_URL}/create`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to create wallet: ${JSON.stringify(res.data)}`);
-  agentWallet = { publicKey: res.data.publicKey, secretKey: res.data.secretKey };
+  activeProfileName = target;
+  activeProfile().wallet = { publicKey: res.data.publicKey, secretKey: res.data.secretKey };
   saveState();
-  return `Wallet created.\nAddress: ${agentWallet.publicKey}\nWallet persisted to ${STATE_FILE} (mode 0600).`;
+  return [
+    `Wallet created.`,
+    `Profile: ${target}`,
+    `Address: ${res.data.publicKey}`,
+    `Wallet persisted to ${STATE_FILE} (mode 0600).`,
+  ].join("\n");
 }
 
-async function walletInfo(): Promise<string> {
+export async function walletInfo(): Promise<string> {
   const wallet = requireWallet();
   const balance = await getUsdcBalance(wallet.publicKey);
-  return `Address: ${wallet.publicKey}\nUSDC Balance: ${balance}`;
+  return [
+    `Profile: ${activeProfileName}`,
+    `Address: ${wallet.publicKey}`,
+    `USDC Balance: ${balance}`,
+    `Publisher registered: ${currentApiKey() ? "yes" : "no"}`,
+  ].join("\n");
+}
+
+/** Switch the active profile, creating it if new. */
+export function useProfile(nameArg: string): string {
+  if (!isValidProfileName(nameArg)) {
+    throw new Error(
+      `Invalid profile name. Use 1–64 characters from letters, digits, dot, dash, or underscore.`,
+    );
+  }
+  activeProfileName = nameArg;
+  const profile = activeProfile();
+  saveState();
+  if (profile.wallet) {
+    return [
+      `Active profile: ${nameArg}`,
+      `Address: ${profile.wallet.publicKey}`,
+      `Publisher registered: ${profile.apiKey ? "yes" : "no"}`,
+    ].join("\n");
+  }
+  return `Active profile: ${nameArg}\nNo wallet in this profile yet. Run mindvault_setup_wallet to create one.`;
+}
+
+/** List every named profile, marking the active one. Secrets are never shown. */
+export function listProfiles(): string {
+  const names = Object.keys(profiles).sort();
+  if (names.length === 0) {
+    return `No profiles yet. Run mindvault_setup_wallet to create one (default profile: "${DEFAULT_PROFILE}").`;
+  }
+  const lines = names.map((name) => {
+    const profile = profiles[name];
+    const marker = name === activeProfileName ? "*" : " ";
+    const address = profile.wallet ? profile.wallet.publicKey : "(no wallet)";
+    const registered = profile.apiKey ? ", registered" : "";
+    return `${marker} ${name} — ${address}${registered}`;
+  });
+  return [`Profiles (* = active):`, ...lines].join("\n");
 }
 
 export async function browse(): Promise<string> {
@@ -388,9 +501,9 @@ async function register(name: string, email: string, walletAddress?: string): Pr
     body: JSON.stringify({ name, email, walletAddress: walletAddress ?? wallet.publicKey }),
   });
   if (!res.ok) throw new Error(`Register failed: ${JSON.stringify(res.data)}`);
-  agentApiKey = res.data.apiKey;
+  activeProfile().apiKey = res.data.apiKey;
   saveState();
-  return `Registered as publisher.\nID: ${res.data.id}\nAPI key persisted to ${STATE_FILE} (not shown). Run mindvault_reset to revoke.`;
+  return `Registered as publisher.\nProfile: ${activeProfileName}\nID: ${res.data.id}\nAPI key persisted to ${STATE_FILE} (not shown). Run mindvault_reset to revoke.`;
 }
 
 async function publish(args: {
@@ -400,12 +513,12 @@ async function publish(args: {
   externalUrl: string;
 }): Promise<string> {
   const wallet = requireWallet();
-  if (!agentApiKey) throw new Error("Not registered. Run mindvault_register first.");
+  const apiKey = requireApiKey();
 
   // Step 1: Create the resource record
   const createRes = await jsonFetch(`${BASE_URL}/resources`, {
     method: "POST",
-    headers: { "x-api-key": agentApiKey },
+    headers: { "x-api-key": apiKey },
     body: JSON.stringify({
       title: args.title,
       description: args.description,
@@ -470,7 +583,7 @@ async function publish(args: {
   // Step 3: Trigger on-chain registration (best-effort — failure doesn't block listing)
   const registerRes = await jsonFetch(`${BASE_URL}/resources/${resource.id}/register`, {
     method: "POST",
-    headers: { "x-api-key": agentApiKey },
+    headers: { "x-api-key": apiKey },
   });
 
   const onchainStatus: string = registerRes.ok
@@ -554,12 +667,12 @@ export async function buy(resourceId: string): Promise<string> {
  */
 export async function registerOnchain(resourceId: string): Promise<string> {
   const wallet = requireWallet();
-  if (!agentApiKey) throw new Error("Not registered. Run mindvault_register first.");
+  const apiKey = requireApiKey();
   if (!resourceId) throw new Error("resourceId is required.");
 
   // Step 1: prepare the unsigned register transaction (owner-only).
   const prep = await jsonFetch(`${BASE_URL}/resources/${resourceId}/register/prepare`, {
-    headers: { "x-api-key": agentApiKey },
+    headers: { "x-api-key": apiKey },
   });
   if (!prep.ok) {
     const detail =
@@ -599,7 +712,7 @@ export async function registerOnchain(resourceId: string): Promise<string> {
   // Step 3: submit the signed transaction.
   const submit = await jsonFetch(`${BASE_URL}/resources/${resourceId}/register`, {
     method: "POST",
-    headers: { "x-api-key": agentApiKey },
+    headers: { "x-api-key": apiKey },
     body: JSON.stringify({ signedXdr }),
   });
   if (!submit.ok) {
@@ -756,12 +869,45 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "mindvault_setup_wallet",
       description:
-        "Create a Stellar wallet using the sponsored account protocol. The wallet (public key + secret key) is persisted to ~/.mindvault/state.json (mode 0600) and reloaded automatically on restart.",
-      inputSchema: { type: "object", properties: {}, required: [] },
+        "Create a Stellar wallet using the sponsored account protocol. Optionally pass a profile name to create the wallet under a named profile (e.g. testnet, mainnet, publisher, buyer) and make it active; defaults to the active profile. The wallet (public key + secret key) is persisted to ~/.mindvault/state.json (mode 0600) and reloaded automatically on restart.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          profile: {
+            type: "string",
+            description:
+              "Optional profile name to create/switch to (letters, digits, dot, dash, underscore; 1–64 chars).",
+          },
+        },
+        required: [],
+      },
     },
     {
       name: "mindvault_wallet_info",
-      description: "Check the agent wallet address and USDC balance.",
+      description:
+        "Check the active profile name, its agent wallet address, USDC balance, and whether it is registered as a publisher.",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    {
+      name: "mindvault_use_profile",
+      description:
+        "Switch the active wallet profile, creating it if it does not exist. Profiles let one agent keep separate identities (e.g. testnet vs mainnet, publisher vs buyer); each has its own wallet and publisher API key. Subsequent tools operate on the active profile.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description:
+              "Profile name to make active (letters, digits, dot, dash, underscore; 1–64 chars).",
+          },
+        },
+        required: ["name"],
+      },
+    },
+    {
+      name: "mindvault_list_profiles",
+      description:
+        "List all named wallet profiles, marking the active one and showing each profile's wallet address and whether it is registered as a publisher. Secret keys are never shown.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     {
@@ -903,8 +1049,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "mindvault_reset",
       description:
-        "Clear the persisted wallet and publisher API key from both memory and disk (~/.mindvault/state.json). Use this to revoke credentials or start fresh. After reset, run mindvault_setup_wallet and mindvault_register again.",
-      inputSchema: { type: "object", properties: {}, required: [] },
+        "Clear credentials from memory and disk (~/.mindvault/state.json). By default only the active profile is cleared; pass all=true to remove every profile and delete the state file. After reset, run mindvault_setup_wallet and mindvault_register again.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          all: {
+            type: "boolean",
+            description: "Clear every profile and delete the state file (default: active only).",
+          },
+        },
+        required: [],
+      },
     },
     {
       name: "mindvault_metrics",
@@ -979,10 +1134,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     let result: string;
     switch (name) {
       case "mindvault_setup_wallet":
-        result = await setupWallet();
+        result = await setupWallet(args.profile as string | undefined);
         break;
       case "mindvault_wallet_info":
         result = await walletInfo();
+        break;
+      case "mindvault_use_profile":
+        result = useProfile(args.name as string);
+        break;
+      case "mindvault_list_profiles":
+        result = listProfiles();
         break;
       case "mindvault_browse":
         result = await browse();
@@ -1036,7 +1197,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = await txStatus(args.txHash as string);
         break;
       case "mindvault_reset":
-        result = resetState();
+        result = resetState(args.all === true);
         break;
       default:
         throw new Error(`Unknown tool: ${name}`);

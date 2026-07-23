@@ -51,8 +51,12 @@ import {
   txStatus,
   buy,
   registerOnchain,
+  walletInfo,
+  useProfile,
+  listProfiles,
   _setAgentWallet,
   _setAgentApiKey,
+  _resetProfiles,
 } from "./index.js";
 
 function mockResponse(data: unknown, ok = true, status = 200): Response {
@@ -736,5 +740,83 @@ describe("registerOnchain – error and retry messaging", () => {
     expect(typeof result).toBe("string");
     expect(result).toContain("registered");
     expect(result).toContain("res-success");
+  });
+});
+
+describe("multi-wallet profiles", () => {
+  beforeEach(() => {
+    _resetProfiles();
+  });
+  afterEach(() => {
+    _resetProfiles();
+    vi.restoreAllMocks();
+  });
+
+  const walletA = { publicKey: "GAAA", secretKey: "SAAA" };
+  const walletB = { publicKey: "GBBB", secretKey: "SBBB" };
+
+  it("use_profile creates a new empty profile and switches to it", () => {
+    const result = useProfile("publisher");
+    expect(result).toContain("Active profile: publisher");
+    expect(result).toContain("No wallet in this profile yet");
+    expect(listProfiles()).toContain("publisher");
+  });
+
+  it("use_profile reports the wallet when the profile already has one", () => {
+    useProfile("publisher");
+    _setAgentWallet(walletA);
+    _setAgentApiKey("key-a");
+
+    const result = useProfile("publisher");
+    expect(result).toContain("Active profile: publisher");
+    expect(result).toContain("GAAA");
+    expect(result).toContain("Publisher registered: yes");
+  });
+
+  it("use_profile rejects invalid names with a deterministic message", () => {
+    expect(() => useProfile("has space")).toThrow("Invalid profile name");
+    expect(() => useProfile("")).toThrow("Invalid profile name");
+  });
+
+  it("keeps wallets isolated per profile", () => {
+    useProfile("buyer");
+    _setAgentWallet(walletA);
+    useProfile("publisher");
+    _setAgentWallet(walletB);
+
+    const list = listProfiles();
+    expect(list).toContain("buyer — GAAA");
+    expect(list).toContain("publisher — GBBB");
+    // The active profile is marked and its wallet is the one just set.
+    expect(list).toMatch(/\*\s*publisher — GBBB/);
+  });
+
+  it("list_profiles reports an empty state before any profile exists", () => {
+    expect(listProfiles()).toContain("No profiles yet");
+  });
+
+  it("list_profiles never exposes secret keys", () => {
+    useProfile("publisher");
+    _setAgentWallet(walletA);
+    expect(listProfiles()).not.toContain("SAAA");
+  });
+
+  it("wallet_info shows the active profile and registration state", async () => {
+    useProfile("mainnet");
+    _setAgentWallet(walletA);
+    _setAgentApiKey("key-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(
+        mockResponse({
+          balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "12.5" }],
+        }),
+      ),
+    );
+
+    const result = await walletInfo();
+    expect(result).toContain("Profile: mainnet");
+    expect(result).toContain("Address: GAAA");
+    expect(result).toContain("USDC Balance: 12.5");
+    expect(result).toContain("Publisher registered: yes");
   });
 });
