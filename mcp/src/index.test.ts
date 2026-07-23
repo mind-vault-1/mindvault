@@ -451,7 +451,7 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
     expect(result).toContain("Insufficient USDC");
     expect(result).toContain("50 USDC");
     expect(result).toContain("1 USDC");
-    expect(result).toContain("shortfall" || "Shortfall");
+    expect(result.toLowerCase()).toContain("shortfall");
   });
 
   it("throws when the paid fetch fails (non-ok response)", async () => {
