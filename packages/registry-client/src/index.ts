@@ -37,6 +37,20 @@ export {
   type NetworkValidationIssue,
 } from "./validateNetwork.js";
 
+export {
+  REGISTRY_CLIENT_VERSION,
+  getBindingMethodNames,
+  fetchDeployedMethodNames,
+  compareMethodSets,
+  formatBindingCheck,
+  checkContractBindings,
+  type BindingComparison,
+  type BindingCheckOptions,
+  type BindingCheckResult,
+  type BindingReportContext,
+  type DeployedMethodsQuery,
+} from "./bindingCheck.js";
+
 // Re-export everything the bindings generator produced. The Client class,
 // the Resource type, error variants, and network defaults all flow through.
 export * from "./generated/index.js";

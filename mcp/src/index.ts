@@ -5,6 +5,7 @@
  */
 
 import {
+  checkContractBindings,
   createRegistryClient,
   Errors as RegistryErrors,
   networks as registryNetworks,
@@ -24,15 +25,6 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { homedir } from "os";
 import { join } from "path";
 import { signMutatingHeaders } from "./requestSignature.js";
-import {
-  DEFAULT_PROFILE,
-  isValidProfileName,
-  migrateState,
-  STATE_VERSION,
-  type AgentWallet,
-  type ProfileState,
-  type WalletProfile,
-} from "./profiles.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +66,10 @@ if (!REGISTRY_CONTRACT_ID) {
   );
   process.exit(1);
 }
+
+// Opt-in tool-level metrics (set MINDVAULT_METRICS=1). Disabled by default so
+// there is zero bookkeeping unless an operator turns it on.
+const metrics = createMetricsRecorder(metricsEnabledFromEnv(process.env));
 
 // ── State persistence ─────────────────────────────────────────────────────────
 
@@ -559,6 +555,7 @@ async function publish(args: {
       resourceId: resource.id,
     }),
   });
+  metrics.recordPayment(verifyRes.ok);
 
   const verifyData = await verifyRes.json().catch(() => null);
 
@@ -651,6 +648,7 @@ export async function buy(resourceId: string): Promise<string> {
 
   const paidFetch = makePaidFetch(wallet);
   const res = await paidFetch(`${BASE_URL}/resources/${resourceId}`);
+  metrics.recordPayment(res.ok);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Buy failed [${res.status}]: ${text}`);
@@ -846,6 +844,22 @@ function registryInfo(): string {
   return JSON.stringify(info, null, 2);
 }
 
+/**
+ * Verify the installed registry-client bindings match the deployed contract's
+ * interface. Returns the check's deterministic, agent-safe message (a match
+ * summary, a mismatch warning with a recommended fix, or a "could not verify"
+ * note when the contract/RPC is unreachable).
+ */
+async function checkBindings(): Promise<string> {
+  const result = await checkContractBindings({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    network: STELLAR_NETWORK,
+  });
+  return result.message;
+}
+
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
 const server = new Server({ name: "mindvault", version: "1.0.0" }, { capabilities: { tools: {} } });
@@ -1002,6 +1016,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     {
+      name: "mindvault_check_bindings",
+      description:
+        "Verify the installed registry-client bindings match the deployed vault-registry contract interface. Reports a match, or a warning listing the drifting methods with the contract ID, network, client version, and a recommended fix (redeploy the contract or regenerate bindings). Useful after a contract redeploy or client upgrade.",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    {
       name: "mindvault_registry_lookup",
       description:
         "Look up a resource directly from the on-chain vault registry by its ID. Returns creator, price (USDC), metadata, listed state, tags, contract ID, and network. Data comes from Stellar/Soroban, not the MindVault API. Returns an actionable message when the resource is not registered on-chain.",
@@ -1041,8 +1061,72 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: [],
       },
     },
+    {
+      name: "mindvault_metrics",
+      description:
+        "Return opt-in tool-level metrics: per-tool call/error counts and durations, plus payment attempt/failure totals. Enable by setting MINDVAULT_METRICS=1 on the server. Output contains only tool names, counts, and durations — never arguments, wallets, or API keys. Pass reset=true to clear counters after reading.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          reset: {
+            type: "boolean",
+            description:
+              "Clear all counters after returning the current snapshot (default: false).",
+          },
+        },
+        required: [],
+      },
+    },
   ],
 }));
+
+async function dispatchTool(name: string, args: any): Promise<string> {
+  switch (name) {
+    case "mindvault_setup_wallet":
+      return setupWallet();
+    case "mindvault_wallet_info":
+      return walletInfo();
+    case "mindvault_browse":
+      return browse();
+    case "mindvault_search": {
+      const filters = normalizeSearchFilters(args);
+      return filters ? search(filters) : "Provide a non-empty search query.";
+    }
+    case "mindvault_preview":
+      return preview(args.resourceId as string);
+    case "mindvault_register":
+      return register(
+        args.name as string,
+        args.email as string,
+        args.walletAddress as string | undefined,
+      );
+    case "mindvault_publish":
+      return publish({
+        title: args.title as string,
+        description: args.description as string | undefined,
+        price: args.price as string,
+        externalUrl: args.externalUrl as string,
+      });
+    case "mindvault_buy":
+      return buy(args.resourceId as string);
+    case "mindvault_register_onchain":
+      return registerOnchain(args.resourceId as string);
+    case "mindvault_agent_status":
+      return agentStatus();
+    case "mindvault_registry_info":
+      return registryInfo();
+    case "mindvault_registry_lookup":
+      return registryLookup(args.resourceId as string);
+    case "mindvault_tx_status":
+      return txStatus(args.txHash as string);
+    case "mindvault_reset":
+      return resetState();
+    case "mindvault_metrics":
+      return toolMetrics(args.reset === true);
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
@@ -1103,6 +1187,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "mindvault_registry_info":
         result = registryInfo();
         break;
+      case "mindvault_check_bindings":
+        result = await checkBindings();
+        break;
       case "mindvault_registry_lookup":
         result = await registryLookup(args.resourceId as string);
         break;
@@ -1120,6 +1207,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
   }
 });
+
+// Best-effort startup check: warn on stderr (never fatal, never blocks) when the
+// installed bindings drift from the deployed contract. Skipped under tests so it
+// never makes a real network call. Errors (e.g. offline) are swallowed — the
+// mindvault_check_bindings tool gives operators an on-demand, detailed report.
+if (!process.env.VITEST) {
+  void checkContractBindings({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    network: STELLAR_NETWORK,
+  })
+    .then((result) => {
+      if (result.status === "mismatch") console.error(`MindVault MCP: ${result.message}`);
+    })
+    .catch(() => {
+      /* offline or unreachable — the mindvault_check_bindings tool can report details */
+    });
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
