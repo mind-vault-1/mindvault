@@ -5,6 +5,7 @@
  */
 
 import {
+  checkContractBindings,
   createRegistryClient,
   Errors as RegistryErrors,
   networks as registryNetworks,
@@ -24,7 +25,6 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { homedir } from "os";
 import { join } from "path";
 import { signMutatingHeaders } from "./requestSignature.js";
-import { createMetricsRecorder, measureTool, metricsEnabledFromEnv } from "./metrics.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -732,26 +732,19 @@ function registryInfo(): string {
 }
 
 /**
- * Return the current metrics snapshot as JSON. Only counts, durations, and tool
- * names are included — never arguments, wallets, or API keys. When metrics are
- * disabled, returns an actionable note instead of counters. Pass reset=true to
- * clear counters after reading.
+ * Verify the installed registry-client bindings match the deployed contract's
+ * interface. Returns the check's deterministic, agent-safe message (a match
+ * summary, a mismatch warning with a recommended fix, or a "could not verify"
+ * note when the contract/RPC is unreachable).
  */
-function toolMetrics(reset: boolean): string {
-  const snapshot = metrics.snapshot();
-  if (reset) metrics.reset();
-  if (!snapshot.enabled) {
-    return JSON.stringify(
-      {
-        enabled: false,
-        message:
-          "Metrics are disabled. Set MINDVAULT_METRICS=1 (or true/yes/on) and restart the server to collect tool-level metrics.",
-      },
-      null,
-      2,
-    );
-  }
-  return JSON.stringify(snapshot, null, 2);
+async function checkBindings(): Promise<string> {
+  const result = await checkContractBindings({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    network: STELLAR_NETWORK,
+  });
+  return result.message;
 }
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
@@ -877,6 +870,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     {
+      name: "mindvault_check_bindings",
+      description:
+        "Verify the installed registry-client bindings match the deployed vault-registry contract interface. Reports a match, or a warning listing the drifting methods with the contract ID, network, client version, and a recommended fix (redeploy the contract or regenerate bindings). Useful after a contract redeploy or client upgrade.",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    {
       name: "mindvault_registry_lookup",
       description:
         "Look up a resource directly from the on-chain vault registry by its ID. Returns creator, price (USDC), metadata, listed state, tags, contract ID, and network. Data comes from Stellar/Soroban, not the MindVault API. Returns an actionable message when the resource is not registered on-chain.",
@@ -977,12 +976,95 @@ async function dispatchTool(name: string, args: any): Promise<string> {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
   try {
-    const result = await measureTool(metrics, name, () => dispatchTool(name, args));
+    let result: string;
+    switch (name) {
+      case "mindvault_setup_wallet":
+        result = await setupWallet();
+        break;
+      case "mindvault_wallet_info":
+        result = await walletInfo();
+        break;
+      case "mindvault_browse":
+        result = await browse();
+        break;
+      case "mindvault_search": {
+        const filters = normalizeSearchFilters(args);
+        if (!filters) {
+          result = "Provide a non-empty search query.";
+        } else {
+          result = await search(filters);
+        }
+        break;
+      }
+      case "mindvault_preview":
+        result = await preview(args.resourceId as string);
+        break;
+      case "mindvault_register":
+        result = await register(
+          args.name as string,
+          args.email as string,
+          args.walletAddress as string | undefined,
+        );
+        break;
+      case "mindvault_publish":
+        result = await publish({
+          title: args.title as string,
+          description: args.description as string | undefined,
+          price: args.price as string,
+          externalUrl: args.externalUrl as string,
+        });
+        break;
+      case "mindvault_buy":
+        result = await buy(args.resourceId as string);
+        break;
+      case "mindvault_register_onchain":
+        result = await registerOnchain(args.resourceId as string);
+        break;
+      case "mindvault_agent_status":
+        result = await agentStatus();
+        break;
+      case "mindvault_registry_info":
+        result = registryInfo();
+        break;
+      case "mindvault_check_bindings":
+        result = await checkBindings();
+        break;
+      case "mindvault_registry_lookup":
+        result = await registryLookup(args.resourceId as string);
+        break;
+      case "mindvault_tx_status":
+        result = await txStatus(args.txHash as string);
+        break;
+      case "mindvault_reset":
+        result = resetState();
+        break;
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
     return { content: [{ type: "text", text: result }] };
   } catch (err: any) {
     return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
   }
 });
+
+// Best-effort startup check: warn on stderr (never fatal, never blocks) when the
+// installed bindings drift from the deployed contract. Skipped under tests so it
+// never makes a real network call. Errors (e.g. offline) are swallowed — the
+// mindvault_check_bindings tool gives operators an on-demand, detailed report.
+if (!process.env.VITEST) {
+  void checkContractBindings({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    network: STELLAR_NETWORK,
+  })
+    .then((result) => {
+      if (result.status === "mismatch") console.error(`MindVault MCP: ${result.message}`);
+    })
+    .catch(() => {
+      /* offline or unreachable — the mindvault_check_bindings tool can report details */
+    });
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
