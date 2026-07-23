@@ -23,6 +23,7 @@ import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { signMutatingHeaders } from "./requestSignature.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
