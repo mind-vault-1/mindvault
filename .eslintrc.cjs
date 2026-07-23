@@ -31,6 +31,8 @@ module.exports = {
     "packages/registry-client/src/generated/",
     "packages/registry-client/vitest.config.*",
     "**/vitest.config.ts",
+    // Dev tooling outside any tsconfig `include` (typed-lint has no project for it).
+    "mcp/scripts/",
   ],
   rules: {
     "prettier/prettier": "error",
