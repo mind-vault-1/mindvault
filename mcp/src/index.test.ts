@@ -24,7 +24,9 @@ vi.mock("@x402/stellar/exact/client", () => ({ ExactStellarScheme: vi.fn() }));
 
 vi.mock("@x402/fetch", () => ({
   wrapFetchWithPayment: vi.fn(),
-  x402Client: vi.fn().mockImplementation(() => ({ register: vi.fn() })),
+  x402Client: vi.fn(function () {
+    return { register: vi.fn() };
+  }),
 }));
 
 vi.mock("@mindvault/registry-client", async (importOriginal) => {
@@ -449,7 +451,7 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
     expect(result).toContain("Insufficient USDC");
     expect(result).toContain("50 USDC");
     expect(result).toContain("1 USDC");
-    expect(result).toContain("shortfall" || "Shortfall");
+    expect(result.toLowerCase()).toContain("shortfall");
   });
 
   it("throws when the paid fetch fails (non-ok response)", async () => {
@@ -567,10 +569,12 @@ describe("registerOnchain – happy path", () => {
       Keypair: {
         fromSecret: vi.fn().mockReturnValue({ sign: vi.fn() }),
       },
-      Transaction: vi.fn().mockImplementation(() => ({
-        sign: vi.fn(),
-        toXDR: vi.fn().mockReturnValue("AAAAAQAAAAD...signed"),
-      })),
+      Transaction: vi.fn(function () {
+        return {
+          sign: vi.fn(),
+          toXDR: vi.fn().mockReturnValue("AAAAAQAAAAD...signed"),
+        };
+      }),
     }));
 
     const result = await registerOnchain("res-001");
@@ -670,10 +674,12 @@ describe("registerOnchain – error and retry messaging", () => {
       Keypair: {
         fromSecret: vi.fn().mockReturnValue({ sign: vi.fn() }),
       },
-      Transaction: vi.fn().mockImplementation(() => ({
-        sign: vi.fn(),
-        toXDR: vi.fn().mockReturnValue("AAAAAQ...signed"),
-      })),
+      Transaction: vi.fn(function () {
+        return {
+          sign: vi.fn(),
+          toXDR: vi.fn().mockReturnValue("AAAAAQ...signed"),
+        };
+      }),
     }));
 
     const err = await registerOnchain("res-timeout").catch((e) => e);
@@ -716,10 +722,12 @@ describe("registerOnchain – error and retry messaging", () => {
 
     vi.doMock("@stellar/stellar-sdk", () => ({
       Keypair: { fromSecret: vi.fn().mockReturnValue({ sign: vi.fn() }) },
-      Transaction: vi.fn().mockImplementation(() => ({
-        sign: vi.fn(),
-        toXDR: vi.fn().mockReturnValue("AAAAAQ...signed"),
-      })),
+      Transaction: vi.fn(function () {
+        return {
+          sign: vi.fn(),
+          toXDR: vi.fn().mockReturnValue("AAAAAQ...signed"),
+        };
+      }),
     }));
 
     const result = await registerOnchain("res-success");

@@ -59,22 +59,23 @@ MindVault includes an MCP server that lets any AI system (Claude Code, Codex, or
 
 Available tools:
 
-| Tool | Description | Example |
-|------|-------------|---------|
-| `mindvault_setup_wallet` | Create a Stellar wallet using the sponsored account protocol | `"Create a wallet for me"` |
-| `mindvault_wallet_info` | Check wallet address and USDC balance | `"What's my wallet balance?"` |
-| `mindvault_browse` | List available resources in the vault | `"Show me what resources are available"` |
-| `mindvault_search` | Search the catalog by keyword, price, type, and verification status | `"Find verified links under 1 USDC"` |
-| `mindvault_preview` | Get details and price for a resource | `"Preview resource swcn98besxpp6t1u8e77fqz3"` |
-| `mindvault_register` | Register as a publisher using the agent's wallet | `"Register me as Alice, alice@example.com"` |
-| `mindvault_publish` | Publish a resource and pay for verification via x402 | `"Publish 'My Dataset' for 5 USDC at https://example.com/data"` |
-| `mindvault_buy` | Pay USDC and access a resource via x402 | `"Buy resource swcn98besxpp6t1u8e77fqz3"` |
-| `mindvault_register_onchain` | Retry on-chain registration for a published, verified resource | `"Register resource swcn98besxpp6t1u8e77fqz3 on-chain"` |
-| `mindvault_agent_status` | Check the verification agent's earnings and activity | `"What's the agent's status?"` |
-| `mindvault_registry_info` | Return the on-chain vault-registry contract details | `"Show me registry info"` |
-| `mindvault_registry_lookup` | Look up a resource directly from the on-chain vault registry by ID | `"Look up resource swcn98besxpp6t1u8e77fqz3 on-chain"` |
-| `mindvault_tx_status` | Look up a Stellar transaction status by hash | `"Check tx a1b2c3d4..."` |
-| `mindvault_reset` | Clear the persisted wallet and publisher API key from memory and disk | `"Reset my agent credentials"` |
+| Tool                         | Description                                                               | Example                                                         |
+| ---------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `mindvault_setup_wallet`     | Create a Stellar wallet using the sponsored account protocol              | `"Create a wallet for me"`                                      |
+| `mindvault_wallet_info`      | Check wallet address and USDC balance                                     | `"What's my wallet balance?"`                                   |
+| `mindvault_browse`           | List available resources in the vault                                     | `"Show me what resources are available"`                        |
+| `mindvault_search`           | Search the catalog by keyword, price, type, and verification status       | `"Find verified links under 1 USDC"`                            |
+| `mindvault_preview`          | Get details and price for a resource                                      | `"Preview resource swcn98besxpp6t1u8e77fqz3"`                   |
+| `mindvault_register`         | Register as a publisher using the agent's wallet                          | `"Register me as Alice, alice@example.com"`                     |
+| `mindvault_publish`          | Publish a resource and pay for verification via x402                      | `"Publish 'My Dataset' for 5 USDC at https://example.com/data"` |
+| `mindvault_buy`              | Pay USDC and access a resource via x402                                   | `"Buy resource swcn98besxpp6t1u8e77fqz3"`                       |
+| `mindvault_register_onchain` | Retry on-chain registration for a published, verified resource            | `"Register resource swcn98besxpp6t1u8e77fqz3 on-chain"`         |
+| `mindvault_agent_status`     | Check the verification agent's earnings and activity                      | `"What's the agent's status?"`                                  |
+| `mindvault_registry_info`    | Return the on-chain vault-registry contract details                       | `"Show me registry info"`                                       |
+| `mindvault_check_bindings`   | Verify the registry-client bindings match the deployed contract interface | `"Check the contract bindings"`                                 |
+| `mindvault_registry_lookup`  | Look up a resource directly from the on-chain vault registry by ID        | `"Look up resource swcn98besxpp6t1u8e77fqz3 on-chain"`          |
+| `mindvault_tx_status`        | Look up a Stellar transaction status by hash                              | `"Check tx a1b2c3d4..."`                                        |
+| `mindvault_reset`            | Clear the persisted wallet and publisher API key from memory and disk     | `"Reset my agent credentials"`                                  |
 
 ### Install
 

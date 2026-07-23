@@ -5,6 +5,7 @@
  */
 
 import {
+  checkContractBindings,
   createRegistryClient,
   Errors as RegistryErrors,
   networks as registryNetworks,
@@ -23,6 +24,7 @@ import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { signMutatingHeaders } from "./requestSignature.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -723,6 +725,22 @@ function registryInfo(): string {
   return JSON.stringify(info, null, 2);
 }
 
+/**
+ * Verify the installed registry-client bindings match the deployed contract's
+ * interface. Returns the check's deterministic, agent-safe message (a match
+ * summary, a mismatch warning with a recommended fix, or a "could not verify"
+ * note when the contract/RPC is unreachable).
+ */
+async function checkBindings(): Promise<string> {
+  const result = await checkContractBindings({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    network: STELLAR_NETWORK,
+  });
+  return result.message;
+}
+
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
 const server = new Server({ name: "mindvault", version: "1.0.0" }, { capabilities: { tools: {} } });
@@ -846,6 +864,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: "object", properties: {}, required: [] },
     },
     {
+      name: "mindvault_check_bindings",
+      description:
+        "Verify the installed registry-client bindings match the deployed vault-registry contract interface. Reports a match, or a warning listing the drifting methods with the contract ID, network, client version, and a recommended fix (redeploy the contract or regenerate bindings). Useful after a contract redeploy or client upgrade.",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    {
       name: "mindvault_registry_lookup",
       description:
         "Look up a resource directly from the on-chain vault registry by its ID. Returns creator, price (USDC), metadata, listed state, tags, contract ID, and network. Data comes from Stellar/Soroban, not the MindVault API. Returns an actionable message when the resource is not registered on-chain.",
@@ -932,6 +956,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "mindvault_registry_info":
         result = registryInfo();
         break;
+      case "mindvault_check_bindings":
+        result = await checkBindings();
+        break;
       case "mindvault_registry_lookup":
         result = await registryLookup(args.resourceId as string);
         break;
@@ -949,6 +976,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     return { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
   }
 });
+
+// Best-effort startup check: warn on stderr (never fatal, never blocks) when the
+// installed bindings drift from the deployed contract. Skipped under tests so it
+// never makes a real network call. Errors (e.g. offline) are swallowed — the
+// mindvault_check_bindings tool gives operators an on-demand, detailed report.
+if (!process.env.VITEST) {
+  void checkContractBindings({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    network: STELLAR_NETWORK,
+  })
+    .then((result) => {
+      if (result.status === "mismatch") console.error(`MindVault MCP: ${result.message}`);
+    })
+    .catch(() => {
+      /* offline or unreachable — the mindvault_check_bindings tool can report details */
+    });
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
