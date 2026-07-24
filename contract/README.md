@@ -27,6 +27,8 @@ reads the canonical resource entry here.
 | `get(id)` | — | `id: String` — resource cuid2 | `Result<Resource, Error>` | Read a single resource. Errors `NotFound` if absent. |
 | `exists(id)` | — | `id: String` — resource cuid2 | `bool` | Whether a resource is registered. |
 | `count()` | — | — | `u32` | Total resources successfully registered (monotonic). |
+| `set_terms_hash(creator, terms_hash)` | `creator` | `creator: Address` — creator address; `terms_hash: String` — max 64 bytes | `Result<(), Error>` | Store a hash of accepted marketplace terms for the creator. |
+| `get_terms_hash(creator)` | — | `creator: Address` — creator address | `Result<String, Error>` | Fetch a creator's marketplace terms hash. Errors `NotFound` if absent. |
 
 ### Error codes
 
@@ -36,6 +38,8 @@ reads the canonical resource entry here.
 | `2` | `NotFound` | No resource matches the given `id`. |
 | `3` | `InvalidPrice` | Price is `<= 0`. |
 | `4` | `MetadataTooLong` | Metadata pointer exceeds `MAX_METADATA_POINTER_LEN` (512 bytes). |
+| `5` | `InvalidTag` | The provided tags list or string length is invalid. |
+| `6` | `TermsHashTooLong` | Terms hash exceeds `MAX_TERMS_HASH_LEN` (64 bytes). |
 
 ### Events
 
@@ -49,6 +53,7 @@ kind, the second carries the affected resource id.
 | `updmeta` | `()` | `update_metadata()` succeeds |
 | `transfer` | `new_creator: Address` | `transfer_ownership()` succeeds |
 | `setlisted` | `listed: bool` | `set_listed()` (and `delist()`) succeeds |
+| `setterms` | `terms_hash: String` | `set_terms_hash()` succeeds |
 
 ### Price units
 
@@ -72,6 +77,7 @@ pub struct Resource {
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `MAX_METADATA_POINTER_LEN` | `512` | Maximum length of the metadata pointer in bytes. |
+| `MAX_TERMS_HASH_LEN` | `64` | Maximum length of the creator terms hash in bytes. |
 
 ### Breaking change: tags on `register` (v2)
 
