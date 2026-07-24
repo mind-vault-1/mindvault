@@ -54,6 +54,7 @@ pub enum Error {
     InvalidPrice = 3,
     MetadataTooLong = 4,
     InvalidTag = 5,
+    AlreadyOwner = 6,
 }
 
 #[contract]
@@ -146,6 +147,9 @@ impl VaultRegistry {
     pub fn transfer_ownership(env: Env, id: String, new_creator: Address) -> Result<(), Error> {
         let mut resource = Self::load(&env, &id)?;
         resource.creator.require_auth();
+        if resource.creator == new_creator {
+            return Err(Error::AlreadyOwner);
+        }
         resource.creator = new_creator.clone();
         Self::save(&env, &resource);
         env.events()
