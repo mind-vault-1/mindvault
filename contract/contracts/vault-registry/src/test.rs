@@ -439,6 +439,56 @@ fn update_metadata_rejects_over_max_length() {
     assert_eq!(client.get(&id).metadata, String::from_str(&env, "short"));
 }
 
+#[test]
+fn register_accepts_empty_metadata() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "meta-empty");
+    let metadata = String::from_str(&env, "");
+    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    assert_eq!(client.get(&id).metadata, metadata);
+}
+
+#[test]
+fn register_accepts_one_character_metadata() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "meta-one");
+    let metadata = String::from_str(&env, "a");
+    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    assert_eq!(client.get(&id).metadata, metadata);
+}
+
+#[test]
+fn update_metadata_accepts_empty_metadata() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "meta-upd-empty");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "short"),
+        &empty_tags(&env),
+    );
+    let metadata = String::from_str(&env, "");
+    client.update_metadata(&id, &metadata);
+    assert_eq!(client.get(&id).metadata, metadata);
+}
+
+#[test]
+fn update_metadata_accepts_one_character_metadata() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "meta-upd-one");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "short"),
+        &empty_tags(&env),
+    );
+    let metadata = String::from_str(&env, "a");
+    client.update_metadata(&id, &metadata);
+    assert_eq!(client.get(&id).metadata, metadata);
+}
+
 fn register_n(env: &Env, creator: &Address, client: &VaultRegistryClient<'_>, ids: &[&str]) {
     for id in ids {
         client.register(
