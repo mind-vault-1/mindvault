@@ -692,3 +692,19 @@ proptest! {
         assert_eq!(r4.listed, listed);
     }
 }
+
+#[test]
+fn transfer_ownership_to_self_fails() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "self-transfer");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "m"),
+        &empty_tags(&env),
+    );
+
+    let res = client.try_transfer_ownership(&id, &creator);
+    assert_eq!(res, Err(Ok(Error::AlreadyOwner)));
+}
