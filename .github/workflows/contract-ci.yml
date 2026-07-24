@@ -31,15 +31,32 @@ jobs:
             ${{ runner.os }}-contract-wasm-
             ${{ runner.os }}-cargo-
 
+      - name: Install Stellar CLI
+        run: |
+          curl -fsSL https://github.com/stellar/stellar-cli/raw/main/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
       - name: Build optimized wasm contract
         working-directory: contract
-        run: cargo build --target wasm32-unknown-unknown --release
+        run: stellar contract build --manifest-path Cargo.toml
+
+      - name: Enforce WASM size budget
+        working-directory: contract
+        run: |
+          WASM_FILE="target/wasm32v1-none/release/vault_registry.wasm"
+          MAX_SIZE=10240
+          SIZE=$(stat -c%s "$WASM_FILE")
+          echo "WASM Size: $SIZE bytes"
+          if [ "$SIZE" -gt "$MAX_SIZE" ]; then
+            echo "::error::WASM size ($SIZE bytes) exceeds the maximum allowed budget ($MAX_SIZE bytes). Please optimize or explicitly update the budget if this growth is expected."
+            exit 1
+          fi
 
       - name: Upload wasm artifact
         uses: actions/upload-artifact@v7
         with:
           name: vault-registry-wasm
-          path: contract/target/wasm32-unknown-unknown/release/*.wasm
+          path: contract/target/wasm32v1-none/release/*.wasm
           if-no-files-found: error
 
       - name: Run tests
