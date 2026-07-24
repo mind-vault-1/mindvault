@@ -84,6 +84,17 @@ pub struct Resource {
 include `tags` (use `[]` for resources without labels). Server-side filtering by tag is
 a follow-up; tags are stored on-chain for catalog use.
 
+### Generating Bindings
+
+The TypeScript client bindings must remain in sync with the contract interface. If you modify the contract signature, you **must** regenerate the bindings:
+
+```bash
+CONTRACT_WASM=contract/target/wasm32v1-none/release/vault_registry.wasm pnpm contract:bindings
+```
+
+> [!IMPORTANT]
+> CI strictly enforces binding freshness. If you forget to run this script and commit the updated `packages/registry-client/src/generated/index.ts` file, the `Contract CI` workflow will fail.
+
 ### Develop
 
 ```bash
