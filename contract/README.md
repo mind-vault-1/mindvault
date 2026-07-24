@@ -73,6 +73,14 @@ pub struct Resource {
 |----------|-------|-------------|
 | `MAX_METADATA_POINTER_LEN` | `512` | Maximum length of the metadata pointer in bytes. |
 
+### WASM Size Budget
+
+To prevent unexpected size growth from landing silently, this contract enforces a strictly tracked optimized WASM size budget in CI. 
+
+Currently, the limit is **10,240 bytes (10 KB)**. 
+
+If your genuine feature additions cause the CI to fail with a size limit error, please raise the `MAX_SIZE` variable directly within `.github/workflows/contract-ci.yml` and explicitly document why the growth was necessary in your PR description.
+
 ### Breaking change: tags on `register` (v2)
 
 `register` now requires a fifth argument `tags: Vec<String>`. Existing callers must pass
