@@ -692,3 +692,38 @@ proptest! {
         assert_eq!(r4.listed, listed);
     }
 }
+
+#[test]
+fn set_terms_hash_works_and_extends_ttl() {
+    let (env, creator, client) = setup();
+    let terms = String::from_str(&env, "hash123");
+    client.set_terms_hash(&creator, &terms);
+    assert_eq!(client.get_terms_hash(&creator), terms);
+
+    let key = DataKey::CreatorTerms(creator.clone());
+    let ttl = env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
+    assert_eq!(ttl, TTL_BUMP_AMOUNT);
+}
+
+#[test]
+fn get_terms_hash_missing_fails() {
+    let (_env, creator, client) = setup();
+    assert_eq!(
+        client.try_get_terms_hash(&creator),
+        Err(Ok(Error::NotFound))
+    );
+}
+
+#[test]
+fn set_terms_hash_rejects_over_max_length() {
+    let (env, creator, client) = setup();
+    let terms = metadata_of_len(&env, MAX_TERMS_HASH_LEN + 1);
+    assert_eq!(
+        client.try_set_terms_hash(&creator, &terms),
+        Err(Ok(Error::TermsHashTooLong))
+    );
+    assert_eq!(
+        client.try_get_terms_hash(&creator),
+        Err(Ok(Error::NotFound))
+    );
+}
