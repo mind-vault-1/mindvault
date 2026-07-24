@@ -10,6 +10,8 @@
 //! Only the recorded creator can mutate a resource (enforced via
 //! `require_auth`). Ownership can be transferred.
 
+extern crate alloc;
+
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, IntoVal,
     String, Val, Vec,
@@ -54,6 +56,7 @@ pub enum Error {
     InvalidPrice = 3,
     MetadataTooLong = 4,
     InvalidTag = 5,
+    ReservedId = 6,
 }
 
 #[contract]
@@ -77,6 +80,9 @@ impl VaultRegistry {
         }
         Self::validate_metadata_pointer(&metadata)?;
         Self::validate_tags(&env, &tags)?;
+        if Self::is_reserved_id(&id) {
+            return Err(Error::ReservedId);
+        }
         let key = DataKey::Resource(id.clone());
         if env.storage().persistent().has(&key) {
             return Err(Error::AlreadyRegistered);
@@ -217,6 +223,15 @@ impl VaultRegistry {
 }
 
 impl VaultRegistry {
+    fn is_reserved_id(id: &String) -> bool {
+        use alloc::string::ToString;
+        let id_str = id.to_string().to_lowercase();
+        match id_str.as_str() {
+            "admin" | "null" | "registry" | "api" | "index" | "root" | "system" => true,
+            _ => false,
+        }
+    }
+
     fn validate_metadata_pointer(metadata: &String) -> Result<(), Error> {
         if metadata.len() > MAX_METADATA_POINTER_LEN {
             return Err(Error::MetadataTooLong);

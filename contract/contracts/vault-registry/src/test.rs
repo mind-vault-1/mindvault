@@ -692,3 +692,28 @@ proptest! {
         assert_eq!(r4.listed, listed);
     }
 }
+
+#[test]
+fn register_rejects_reserved_ids() {
+    let (env, creator, client) = setup();
+    let reserved_ids = [
+        "admin", "ADMIN", "Admin", 
+        "null", "NULL", 
+        "registry", "Registry", 
+        "api", "index", "root", "system"
+    ];
+    let metadata = String::from_str(&env, "ipfs://QmRes");
+
+    for id in reserved_ids {
+        assert_eq!(
+            client.try_register(
+                &creator,
+                &String::from_str(&env, id),
+                &100i128,
+                &metadata,
+                &empty_tags(&env)
+            ),
+            Err(Ok(Error::ReservedId))
+        );
+    }
+}
