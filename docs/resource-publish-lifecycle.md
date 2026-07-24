@@ -197,6 +197,8 @@ The retry path is:
 - `500` if prepare cannot build the unsigned transaction.
 - `502` if submit fails or transaction confirmation times out in the current submit helper.
 
+Note: Certain route-like or system resource IDs (such as `admin`, `null`, `registry`, `api`, `index`, `root`, `system`) are reserved by the on-chain contract. Registration attempts using these IDs (case-insensitive) will fail deterministically at the contract level.
+
 One important implementation detail: registration failure does not clear `listed`. The resource can stay listed while `onchainStatus = "failed"`.
 
 ## 6. Purchase via x402
