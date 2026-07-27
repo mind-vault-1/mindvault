@@ -2605,6 +2605,10 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.repair_index(&Vec::from_array(&env, [r0.clone(), r1.clone(), r2.clone()])); // -> "reindex"
     record(&env, &client, &mut observed);
 
+    // repair_tag_index -> "retagidx"
+    client.repair_tag_index(&Vec::from_array(&env, [r0.clone(), r1.clone(), r2.clone()]));
+    record(&env, &client, &mut observed);
+
     observed.sort();
     observed.dedup();
 
@@ -3693,4 +3697,558 @@ fn repeated_reads_keep_ttl_at_bump_amount() {
             "TTL must be restored to BUMP_AMOUNT after each read"
         );
     }
+}
+
+// ─── Tag-based discovery: DataKey::TagIndex, list_by_tag, repair_tag_index ──
+
+/// Registering a resource with tags populates the tag index immediately.
+#[test]
+fn register_with_tags_builds_tag_index() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "tagidx1");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["rust", "defi"]),
+    );
+
+    let by_rust = client.list_by_tag(&String::from_str(&env, "rust"), &0u32, &20u32);
+    assert_eq!(by_rust.len(), 1);
+    assert_eq!(by_rust.get(0).unwrap().id, id);
+
+    let by_defi = client.list_by_tag(&String::from_str(&env, "defi"), &0u32, &20u32);
+    assert_eq!(by_defi.len(), 1);
+    assert_eq!(by_defi.get(0).unwrap().id, id);
+}
+
+/// Registering with no tags leaves the tag index empty for any query.
+#[test]
+fn register_without_tags_leaves_tag_index_empty() {
+    let (env, creator, client) = setup();
+    client.register(
+        &creator,
+        &String::from_str(&env, "notag1"),
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &empty_tags(&env),
+    );
+    let result = client.list_by_tag(&String::from_str(&env, "rust"), &0u32, &20u32);
+    assert_eq!(result.len(), 0);
+}
+
+/// Tags are normalized to lowercase before indexing; querying the uppercase
+/// form still finds the resource because the lookup is also normalized.
+#[test]
+fn tag_normalization_lowercase_on_register() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "normtag1");
+    // Register with mixed-case tag
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["Rust"]),
+    );
+
+    // Stored tag should be lowercase
+    let resource = client.get(&id);
+    assert_eq!(resource.tags.get(0).unwrap(), String::from_str(&env, "rust"));
+
+    // Lookup by uppercase also finds it (normalized on query side)
+    let by_upper = client.list_by_tag(&String::from_str(&env, "RUST"), &0u32, &20u32);
+    assert_eq!(by_upper.len(), 1);
+    assert_eq!(by_upper.get(0).unwrap().id, id);
+
+    // Lookup by lowercase also finds it
+    let by_lower = client.list_by_tag(&String::from_str(&env, "rust"), &0u32, &20u32);
+    assert_eq!(by_lower.len(), 1);
+}
+
+/// set_tags updates the tag index: previous tag loses the resource, new tag gains it.
+#[test]
+fn set_tags_updates_index_remove_and_add() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "tagupd1");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["old"]),
+    );
+
+    // Confirm old tag is indexed
+    assert_eq!(client.list_by_tag(&String::from_str(&env, "old"), &0u32, &20u32).len(), 1);
+
+    // Replace with a new tag
+    client.set_tags(&id, &tags(&env, &["new"]));
+
+    // Old tag index entry should no longer contain this resource
+    let old_results = client.list_by_tag(&String::from_str(&env, "old"), &0u32, &20u32);
+    assert_eq!(old_results.len(), 0);
+
+    // New tag index entry should contain this resource
+    let new_results = client.list_by_tag(&String::from_str(&env, "new"), &0u32, &20u32);
+    assert_eq!(new_results.len(), 1);
+    assert_eq!(new_results.get(0).unwrap().id, id);
+}
+
+/// set_tags with an empty list removes the resource from all previous tag indexes.
+#[test]
+fn set_tags_empty_removes_from_all_indexes() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "tagclr1");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["a", "b", "c"]),
+    );
+
+    for t in &["a", "b", "c"] {
+        assert_eq!(
+            client.list_by_tag(&String::from_str(&env, t), &0u32, &20u32).len(),
+            1,
+            "tag {} should have one entry before clear",
+            t
+        );
+    }
+
+    client.set_tags(&id, &empty_tags(&env));
+
+    for t in &["a", "b", "c"] {
+        assert_eq!(
+            client.list_by_tag(&String::from_str(&env, t), &0u32, &20u32).len(),
+            0,
+            "tag {} should be empty after clear",
+            t
+        );
+    }
+}
+
+/// Multiple resources sharing a tag all appear in list_by_tag in insertion order.
+#[test]
+fn list_by_tag_returns_multiple_resources_in_order() {
+    let (env, creator, client) = setup();
+    let r1 = String::from_str(&env, "multi1");
+    let r2 = String::from_str(&env, "multi2");
+    let r3 = String::from_str(&env, "multi3");
+    for id in &[&r1, &r2, &r3] {
+        client.register(
+            &creator,
+            id,
+            &100i128,
+            &String::from_str(&env, "ipfs://m"),
+            &tags(&env, &["shared"]),
+        );
+    }
+
+    let results = client.list_by_tag(&String::from_str(&env, "shared"), &0u32, &20u32);
+    assert_eq!(results.len(), 3);
+    assert_eq!(results.get(0).unwrap().id, r1);
+    assert_eq!(results.get(1).unwrap().id, r2);
+    assert_eq!(results.get(2).unwrap().id, r3);
+}
+
+/// list_by_tag with start > 0 skips earlier entries correctly.
+#[test]
+fn list_by_tag_pagination_start_offset() {
+    let (env, creator, client) = setup();
+    for i in 0..5u32 {
+        let id = String::from_str(&env, &alloc::format!("pg{}", i));
+        client.register(
+            &creator,
+            &id,
+            &100i128,
+            &String::from_str(&env, "ipfs://m"),
+            &tags(&env, &["pgtag"]),
+        );
+    }
+
+    let page1 = client.list_by_tag(&String::from_str(&env, "pgtag"), &0u32, &3u32);
+    assert_eq!(page1.len(), 3);
+    assert_eq!(page1.get(0).unwrap().id, String::from_str(&env, "pg0"));
+
+    let page2 = client.list_by_tag(&String::from_str(&env, "pgtag"), &3u32, &3u32);
+    assert_eq!(page2.len(), 2);
+    assert_eq!(page2.get(0).unwrap().id, String::from_str(&env, "pg3"));
+}
+
+/// list_by_tag with start beyond the tag's entry count returns empty vec.
+#[test]
+fn list_by_tag_start_beyond_end_returns_empty() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "beyond1");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["solo"]),
+    );
+    let result = client.list_by_tag(&String::from_str(&env, "solo"), &99u32, &20u32);
+    assert_eq!(result.len(), 0);
+}
+
+/// list_by_tag on an unknown tag returns empty vec (not NotFound).
+#[test]
+fn list_by_tag_unknown_tag_returns_empty() {
+    let (_env, _creator, client) = setup();
+    // No resources registered at all
+    let result = client.list_by_tag(
+        &String::from_str(&_env, "nonexistent"),
+        &0u32,
+        &20u32,
+    );
+    assert_eq!(result.len(), 0);
+}
+
+/// list_by_tag limit is silently capped at 20.
+#[test]
+fn list_by_tag_limit_capped_at_20() {
+    let (env, creator, client) = setup();
+    for i in 0..25u32 {
+        let id = String::from_str(&env, &alloc::format!("cap{:02}", i));
+        client.register(
+            &creator,
+            &id,
+            &100i128,
+            &String::from_str(&env, "ipfs://m"),
+            &tags(&env, &["heavy"]),
+        );
+    }
+    let result = client.list_by_tag(&String::from_str(&env, "heavy"), &0u32, &100u32);
+    assert_eq!(result.len(), 20, "limit should be capped at 20");
+}
+
+/// Duplicate tags in a single register call are both indexed (idempotent add).
+/// The resource appears exactly once in the tag index despite duplicate tag input.
+#[test]
+fn duplicate_tags_in_register_indexed_once() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "dup1");
+    // Register with duplicate tag values
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["dup", "dup"]),
+    );
+    // The resource should appear exactly once in the tag index
+    let result = client.list_by_tag(&String::from_str(&env, "dup"), &0u32, &20u32);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap().id, id);
+}
+
+/// Adding the same tag via set_tags that was already present doesn't duplicate
+/// the resource in the index.
+#[test]
+fn set_tags_same_tag_twice_does_not_duplicate_in_index() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "nodup1");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["keep"]),
+    );
+    // set_tags with the same tag again
+    client.set_tags(&id, &tags(&env, &["keep"]));
+    let result = client.list_by_tag(&String::from_str(&env, "keep"), &0u32, &20u32);
+    assert_eq!(result.len(), 1, "resource must appear exactly once in tag index");
+}
+
+/// repair_tag_index rebuilds the index from authoritative Resource.tags data.
+#[test]
+fn repair_tag_index_rebuilds_from_resource_tags() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let r1 = String::from_str(&env, "repairtag1");
+    let r2 = String::from_str(&env, "repairtag2");
+    client.register(
+        &creator,
+        &r1,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["t1", "shared"]),
+    );
+    client.register(
+        &creator,
+        &r2,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["t2", "shared"]),
+    );
+
+    // After a legitimate register, the index should already be correct.
+    // Calling repair with the same ids is a safe no-op and must leave state identical.
+    client.repair_tag_index(&Vec::from_array(&env, [r1.clone(), r2.clone()]));
+
+    let shared = client.list_by_tag(&String::from_str(&env, "shared"), &0u32, &20u32);
+    assert_eq!(shared.len(), 2);
+
+    let t1 = client.list_by_tag(&String::from_str(&env, "t1"), &0u32, &20u32);
+    assert_eq!(t1.len(), 1);
+    assert_eq!(t1.get(0).unwrap().id, r1);
+
+    let t2 = client.list_by_tag(&String::from_str(&env, "t2"), &0u32, &20u32);
+    assert_eq!(t2.len(), 1);
+    assert_eq!(t2.get(0).unwrap().id, r2);
+}
+
+/// repair_tag_index rejects unknown ids with NotFound.
+#[test]
+fn repair_tag_index_rejects_unknown_id() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let r1 = String::from_str(&env, "rtagunk1");
+    client.register(
+        &creator,
+        &r1,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["t"]),
+    );
+
+    let ghost = String::from_str(&env, "doesnotexist");
+    let res = client.try_repair_tag_index(&Vec::from_array(&env, [r1.clone(), ghost]));
+    assert_eq!(res, Err(Ok(Error::NotFound)));
+}
+
+/// repair_tag_index fails if no admin has been set.
+#[test]
+fn repair_tag_index_before_admin_set_fails() {
+    let (env, creator, client) = setup();
+    let r1 = String::from_str(&env, "rtagnonadm1");
+    client.register(
+        &creator,
+        &r1,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["t"]),
+    );
+    let res = client.try_repair_tag_index(&Vec::from_array(&env, [r1]));
+    assert_eq!(res, Err(Ok(Error::AdminNotSet)));
+}
+
+/// repair_tag_index with duplicate ids in input is idempotent — the resource
+/// appears exactly once in the rebuilt index (no duplicate, no error).
+#[test]
+fn repair_tag_index_duplicate_ids_are_idempotent() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let r1 = String::from_str(&env, "rtagdup1");
+    client.register(
+        &creator,
+        &r1,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["dtag"]),
+    );
+
+    // Passing the same id twice must not error and must not double-add to index
+    client.repair_tag_index(&Vec::from_array(&env, [r1.clone(), r1.clone()]));
+
+    let result = client.list_by_tag(&String::from_str(&env, "dtag"), &0u32, &20u32);
+    assert_eq!(result.len(), 1, "resource must appear exactly once despite duplicate id in repair input");
+}
+
+/// repair_tag_index emits a retagidx event with the count of ids processed.
+#[test]
+fn repair_tag_index_emits_retagidx_event() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let r1 = String::from_str(&env, "rtagevt1");
+    let r2 = String::from_str(&env, "rtagevt2");
+    client.register(&creator, &r1, &100i128, &String::from_str(&env, "ipfs://m"), &tags(&env, &["e"]));
+    client.register(&creator, &r2, &100i128, &String::from_str(&env, "ipfs://m"), &tags(&env, &["e"]));
+
+    client.repair_tag_index(&Vec::from_array(&env, [r1.clone(), r2.clone()]));
+
+    let all = env.events().all();
+    let mut found = false;
+    for i in 0..all.len() {
+        let (_, topics, data) = all.get(i).unwrap();
+        if topics.is_empty() { continue; }
+        let t0: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+        if t0 == Symbol::new(&env, "retagidx") {
+            let count: u32 = u32::try_from_val(&env, &data).expect("retagidx event data should be u32");
+            assert_eq!(count, 2u32);
+            found = true;
+            break;
+        }
+    }
+    assert!(found, "retagidx event not emitted");
+}
+
+/// tag index is consistent after a mix of register, set_tags add, and set_tags remove.
+#[test]
+fn tag_index_consistent_after_mixed_operations() {
+    let (env, creator, client) = setup();
+    let r1 = String::from_str(&env, "mix1");
+    let r2 = String::from_str(&env, "mix2");
+
+    // Register both with "alpha"
+    client.register(&creator, &r1, &100i128, &String::from_str(&env, "ipfs://m"), &tags(&env, &["alpha"]));
+    client.register(&creator, &r2, &100i128, &String::from_str(&env, "ipfs://m"), &tags(&env, &["alpha", "beta"]));
+
+    // r1 now drops "alpha", adds "gamma"
+    client.set_tags(&r1, &tags(&env, &["gamma"]));
+
+    let alpha = client.list_by_tag(&String::from_str(&env, "alpha"), &0u32, &20u32);
+    assert_eq!(alpha.len(), 1, "only r2 should remain under alpha");
+    assert_eq!(alpha.get(0).unwrap().id, r2);
+
+    let beta = client.list_by_tag(&String::from_str(&env, "beta"), &0u32, &20u32);
+    assert_eq!(beta.len(), 1);
+    assert_eq!(beta.get(0).unwrap().id, r2);
+
+    let gamma = client.list_by_tag(&String::from_str(&env, "gamma"), &0u32, &20u32);
+    assert_eq!(gamma.len(), 1);
+    assert_eq!(gamma.get(0).unwrap().id, r1);
+}
+
+/// Too many tags (> MAX_TAGS=8) is rejected at register time.
+#[test]
+fn register_rejects_too_many_tags() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "tagoverflow");
+    let too_many = tags(&env, &["a","b","c","d","e","f","g","h","i"]); // 9 tags
+    let res = client.try_register(
+        &creator, &id, &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &too_many,
+    );
+    assert_eq!(res, Err(Ok(Error::InvalidTag)));
+}
+
+/// Empty string tag is rejected.
+#[test]
+fn empty_tag_rejected() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "emptytag1");
+    let bad = tags(&env, &[""]);
+    let res = client.try_register(
+        &creator, &id, &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &bad,
+    );
+    assert_eq!(res, Err(Ok(Error::InvalidTag)));
+}
+
+/// Tag exceeding MAX_TAG_LEN (32 chars) is rejected.
+#[test]
+fn tag_too_long_rejected() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "longtag1");
+    let long_tag = "a".repeat(33);
+    let bad = tags(&env, &[long_tag.as_str()]);
+    let res = client.try_register(
+        &creator, &id, &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &bad,
+    );
+    assert_eq!(res, Err(Ok(Error::InvalidTag)));
+}
+
+/// Exactly MAX_TAG_LEN characters is accepted.
+#[test]
+fn tag_at_max_len_accepted() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "maxtaglen1");
+    let max_tag = "a".repeat(32);
+    client.register(
+        &creator, &id, &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &[max_tag.as_str()]),
+    );
+    let r = client.get(&id);
+    assert_eq!(r.tags.len(), 1);
+    assert_eq!(r.tags.get(0).unwrap().len(), 32);
+}
+
+/// Exactly MAX_TAGS tags (8) is accepted.
+#[test]
+fn exactly_max_tags_accepted() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "maxtags1");
+    client.register(
+        &creator, &id, &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &tags(&env, &["t1","t2","t3","t4","t5","t6","t7","t8"]),
+    );
+    assert_eq!(client.get(&id).tags.len(), 8);
+    // All 8 tags indexed
+    for t in &["t1","t2","t3","t4","t5","t6","t7","t8"] {
+        let res = client.list_by_tag(&String::from_str(&env, t), &0u32, &20u32);
+        assert_eq!(res.len(), 1, "tag {} should be in index", t);
+    }
+}
+
+/// set_tags normalizes uppercase tags and the index is updated with the
+/// normalized form; the settags event carries the normalized next_tags.
+#[test]
+fn set_tags_normalizes_tags_and_event_carries_normalized_form() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "normevt1");
+    client.register(
+        &creator, &id, &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &empty_tags(&env),
+    );
+    // set_tags with uppercase — check events immediately after this call
+    client.set_tags(&id, &tags(&env, &["UPPER"]));
+
+    // Verify event next_tags carries normalized form.
+    // env.events().all() returns events from the last contract invocation.
+    let all = env.events().all();
+    let mut found_next: Option<String> = None;
+    for i in 0..all.len() {
+        let (_, topics, data) = all.get(i).unwrap();
+        if topics.is_empty() { continue; }
+        let t0: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+        if t0 == Symbol::new(&env, "settags") {
+            if let Ok((_, next)) = <(Vec<String>, Vec<String>)>::try_from_val(&env, &data) {
+                if next.len() > 0 {
+                    found_next = Some(next.get(0).unwrap());
+                }
+            }
+        }
+    }
+    assert_eq!(found_next, Some(String::from_str(&env, "upper")),
+        "settags event must carry the normalized (lowercase) next_tags");
+
+    // Stored tags must also be lowercase — read after event check so events
+    // from set_tags are still the most recent invocation above.
+    let r = client.get(&id);
+    assert_eq!(r.tags.get(0).unwrap(), String::from_str(&env, "upper"));
+
+    // Index must be under the lowercase key
+    let by_lower = client.list_by_tag(&String::from_str(&env, "upper"), &0u32, &20u32);
+    assert_eq!(by_lower.len(), 1);
+}
+
+/// list_by_tag returns full Resource structs, not just ids.
+#[test]
+fn list_by_tag_returns_full_resource_structs() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "fullres1");
+    let price = 999i128;
+    let meta = String::from_str(&env, "ipfs://fullstruct");
+    client.register(
+        &creator, &id, &price,
+        &meta,
+        &tags(&env, &["fullcheck"]),
+    );
+
+    let results = client.list_by_tag(&String::from_str(&env, "fullcheck"), &0u32, &20u32);
+    assert_eq!(results.len(), 1);
+    let r = results.get(0).unwrap();
+    assert_eq!(r.id, id);
+    assert_eq!(r.creator, creator);
+    assert_eq!(r.price, price);
+    assert_eq!(r.metadata, meta);
+    assert!(r.listed);
 }
