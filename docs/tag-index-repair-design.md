@@ -1,9 +1,9 @@
 # ADR: Tag Index Repair Design
 
-**Status:** Proposed — no on-chain tag index exists yet. This ADR specifies
-the repair contract a future `list_by_tag`/`TagIndex` feature must satisfy
-before it ships, so drift has defined, tested recovery behavior from day one
-instead of being discovered (and designed) after the fact.
+**Status:** Accepted — `list_by_tag`, `DataKey::TagIndex`, and
+`repair_tag_index` shipped in this PR. The design constraints below were
+written as a pre-ship ADR and have been validated by the 25 tag-discovery
+tests in `src/test.rs`.
 
 ## Context
 
@@ -141,9 +141,6 @@ tags`); unlike the pagination index, the contract does not need to be told
 - It does not detect drift automatically — same limitation `repair_index`
   has today. An operator (or off-chain audit tooling) still needs to notice
   a `TagIndex` entry disagreeing with `Resource.tags` and trigger a repair.
-- It does not exist yet. Until `list_by_tag`/`TagIndex` actually ships, this
-  document is a design constraint on that future work, not a runtime
-  guarantee.
 - It does not cover the still-unaddressed `CreatorResources`/`CreatorCount`
   repair gap `index-repair.md` already flags — that remains a separate,
   independent follow-up.
@@ -157,15 +154,29 @@ calls (including removing all tags and re-adding a different set), then
 replays only the `register`/`settags` events — never calling `get` — to
 reconstruct each resource's current tag set, and asserts the reconstruction
 matches `Resource.tags` exactly. This is the empirical basis for this ADR's
-"no third source of truth needed" claim: an off-chain indexer (or an
-eventual `repair_tag_index` implementation choosing the event-replay path
-over the direct-storage-read path) has everything it needs from the existing
-event log.
+"no third source of truth needed" claim.
 
-The "reads never re-validate" claim in
-[Migration notes](#migration-notes-tag-rule-changes-across-contract-versions)
-is verified by inspection rather than a runtime test — `MAX_TAGS`/
-`MAX_TAG_LEN` are compile-time constants, so shrinking them mid-test isn't
-possible against a single compiled contract. `validate_tags` (`src/lib.rs`)
-has exactly two call sites, `register` and `set_tags`; neither appears in
-`get`, `list`, `list_page`, `list_listed`, or `list_by_creator`.
+The following additional tests were added alongside the implementation:
+
+- `register_with_tags_builds_tag_index` — index populated at register time.
+- `register_without_tags_leaves_tag_index_empty` — no phantom entries.
+- `tag_normalization_lowercase_on_register` — tags stored and indexed in lowercase.
+- `set_tags_updates_index_remove_and_add` — index stays in sync on replacement.
+- `set_tags_empty_removes_from_all_indexes` — clearing tags removes all entries.
+- `list_by_tag_returns_multiple_resources_in_order` — insertion-order preserved.
+- `list_by_tag_pagination_start_offset` — `start` parameter works correctly.
+- `list_by_tag_start_beyond_end_returns_empty` — no panic or NotFound.
+- `list_by_tag_unknown_tag_returns_empty` — graceful empty return.
+- `list_by_tag_limit_capped_at_20` — cap enforced silently.
+- `duplicate_tags_in_register_indexed_once` — idempotent add.
+- `set_tags_same_tag_twice_does_not_duplicate_in_index` — idempotent via set_tags.
+- `repair_tag_index_rebuilds_from_resource_tags` — repair is a safe no-op on correct state.
+- `repair_tag_index_rejects_unknown_id` — NotFound for unregistered ids.
+- `repair_tag_index_before_admin_set_fails` — AdminNotSet guard.
+- `repair_tag_index_duplicate_ids_are_idempotent` — duplicates silently de-duped.
+- `repair_tag_index_emits_retagidx_event` — event carries id count.
+- `tag_index_consistent_after_mixed_operations` — correctness after register + set_tags.
+- `register_rejects_too_many_tags`, `empty_tag_rejected`, `tag_too_long_rejected`,
+  `tag_at_max_len_accepted`, `exactly_max_tags_accepted` — boundary validation.
+- `set_tags_normalizes_tags_and_event_carries_normalized_form` — event carries lowercase form.
+- `list_by_tag_returns_full_resource_structs` — full Resource returned, not just ids.
