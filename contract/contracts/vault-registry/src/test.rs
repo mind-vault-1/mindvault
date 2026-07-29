@@ -54,14 +54,50 @@ fn register_then_read() {
 }
 
 #[test]
+fn exists_many_returns_results_in_input_order() {
+    let (env, creator, client) = setup();
+    let existing_id = String::from_str(&env, "exists1");
+    client.register(
+        &creator,
+        &existing_id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &empty_tags(&env),
+    );
+
+    let mut ids = Vec::new(&env);
+    ids.push_back(existing_id.clone());
+    ids.push_back(String::from_str(&env, "missing-1"));
+    ids.push_back(String::from_str(&env, "missing-2"));
+
+    let mut expected = Vec::new(&env);
+    expected.push_back(true);
+    expected.push_back(false);
+    expected.push_back(false);
+
+    assert_eq!(client.exists_many(&ids), expected);
+}
+
+#[test]
+fn exists_many_rejects_batches_above_the_documented_cap() {
+    let (env, _creator, client) = setup();
+    let mut ids = Vec::new(&env);
+    for idx in 0..(LIST_PAGE_LIMIT_CAP + 1) {
+        ids.push_back(String::from_str(&env, &format!("batch-{idx}")));
+    }
+
+    assert_eq!(client.try_exists_many(&ids), Err(Ok(Error::BatchTooLarge)));
+}
+
+#[test]
 fn register_emits_structured_event() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "evtres");
     let metadata = String::from_str(&env, "ipfs://evt");
-    let price = 500i128;
+    let price = 1_000_000i128;
     let tags_list = tags(&env, &["tag1"]);
 
-    client.register(&creator, &id, &1_000_000i128, &metadata, &resource_tags);
+    client.register(&creator, &id, &1_000_000i128, &metadata, &tags_list);
 
     let all_events = env.events().all();
     let mut found = false;
@@ -77,17 +113,17 @@ fn register_emits_structured_event() {
         if t0 != Symbol::new(&env, "register") {
             continue;
         }
-        let resource: Resource = <Resource as TryFromVal<Env, Val>>::try_from_val(&env, &data)
+        let event: RegisterEvent = <RegisterEvent as TryFromVal<Env, Val>>::try_from_val(&env, &data)
             .ok()
             .unwrap();
-        assert_eq!(resource.id, id);
-        assert_eq!(resource.creator, creator);
-        assert_eq!(resource.price, price);
-        assert_eq!(resource.metadata, metadata);
-        assert!(resource.listed);
-        assert_eq!(resource.tags.len(), 1);
+        assert_eq!(event.id, id);
+        assert_eq!(event.creator, creator);
+        assert_eq!(event.price, price);
+        assert_eq!(event.metadata, metadata);
+        assert!(event.listed);
+        assert_eq!(event.tags.len(), 1);
         assert_eq!(
-            resource.tags.get(0).unwrap(),
+            event.tags.get(0).unwrap(),
             String::from_str(&env, "tag1")
         );
         found = true;
@@ -1081,7 +1117,7 @@ fn transfer_ownership_reextends_resource_ttl() {
 }
 
 #[test]
-fn list_limit_capped_at_20() {
+fn list_limit_capped_at_the_documented_cap() {
     let (env, creator, client) = setup();
     let ids = [
         "i00", "i01", "i02", "i03", "i04", "i05", "i06", "i07", "i08", "i09", "i10", "i11", "i12",
@@ -1089,9 +1125,8 @@ fn list_limit_capped_at_20() {
     ];
     register_n(&env, &creator, &client, &ids);
 
-    // Requesting 25 items should be silently capped to 20.
-    let page = client.list(&0u32, &25u32);
-    assert_eq!(page.len(), 20);
+    let page = client.list(&0u32, &(LIST_PAGE_LIMIT_CAP + 1));
+    assert_eq!(page.len(), LIST_PAGE_LIMIT_CAP);
 }
 
 #[test]
@@ -1163,7 +1198,7 @@ fn list_listed_start_beyond_listed_items_returns_empty() {
 }
 
 #[test]
-fn list_listed_limit_capped_at_20() {
+fn list_listed_limit_capped_at_the_documented_cap() {
     let (env, creator, client) = setup();
     let ids: [&str; 25] = [
         "i0", "i1", "i2", "i3", "i4", "i5", "i6", "i7", "i8", "i9", "i10", "i11", "i12", "i13",
@@ -1176,8 +1211,8 @@ fn list_listed_limit_capped_at_20() {
         client.set_listed(&String::from_str(&env, ids[idx]), &false);
     }
 
-    let page = client.list_listed(&0u32, &25u32);
-    assert_eq!(page.len(), 20);
+    let page = client.list_listed(&0u32, &(LIST_PAGE_LIMIT_CAP + 1));
+    assert_eq!(page.len(), LIST_PAGE_LIMIT_CAP);
 }
 
 #[test]
@@ -1251,7 +1286,7 @@ fn list_delegates_to_list_page_items() {
 }
 
 #[test]
-fn list_page_limit_capped_at_20_with_next_cursor() {
+fn list_page_limit_capped_at_the_documented_cap_with_next_cursor() {
     let (env, creator, client) = setup();
     let ids = [
         "i00", "i01", "i02", "i03", "i04", "i05", "i06", "i07", "i08", "i09", "i10", "i11", "i12",
@@ -1259,9 +1294,9 @@ fn list_page_limit_capped_at_20_with_next_cursor() {
     ];
     register_n(&env, &creator, &client, &ids);
 
-    let page = client.list_page(&0u32, &25u32);
-    assert_eq!(page.items.len(), 20);
-    assert_eq!(page.next_cursor, Some(20u32));
+    let page = client.list_page(&0u32, &(LIST_PAGE_LIMIT_CAP + 1));
+    assert_eq!(page.items.len(), LIST_PAGE_LIMIT_CAP);
+    assert_eq!(page.next_cursor, Some(LIST_PAGE_LIMIT_CAP));
 }
 
 #[test]
@@ -2454,8 +2489,8 @@ fn register_then_settags_events_reconstruct_current_tags() {
     };
     let last_register_tags = |env: &Env| -> (String, Vec<String>) {
         let (_, _, data) = env.events().all().last().unwrap();
-        let resource: Resource = data.try_into_val(env).unwrap();
-        (resource.id, resource.tags)
+        let event: RegisterEvent = data.try_into_val(env).unwrap();
+        (event.id, event.tags)
     };
 
     client.register(

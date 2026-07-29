@@ -51,6 +51,8 @@ pub const RESOURCE_SCHEMA_VERSION: u32 = 2;
 /// (32 bytes), but we allow up to 128 to accommodate future hash formats
 /// (e.g. a `sha256:` prefixed hex string).
 pub const MAX_TX_HASH_LEN: u32 = 128;
+/// Maximum number of items a paginated list call may return in a single page.
+pub const LIST_PAGE_LIMIT_CAP: u32 = 20;
 
 /// Canonical list of every event topic this contract emits, paired with a
 /// human-readable description of its payload shape. This is the single
@@ -295,6 +297,8 @@ pub enum Error {
     InvalidTxHash = 24,
     /// `amount` supplied to `record_payment` is `<= 0`.
     InvalidPaymentAmount = 25,
+    /// `exists_many` was given more than [`LIST_PAGE_LIMIT_CAP`] ids.
+    BatchTooLarge = 26,
 }
 
 #[contract]
@@ -326,13 +330,14 @@ impl VaultRegistry {
             return Err(Error::AlreadyRegistered);
         }
 
+        let resource_tags = tags.clone();
         let resource = Resource {
             id: id.clone(),
             creator: creator.clone(),
             price,
             metadata: metadata.clone(),
             listed: true,
-            tags,
+            tags: resource_tags.clone(),
             verified: VerificationStatus::Pending,
             frozen: false,
             updated_at: env.ledger().sequence(),
@@ -363,7 +368,7 @@ impl VaultRegistry {
             price,
             metadata,
             listed: true,
-            tags,
+            tags: resource_tags,
         };
         env.events()
             .publish((symbol_short!("register"), id), event);
@@ -601,7 +606,7 @@ impl VaultRegistry {
         Self::set_listed(env, id, false)
     }
 
-    /// Paginated resource list in insertion order. `limit` is capped at 20.
+    /// Paginated resource list in insertion order. `limit` is capped at [`LIST_PAGE_LIMIT_CAP`].
     ///
     /// Kept for callers that only need the page body. Prefer `list_page` when
     /// the client must know the next cursor / end-of-list without recomputing
@@ -613,7 +618,7 @@ impl VaultRegistry {
     /// Paginated catalog page with next-cursor metadata.
     ///
     /// - `cursor` is a 0-based catalog index (same domain as `list`'s `start`).
-    /// - `limit` is capped at 20.
+    /// - `limit` is capped at [`LIST_PAGE_LIMIT_CAP`].
     /// - `next_cursor` is `Some(next_index)` when more entries may exist after
     ///   this page, or `None` at end-of-list (including empty catalog / cursor
     ///   past the end).
@@ -621,7 +626,7 @@ impl VaultRegistry {
     ///   read has its TTL bumped to keep hot catalog entries alive.
     pub fn list_page(env: Env, cursor: u32, limit: u32) -> CatalogPage {
         let total: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
-        let page_size = limit.min(20);
+        let page_size = limit.min(LIST_PAGE_LIMIT_CAP);
         let mut items: Vec<Resource> = Vec::new(&env);
         let mut i = cursor;
         while i < total && items.len() < page_size {
@@ -651,14 +656,14 @@ impl VaultRegistry {
     /// Paginated list of resources whose `listed` flag is true, in insertion order.
     ///
     /// - Resources are ordered by registration sequence.
-    /// - `limit` is capped at `20`.
+    /// - `limit` is capped at [`LIST_PAGE_LIMIT_CAP`].
     /// - Delisted resources are skipped; relisted resources will reappear.
     /// - Returns an empty `Vec` if no listed resources fall in range.
     /// - Each persistent entry (Index slot and Resource) that is successfully
     ///   read has its TTL bumped to keep hot catalog entries alive.
     pub fn list_listed(env: Env, start: u32, limit: u32) -> Vec<Resource> {
         let total: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
-        let page_size = limit.min(20);
+        let page_size = limit.min(LIST_PAGE_LIMIT_CAP);
         let mut result: Vec<Resource> = Vec::new(&env);
         let mut i = start;
         while i < total && result.len() < page_size {
@@ -689,12 +694,12 @@ impl VaultRegistry {
     /// Paginated listing of resources owned by `creator` in insertion order.
     ///
     /// - Results are ordered by global registration sequence for that creator.
-    /// - `limit` is capped at `20`.
+    /// - `limit` is capped at [`LIST_PAGE_LIMIT_CAP`].
     /// - Returns empty `Vec` when `start` is beyond the creator's known items.
     /// - Each persistent Resource entry that is successfully read has its TTL
     ///   bumped to keep hot resources alive.
     pub fn list_by_creator(env: Env, creator: Address, start: u32, limit: u32) -> Vec<Resource> {
-        let page_size = limit.min(20);
+        let page_size = limit.min(LIST_PAGE_LIMIT_CAP);
         let mut result: Vec<Resource> = Vec::new(&env);
         if page_size == 0 {
             return result;
@@ -749,6 +754,23 @@ impl VaultRegistry {
         } else {
             false
         }
+    }
+
+    /// Check the existence of many resources in input order.
+    ///
+    /// - Returns a boolean per input id preserving the caller's order.
+    /// - Rejects batches larger than [`LIST_PAGE_LIMIT_CAP`] with `BatchTooLarge`.
+    /// - Invalid ids resolve to `false`.
+    pub fn exists_many(env: Env, ids: Vec<String>) -> Result<Vec<bool>, Error> {
+        if ids.len() > LIST_PAGE_LIMIT_CAP {
+            return Err(Error::BatchTooLarge);
+        }
+
+        let mut results: Vec<bool> = Vec::new(&env);
+        for id in ids.iter() {
+            results.push_back(Self::exists(env.clone(), id));
+        }
+        Ok(results)
     }
 
     /// Get the owner address of a resource. Errors with `NotFound` if it does not exist.

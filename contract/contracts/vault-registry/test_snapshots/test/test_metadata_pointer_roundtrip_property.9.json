@@ -18,16 +18,16 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
                 {
-                  "string": "9j6hi0xn70253pge8"
+                  "string": "eceu70ehgs1xur8e6r2ml45"
                 },
                 {
                   "i128": {
                     "hi": 0,
-                    "lo": 34392794790
+                    "lo": 506781495821
                   }
                 },
                 {
-                  "string": "ipfs://\\\\1P_E_\\\\BEZpJX_WNJ\\\\U_9\\\\hh_Qq\\\\A\\\\HSe:TY_Ai_\\\\\\\\SP2yT\\\\XR/90\\\\Ag\\\\/2W_R\\\\ju4/y20x_OM0G/gM\\\\gza6/cc_5QpO5Tfa_/0:Dv9HH:/D/yeM1J\\\\\\\\k_2SaPQr\\\\/67-y7Vm5sP\\\\ZkhBbMTu._4ve.\\\\jaDQkK:Pl1BN_I_/_eb5J_aeS0_F\\\\lj3c0fh:Yd_/_d0.6k1F\\\\58I.:."
+                  "string": "ipfs://l7\\\\_BmEd:\\\\vp\\\\__VN/_:PX0_s8/Jg:\\\\V_bF_P-O4Ah\\\\__\\\\/\\\\DPWsSD\\\\wc30m.._W:\\\\G_.x2\\\\8Cu_\\\\NWg\\\\\\\\Ej\\\\gbh/GTes\\\\V\\\\_.Ic_:wy_\\\\7:\\\\.nu_C_wd_/K0"
                 },
                 {
                   "vec": []
@@ -50,10 +50,10 @@
               "function_name": "update_metadata",
               "args": [
                 {
-                  "string": "9j6hi0xn70253pge8"
+                  "string": "eceu70ehgs1xur8e6r2ml45"
                 },
                 {
-                  "string": "https://K7HUE\\\\nF/5uuulS_60"
+                  "string": "https://\\\\M0\\\\0vs\\\\_\\\\kqcb"
                 }
               ]
             }
@@ -73,12 +73,12 @@
               "function_name": "set_price",
               "args": [
                 {
-                  "string": "9j6hi0xn70253pge8"
+                  "string": "eceu70ehgs1xur8e6r2ml45"
                 },
                 {
                   "i128": {
                     "hi": 0,
-                    "lo": 348301933254
+                    "lo": 86929951375
                   }
                 }
               ]
@@ -99,7 +99,7 @@
               "function_name": "set_listed",
               "args": [
                 {
-                  "string": "9j6hi0xn70253pge8"
+                  "string": "eceu70ehgs1xur8e6r2ml45"
                 },
                 {
                   "bool": false
@@ -161,7 +161,7 @@
                 "val": {
                   "vec": [
                     {
-                      "string": "9j6hi0xn70253pge8"
+                      "string": "eceu70ehgs1xur8e6r2ml45"
                     }
                   ]
                 }
@@ -208,7 +208,7 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "string": "9j6hi0xn70253pge8"
+                  "string": "eceu70ehgs1xur8e6r2ml45"
                 }
               }
             },
@@ -227,7 +227,7 @@
                   "symbol": "Resource"
                 },
                 {
-                  "string": "9j6hi0xn70253pge8"
+                  "string": "eceu70ehgs1xur8e6r2ml45"
                 }
               ]
             },
@@ -247,7 +247,7 @@
                       "symbol": "Resource"
                     },
                     {
-                      "string": "9j6hi0xn70253pge8"
+                      "string": "eceu70ehgs1xur8e6r2ml45"
                     }
                   ]
                 },
@@ -275,7 +275,7 @@
                         "symbol": "id"
                       },
                       "val": {
-                        "string": "9j6hi0xn70253pge8"
+                        "string": "eceu70ehgs1xur8e6r2ml45"
                       }
                     },
                     {
@@ -291,7 +291,7 @@
                         "symbol": "metadata"
                       },
                       "val": {
-                        "string": "https://K7HUE\\\\nF/5uuulS_60"
+                        "string": "https://\\\\M0\\\\0vs\\\\_\\\\kqcb"
                       }
                     },
                     {
@@ -301,7 +301,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 348301933254
+                          "lo": 86929951375
                         }
                       }
                     },
