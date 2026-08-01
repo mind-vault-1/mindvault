@@ -99,14 +99,15 @@ Copy-ready configs for Claude Code, Claude Desktop, Codex, Cursor, VS Code, and 
 
 All env vars are optional — the defaults point to the hosted testnet backend:
 
-| Variable                     | Default                                                | Description                                        |
-| ---------------------------- | ------------------------------------------------------ | -------------------------------------------------- |
-| `MINDVAULT_URL`              | `https://mindvault-hyr3.onrender.com`                  | MindVault API base URL                             |
-| `SPONSORED_ACCOUNT_URL`      | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service                  |
-| `VAULT_REGISTRY_CONTRACT_ID` | testnet contract ID                                    | On-chain vault-registry contract                   |
-| `HORIZON_URL`                | `https://horizon-testnet.stellar.org`                  | Stellar Horizon endpoint (for USDC balance checks) |
-| `SOROBAN_RPC_URL`            | `https://soroban-testnet.stellar.org`                  | Soroban RPC endpoint (for tx status and payments)  |
-| `MINDVAULT_METRICS`          | _(unset)_                                              | Opt-in tool-level metrics; set to `1` to enable    |
+| Variable                     | Default                                                | Description                                                           |
+| ---------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------- |
+| `MINDVAULT_URL`              | `https://mindvault-hyr3.onrender.com`                  | MindVault API base URL                                                |
+| `SPONSORED_ACCOUNT_URL`      | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service                                     |
+| `VAULT_REGISTRY_CONTRACT_ID` | testnet contract ID                                    | On-chain vault-registry contract                                      |
+| `HORIZON_URL`                | `https://horizon-testnet.stellar.org`                  | Stellar Horizon endpoint (for USDC balance checks)                    |
+| `SOROBAN_RPC_URL`            | `https://soroban-testnet.stellar.org`                  | Soroban RPC endpoint (for tx status and payments)                     |
+| `MINDVAULT_METRICS`          | _(unset)_                                              | Opt-in tool-level metrics; set to `1` to enable                       |
+| `MCP_LOG_LEVEL`              | `info`                                                 | Logging priority level threshold: `debug`, `info`, `warn`, or `error` |
 
 Every tool validates its arguments against an explicit schema before doing any work: unknown or malformed arguments are rejected with a deterministic error instead of reaching the API as a failed request. See **[docs/mcp-tool-arguments.md](docs/mcp-tool-arguments.md)** for the per-tool contract and error shape.
 

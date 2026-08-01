@@ -186,6 +186,10 @@ and the hosted MindVault backend.
 | `MINDVAULT_ALLOW_MAINNET`    | unset                                                  | Allows mainnet mutations without per-call confirmation. See [security notes](#security-notes) |
 | `MINDVAULT_METRICS`          | unset                                                  | Set `1` to collect opt-in tool metrics ([docs](mcp-metrics.md))                               |
 | `MINDVAULT_MOCK`             | unset                                                  | Set `1` for offline mock mode — no network, no funds, deterministic fixtures                  |
+| `MINDVAULT_AUDIT_LOG`        | unset                                                  | Set `1` to enable audit logging of tool calls and network requests                            |
+| `MCP_LOG_LEVEL`              | `info`                                                 | Logging priority level threshold: `debug`, `info`, `warn`, or `error`                         |
+| `MINDVAULT_AGENT_SECRET`     | unset                                                  | Pre-configured secret key for agent wallet initialization                                     |
+| `MINDVAULT_PURCHASES_FILE`   | unset                                                  | File path to store purchase history registry                                                  |
 
 Overriding a network value without changing `STELLAR_NETWORK` is a common
 mistake, so the server cross-checks them at startup and refuses to launch on a

@@ -85,6 +85,7 @@ import {
   type PublishStatusFetch,
 } from "./publishStatus.js";
 import { safeErrorMessage, safeLog } from "./redaction.js";
+import { logger } from "./logger.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import { exportState, restoreState, checkStatePermissions } from "./stateBackup.js";
 import { formatResetPreview, isResetConfirmed, type ResetScope } from "./resetGuard.js";
@@ -136,7 +137,13 @@ const networkPreset = registryNetworks[STELLAR_NETWORK];
 // so unit runs and offline local development never exit the process.
 if (!process.env.VITEST && !mockEnabledFromEnv(process.env)) {
   const diagnostics = collectStartupDiagnostics(process.env);
-  if (diagnostics.length > 0) console.error(formatDiagnostics(diagnostics));
+  if (diagnostics.length > 0) {
+    if (hasBlockingDiagnostics(diagnostics)) {
+      logger.error(formatDiagnostics(diagnostics));
+    } else {
+      logger.warn(formatDiagnostics(diagnostics));
+    }
+  }
   if (hasBlockingDiagnostics(diagnostics)) process.exit(1);
 }
 
@@ -187,7 +194,7 @@ const RETRY_POLICY = retryPolicyFromEnv(process.env);
  */
 const logRetry = process.env.VITEST
   ? undefined
-  : (info: RetryAttemptInfo) => console.error(`MindVault MCP: ${formatRetryLog(info)}`);
+  : (info: RetryAttemptInfo) => logger.info(`MindVault MCP: ${formatRetryLog(info)}`);
 
 /** Shared retry options for an idempotent HTTP call returning a Response. */
 function httpRetryOptions(label: string) {
@@ -311,7 +318,7 @@ function saveState(): void {
     };
     writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
   } catch (err) {
-    console.error("MindVault MCP: failed to persist state:", safeErrorMessage(err));
+    logger.error("MindVault MCP: failed to persist state:", safeErrorMessage(err));
   }
 }
 
@@ -1502,7 +1509,7 @@ export async function buy(
       ...(title ? { title } : {}),
     });
   } catch (err) {
-    console.error("MindVault MCP: failed to persist purchase receipt:", safeErrorMessage(err));
+    logger.error("MindVault MCP: failed to persist purchase receipt:", safeErrorMessage(err));
   }
 
   const summary = {
@@ -3035,7 +3042,7 @@ if (!process.env.VITEST && !MOCK) {
     network: STELLAR_NETWORK,
   })
     .then((result: { status: string; message: string }) => {
-      if (result.status === "mismatch") console.error(`MindVault MCP: ${result.message}`);
+      if (result.status === "mismatch") logger.warn(`MindVault MCP: ${result.message}`);
     })
     .catch(() => {
       /* offline or unreachable — the mindvault_check_bindings tool can report details */
@@ -3085,7 +3092,4 @@ if (!process.env.VITEST) {
 
   await server.connect(transport);
   await await await server.connect(transport);
-
-  // Setup graceful shutdown
-  setupGracefulShutdown(server, transport, console.log);;
 }
