@@ -2480,3 +2480,76 @@ fn repair_index_rerunning_current_list_is_a_safe_noop() {
     assert_eq!(page.get(0).unwrap().id, a);
     assert_eq!(page.get(1).unwrap().id, b);
 }
+
+// ─── Tag update no-op guard (#648) ─────────────────────────────────────────
+
+#[test]
+fn set_tags_no_op_emits_no_event() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "noop0");
+    let initial = tags(&env, &["dataset", "research"]);
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &initial,
+    );
+
+    // Re-set with the exact same tags, same order.
+    client.set_tags(&id, &tags(&env, &["dataset", "research"]));
+
+    // `env.events().all()` only ever holds the most recent invocation's
+    // events (see the comment above the set_listed event tests) — a no-op
+    // guard means this call produced none.
+    assert_eq!(env.events().all().len(), 0);
+}
+
+#[test]
+fn set_tags_no_op_leaves_tags_unchanged() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "noop1");
+    let initial = tags(&env, &["a", "b", "c"]);
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &initial,
+    );
+
+    client.set_tags(&id, &tags(&env, &["a", "b", "c"]));
+
+    let stored = client.get(&id).tags;
+    assert_eq!(stored.len(), 3);
+    assert_eq!(stored.get(0).unwrap(), String::from_str(&env, "a"));
+    assert_eq!(stored.get(1).unwrap(), String::from_str(&env, "b"));
+    assert_eq!(stored.get(2).unwrap(), String::from_str(&env, "c"));
+}
+
+#[test]
+fn set_tags_no_op_still_requires_auth_and_validation() {
+    // A no-op call must go through the same auth requirement and tag
+    // validation as a mutating call before short-circuiting on equality —
+    // it can't become an unauthenticated or unvalidated read path.
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "noop2");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &empty_tags(&env),
+    );
+
+    // Requesting the same (empty) tags still runs `validate_tags`, so an
+    // oversized tag list is rejected even though it happens to be a no-op
+    // on the "one differing element" front — i.e. validation isn't skipped.
+    let mut too_many = Vec::new(&env);
+    for i in 0..9u32 {
+        too_many.push_back(String::from_str(&env, &crate::alloc::format!("t{i}")));
+    }
+    let res = client.try_set_tags(&id, &too_many);
+    assert_eq!(res, Err(Ok(Error::InvalidTag)));
+}
+

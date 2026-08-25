@@ -311,11 +311,19 @@ impl VaultRegistry {
 
     /// Replace a resource's discovery tags. Only the creator may call this.
     /// Does not modify `metadata` (the off-chain content pointer).
+    ///
+    /// No-op guard: if `tags` is identical to the resource's current tags
+    /// (same values, same order), the call succeeds without touching storage
+    /// or emitting a `settags` event.
     pub fn set_tags(env: Env, id: String, tags: Vec<String>) -> Result<(), Error> {
         Self::validate_resource_id(&id)?;
         Self::validate_tags(&env, &tags)?;
         let mut resource = Self::load(&env, &id)?;
         resource.creator.require_auth();
+
+        if resource.tags == tags {
+            return Ok(());
+        }
 
         // Capture previous tags before replacement for event emission
         let prev_tags = resource.tags.clone();
