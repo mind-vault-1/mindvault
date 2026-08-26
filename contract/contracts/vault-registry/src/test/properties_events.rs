@@ -279,3 +279,105 @@ fn set_verification_status_event_topic_holds_full_max_length_id() {
     assert_eq!(topic_id, id);
     assert_eq!(topic_id.len(), MAX_RESOURCE_ID_LEN);
 }
+
+#[derive(Clone, Debug)]
+enum IndexOp {
+    Register {
+        creator_idx: usize,
+        id_seed: u32,
+    },
+    Transfer {
+        res_idx: usize,
+        new_creator_idx: usize,
+    },
+    Tombstone {
+        res_idx: usize,
+    },
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+    #[test]
+    fn test_count_and_creator_index_invariants_property(
+        ops in prop::collection::vec(
+            prop_oneof![
+                3 => (any::<usize>(), any::<u32>()).prop_map(|(c, id)| IndexOp::Register { creator_idx: c, id_seed: id }),
+                1 => (any::<usize>(), any::<usize>()).prop_map(|(r, c)| IndexOp::Transfer { res_idx: r, new_creator_idx: c }),
+                1 => any::<usize>().prop_map(|r| IndexOp::Tombstone { res_idx: r }),
+            ],
+            1..30
+        )
+    ) {
+        let env = env_without_snapshots();
+        env.mock_all_auths();
+        let contract_id = env.register(VaultRegistry, ());
+        let client = VaultRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.nominate_new_admin(&admin);
+
+        let creators = [
+            Address::generate(&env),
+            Address::generate(&env),
+            Address::generate(&env),
+            Address::generate(&env),
+            Address::generate(&env),
+        ];
+
+        let mut registered_ids = alloc::vec::Vec::new();
+        let mut tombstoned_ids = alloc::vec::Vec::new();
+        let mut id_seq = 0;
+
+        for op in ops {
+            match op {
+                IndexOp::Register { creator_idx, .. } => {
+                    let creator = &creators[creator_idx % creators.len()];
+                    let id_str = alloc::format!("idx{:04}", id_seq);
+                    id_seq += 1;
+                    let id = String::from_str(&env, &id_str);
+                    let meta = String::from_str(&env, "ipfs://meta");
+                    if client.try_register(creator, &id, &100i128, &meta, &empty_tags(&env)).is_ok() {
+                        registered_ids.push(id);
+                    }
+                }
+                IndexOp::Transfer { res_idx, new_creator_idx } => {
+                    if !registered_ids.is_empty() {
+                        let id = &registered_ids[res_idx % registered_ids.len()];
+                        if !tombstoned_ids.contains(id) {
+                            let new_creator = &creators[new_creator_idx % creators.len()];
+                            let _ = client.try_transfer_ownership(id, new_creator);
+                        }
+                    }
+                }
+                IndexOp::Tombstone { res_idx } => {
+                    if !registered_ids.is_empty() {
+                        let id = &registered_ids[res_idx % registered_ids.len()];
+                        if !tombstoned_ids.contains(id) {
+                            if client.try_tombstone_resource(id, &admin).is_ok() {
+                                tombstoned_ids.push(id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Validate count is strictly monotonic
+            assert_eq!(client.count(), registered_ids.len() as u32);
+
+            // Validate creator indexes
+            let mut total_active_in_creator_indexes = 0;
+            for creator in &creators {
+                let listed = client.list_by_creator(creator, &0, &100);
+                let count = client.creator_resource_count(creator);
+                assert_eq!(listed.len() as u32, count, "creator_resource_count must match list_by_creator length");
+                total_active_in_creator_indexes += count;
+            }
+
+            // The sum of all active creator counts plus tombstoned resources must equal the total registered resources
+            assert_eq!(
+                total_active_in_creator_indexes + tombstoned_ids.len() as u32,
+                registered_ids.len() as u32,
+                "active resources + tombstoned resources must equal total registered count"
+            );
+        }
+    }
+}
