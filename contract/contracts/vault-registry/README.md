@@ -117,7 +117,7 @@ questions. Read both with one call:
 stellar contract invoke --id $CONTRACT --rpc-url $RPC \
   --network-passphrase "Test SDF Network ; September 2015" \
   -- contract_version
-# { "crate_version": "0.0.0", "resource_schema_version": 5 }
+# { "crate_version": "0.0.0", "resource_schema_version": 6 }
 ```
 
 | Field                     | Source                    | Changes when                                                           |
@@ -143,7 +143,8 @@ future bump should add a row here, naming the field that changed:
 | -------------- | --------------------------------------------------------- |
 | 2              | Added `tags` — discovery labels, normalized to lowercase. |
 | 4              | Added `dispute_flag` — moderator dispute state.           |
-| 5              | Current value of `RESOURCE_SCHEMA_VERSION`.               |
+| 5              | Added `schema_version` and `version` counters.            |
+| 6              | Added `metadata_frozen_at: Option<u64>` — freeze timestamp. Current value of `RESOURCE_SCHEMA_VERSION`. |
 
 ### What is and is not a breaking change
 

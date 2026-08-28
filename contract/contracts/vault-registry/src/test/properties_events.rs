@@ -8,7 +8,7 @@ proptest! {
         start in 0u32..=40u32,
         limit in 0u32..=35u32,
     ) {
-        let env = env_without_snapshots();
+        let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register(VaultRegistry, ());
         let client = VaultRegistryClient::new(&env, &contract_id);
@@ -70,7 +70,7 @@ proptest! {
         max_tag_len in 0u32..=40u32,
         include_duplicate in any::<bool>(),
     ) {
-        let env = env_without_snapshots();
+        let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register(VaultRegistry, ());
         let client = VaultRegistryClient::new(&env, &contract_id);
@@ -273,7 +273,7 @@ fn set_verification_status_event_topic_holds_full_max_length_id() {
     let verifier = Address::generate(&env);
     client.add_verifier(&verifier);
 
-    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified);
+    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
 
     let topic_id = last_event_id_topic(&env);
     assert_eq!(topic_id, id);
@@ -308,7 +308,7 @@ proptest! {
             1..30
         )
     ) {
-        let env = env_without_snapshots();
+        let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register(VaultRegistry, ());
         let client = VaultRegistryClient::new(&env, &contract_id);

@@ -336,7 +336,7 @@ fn verifier_can_verify_pending_resource() {
     let verifier = Address::generate(&env);
     client.add_verifier(&verifier);
 
-    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified);
+    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
     assert_eq!(client.get(&id).verified, VerificationStatus::Verified);
 }
 
@@ -347,12 +347,12 @@ fn set_verification_status_emits_old_and_new_status() {
     let verifier = Address::generate(&env);
     client.add_verifier(&verifier);
 
-    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified);
+    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
 
     let all = env.events().all();
     let (_contract, _topics, data) = all.get_unchecked(all.len() - 1);
-    let decoded: (VerificationStatus, VerificationStatus) =
-        <(VerificationStatus, VerificationStatus)>::try_from_val(&env, &data)
+    let decoded: (VerificationStatus, VerificationStatus, Option<soroban_sdk::String>) =
+        <(VerificationStatus, VerificationStatus, Option<soroban_sdk::String>)>::try_from_val(&env, &data)
             .expect("failed to decode verification event");
     assert_eq!(decoded.0, VerificationStatus::Pending);
     assert_eq!(decoded.1, VerificationStatus::Verified);
@@ -364,7 +364,7 @@ fn non_verifier_cannot_set_verification_status() {
     let id = register_default(&env, &creator, &client, "vres3");
     let stranger = Address::generate(&env);
 
-    let res = client.try_set_verification_status(&id, &stranger, &VerificationStatus::Verified);
+    let res = client.try_set_verification_status(&id, &stranger, &VerificationStatus::Verified, &None);
     assert_eq!(res, Err(Ok(Error::NotVerifier)));
     assert_eq!(client.get(&id).verified, VerificationStatus::Pending);
 }
@@ -377,7 +377,7 @@ fn revoked_verifier_cannot_set_verification_status() {
     client.add_verifier(&verifier);
     client.remove_verifier(&verifier);
 
-    let res = client.try_set_verification_status(&id, &verifier, &VerificationStatus::Verified);
+    let res = client.try_set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
     assert_eq!(res, Err(Ok(Error::NotVerifier)));
 }
 
@@ -389,7 +389,7 @@ fn verification_self_transition_rejected() {
     client.add_verifier(&verifier);
 
     // Pending -> Pending is a no-op and rejected as invalid.
-    let res = client.try_set_verification_status(&id, &verifier, &VerificationStatus::Pending);
+    let res = client.try_set_verification_status(&id, &verifier, &VerificationStatus::Pending, &None);
     assert_eq!(res, Err(Ok(Error::InvalidVerificationTransition)));
 }
 
@@ -400,8 +400,8 @@ fn verification_cannot_revert_to_pending() {
     let verifier = Address::generate(&env);
     client.add_verifier(&verifier);
 
-    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified);
-    let res = client.try_set_verification_status(&id, &verifier, &VerificationStatus::Pending);
+    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
+    let res = client.try_set_verification_status(&id, &verifier, &VerificationStatus::Pending, &None);
     assert_eq!(res, Err(Ok(Error::InvalidVerificationTransition)));
 }
 
@@ -412,11 +412,11 @@ fn verification_round_trip_verified_rejected_verified() {
     let verifier = Address::generate(&env);
     client.add_verifier(&verifier);
 
-    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified);
-    client.set_verification_status(&id, &verifier, &VerificationStatus::Rejected);
+    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
+    client.set_verification_status(&id, &verifier, &VerificationStatus::Rejected, &None);
     assert_eq!(client.get(&id).verified, VerificationStatus::Rejected);
 
-    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified);
+    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
     assert_eq!(client.get(&id).verified, VerificationStatus::Verified);
 }
 
@@ -430,6 +430,7 @@ fn verification_status_on_missing_resource_fails() {
         &String::from_str(&env, "nosuchresource"),
         &verifier,
         &VerificationStatus::Verified,
+        &None,
     );
     assert_eq!(res, Err(Ok(Error::NotFound)));
 }
