@@ -376,11 +376,20 @@ fn test_get_resource_state() {
 
     client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
 
-    let r = client.get_resource_state(&id);
-    assert_eq!(r.id, id);
-    assert_eq!(r.creator, creator);
-    assert_eq!(r.price, 100i128);
-    assert_eq!(r.metadata, metadata);
+    // Default state is Listed
+    let state = client.get_resource_state(&id);
+    assert_eq!(state, ResourceState::Listed);
+
+    // Delist the resource
+    client.delist(&id);
+    assert_eq!(client.get_resource_state(&id), ResourceState::Delisted);
+
+    // Non-existent resource should fail
+    let missing_id = String::from_str(&env, "missing");
+    assert_eq!(
+        client.try_get_resource_state(&missing_id),
+        Err(Ok(Error::NotFound))
+    );
 }
 
 #[test]

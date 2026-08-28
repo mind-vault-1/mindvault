@@ -1493,10 +1493,11 @@ impl VaultRegistry {
         Self::load(&env, &id)
     }
 
-    /// Read the full state of a single resource. Errors with `NotFound` if absent.
-    pub fn get_resource_state(env: Env, id: String) -> Result<Resource, Error> {
+    /// Fetch the current lifecycle state of a resource. Errors with `NotFound` if absent.
+    pub fn get_resource_state(env: Env, id: String) -> Result<ResourceState, Error> {
         Self::validate_resource_id(&id)?;
-        Self::load(&env, &id)
+        let resource = Self::load(&env, &id)?;
+        Ok(resource.state)
     }
 
     /// Read several resources in one invocation, preserving input order.
