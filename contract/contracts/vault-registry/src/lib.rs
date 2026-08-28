@@ -3006,7 +3006,4 @@ pub(crate) const TTL_BUMP_AMOUNT: u32 = BUMP_AMOUNT;
 #[cfg(test)]
 pub(crate) const TTL_LIFETIME_THRESHOLD: u32 = LIFETIME_THRESHOLD;
 
-#[cfg(test)]
-pub(crate) const TTL_DAY_IN_LEDGERS: u32 = DAY_IN_LEDGERS;
-
 mod test;
