@@ -43,7 +43,12 @@ import {
   formatMainnetDiagnostics,
   mainnetAllowedFromEnv,
 } from "./mainnetGuardrails.js";
-import { createMetricsRecorder, measureTool, metricsEnabledFromEnv, resolveToolDurationBudget } from "./metrics.js";
+import {
+  createMetricsRecorder,
+  measureTool,
+  metricsEnabledFromEnv,
+  resolveToolDurationBudget,
+} from "./metrics.js";
 import {
   createMockFetch,
   mockEnabledFromEnv,
@@ -170,7 +175,7 @@ const NETWORK: X402Network = normalizeX402Network(
 // there is zero bookkeeping unless an operator turns it on.
 const metrics = createMetricsRecorder(
   metricsEnabledFromEnv(process.env),
-  resolveToolDurationBudget(process.env)
+  resolveToolDurationBudget(process.env),
 );
 
 // Opt-in audit logging (set MINDVAULT_AUDIT_LOG=1). Logs tool calls, network
@@ -2053,7 +2058,8 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
 }
 
 export async function registryLookup(resourceId: string): Promise<string> {
-  if (_isMock()) return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
+  if (_isMock())
+    return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
   const client = createRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
@@ -2135,7 +2141,8 @@ export async function registryLookup(resourceId: string): Promise<string> {
  * Data comes from Soroban, not the MindVault API catalog.
  */
 export async function registryList(start: number, limit: number): Promise<string> {
-  if (_isMock()) return mockRegistryList(start, limit, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
+  if (_isMock())
+    return mockRegistryList(start, limit, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
 
   const client = createRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
@@ -2630,6 +2637,52 @@ function toolDefinition(name: string): ToolDefinition {
   return definition;
 }
 
+/**
+ * MCP annotations advertised for a tool in ListTools (#552).
+ *
+ * Every tool is required to declare annotations (see tools.ts); this resolves
+ * them by name and throws if a tool is advertised without any, so the
+ * advertised surface and the definition list cannot drift apart.
+ *
+ * `mindvault_publish_status` and `mindvault_purchase_history` validate their
+ * arguments inside the handler (they are in TOOLS_WITHOUT_ARG_VALIDATION), so
+ * they are not members of TOOL_DEFINITIONS — their annotations are declared
+ * here, inline, as part of the advertised surface.
+ */
+const EXTRA_TOOL_ANNOTATIONS: Record<
+  string,
+  { title: string; readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean }
+> = {
+  mindvault_publish_status: {
+    title: "Publish Status",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
+  mindvault_purchase_history: {
+    title: "Purchase History",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
+};
+
+function toolAnnotations(name: string): {
+  title: string;
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+} {
+  if (name in EXTRA_TOOL_ANNOTATIONS) return EXTRA_TOOL_ANNOTATIONS[name];
+  const { annotations } = toolDefinition(name);
+  return {
+    title: annotations.title,
+    readOnlyHint: annotations.readOnlyHint,
+    destructiveHint: annotations.destructiveHint,
+    idempotentHint: annotations.idempotentHint,
+  };
+}
+
 /** Tools that declare an outputSchema, by name, for structured results. */
 const TOOLS_WITH_OUTPUT_SCHEMA = new Set(
   TOOL_DEFINITIONS.filter((tool) => tool.outputSchema).map((tool) => tool.name),
@@ -2660,8 +2713,8 @@ const server = new Server(
   { capabilities: { tools: {}, prompts: {} } },
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  const advertisedTools = [
     {
       name: "mindvault_setup_wallet",
       description:
@@ -3142,8 +3195,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Verify the MindVault MCP server is installed and configured correctly. Checks Node.js version (>=20), network settings, URL variables, vault-registry contract ID, and warns about plaintext secrets in the environment. No network calls are made — all checks are local. Run this first when setting up a new agent or diagnosing a configuration problem.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
-  ],
-}));
+  ];
+
+  return {
+    tools: advertisedTools.map((tool) => ({
+      ...tool,
+      annotations: toolAnnotations(tool.name),
+    })),
+  };
+});
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const { name, arguments: args = {} } = request.params;
