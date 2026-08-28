@@ -3402,7 +3402,6 @@ fn initialize_network_records_and_exposes_current_ledger_id() {
     let expected = env.ledger().network_id();
 
     client.initialize_network(&expected);
-    assert_eq!(client.network_id(), expected);
 
     assert_eq!(
         env.events().all(),
@@ -3415,6 +3414,8 @@ fn initialize_network_records_and_exposes_current_ledger_id() {
             ),
         ]
     );
+
+    assert_eq!(client.network_id(), expected);
 }
 
 #[test]
@@ -3658,6 +3659,10 @@ fn full_workflow_emits_exactly_the_documented_events() {
             }
         }
     }
+
+    let expected = env.ledger().network_id();
+    client.initialize_network(&expected); // -> "netinit"
+    record(&env, &client, &mut observed);
 
     let r0 = String::from_str(&env, "schemar0");
     client.register(

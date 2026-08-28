@@ -24,7 +24,7 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { PROMPT_DEFINITIONS, getPrompt } from "./prompts.js";
-import { createProgressEmitter, type ProgressContext } from "./progress.js";
+import { createProgressEmitter } from "./progress.js";
 import { truncateResponse } from "./truncation.js";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
@@ -43,7 +43,12 @@ import {
   formatMainnetDiagnostics,
   mainnetAllowedFromEnv,
 } from "./mainnetGuardrails.js";
-import { createMetricsRecorder, measureTool, metricsEnabledFromEnv, resolveToolDurationBudget } from "./metrics.js";
+import {
+  createMetricsRecorder,
+  measureTool,
+  metricsEnabledFromEnv,
+  resolveToolDurationBudget,
+} from "./metrics.js";
 import {
   createMockFetch,
   mockEnabledFromEnv,
@@ -57,8 +62,8 @@ import {
 import { purchaseHistoryTool, recordPurchase } from "./purchaseHistory.js";
 import { exportReceiptsTool } from "./receipts.js";
 import { TOOL_DEFINITIONS, type ToolDefinition } from "./tools.js";
-import { dryRunPublish, dryRunBuy, dryRunOnchain } from "./dryRun.js";
-import { initAuditLogging, logToolStart, logToolSuccess, logToolError } from "./auditLog.js";
+import { dryRunPublish, dryRunBuy } from "./dryRun.js";
+import { initAuditLogging } from "./auditLog.js";
 import { REGISTRY_LIST_DEFAULT_LIMIT, REGISTRY_LIST_DEFAULT_START } from "./registryPagination.js";
 import {
   flag,
@@ -87,7 +92,7 @@ import {
   normalizeWaitFlag,
   type PublishStatusFetch,
 } from "./publishStatus.js";
-import { safeErrorMessage, safeLog } from "./redaction.js";
+import { safeErrorMessage } from "./redaction.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import { exportState, restoreState, checkStatePermissions } from "./stateBackup.js";
 import { formatResetPreview, isResetConfirmed, type ResetScope } from "./resetGuard.js";
@@ -170,7 +175,7 @@ const NETWORK: X402Network = normalizeX402Network(
 // there is zero bookkeeping unless an operator turns it on.
 const metrics = createMetricsRecorder(
   metricsEnabledFromEnv(process.env),
-  resolveToolDurationBudget(process.env)
+  resolveToolDurationBudget(process.env),
 );
 
 // Opt-in audit logging (set MINDVAULT_AUDIT_LOG=1). Logs tool calls, network
@@ -2052,7 +2057,9 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
   );
 }
 
-export async function registryLookup(resourceId: string): Promise<string> {
+export async function registryLookup(
+  resourceId: string,
+): Promise<string> {
   if (_isMock()) return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
   const client = createRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
@@ -2134,7 +2141,10 @@ export async function registryLookup(resourceId: string): Promise<string> {
  * Paginated list of resources from the on-chain vault registry (contract `list`).
  * Data comes from Soroban, not the MindVault API catalog.
  */
-export async function registryList(start: number, limit: number): Promise<string> {
+export async function registryList(
+  start: number,
+  limit: number,
+): Promise<string> {
   if (_isMock()) return mockRegistryList(start, limit, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
 
   const client = createRegistryClient({

@@ -117,7 +117,7 @@ questions. Read both with one call:
 stellar contract invoke --id $CONTRACT --rpc-url $RPC \
   --network-passphrase "Test SDF Network ; September 2015" \
   -- contract_version
-# { "crate_version": "0.0.0", "resource_schema_version": 5 }
+# { "crate_version": "0.0.0", "resource_schema_version": 6 }
 ```
 
 | Field                     | Source                    | Changes when                                                           |

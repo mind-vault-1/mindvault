@@ -675,7 +675,7 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
     // mock: meta fetch (balance check) → balance covers price
     // mock: Horizon balance check → sufficient balance
     // mock: paid fetch → success
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
       const u = String(url);
       if (u.includes("/accounts/")) {
         // Horizon balance: enough USDC
@@ -1133,7 +1133,7 @@ describe("registerOnchain – happy path", () => {
     const unsignedXdr = "AAAAAQAAAAD...unsigned";
     const txHash = "abc123txhash";
 
-    vi.spyOn(globalThis, "fetch").mockImplementation((url, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url, _init) => {
       const u = String(url);
       if (u.includes("/register/prepare")) {
         return Promise.resolve(
