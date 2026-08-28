@@ -26,6 +26,7 @@ import {
 import { PROMPT_DEFINITIONS, getPrompt } from "./prompts.js";
 import { createProgressEmitter, type ProgressContext } from "./progress.js";
 import { truncateResponse } from "./truncation.js";
+import { Mutex } from "./mutex.js";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
@@ -2489,6 +2490,35 @@ function isDispatchableTool(name: string): boolean {
 }
 
 /**
+ * Tools that mutate persisted agent state (wallet/profile/API key or purchase
+ * history) or perform a payment/on-chain write. Their handlers are async and
+ * can overlap, so `dispatchTool` runs them under a single in-process async
+ * lock (#550) to stop read-modify-write races (e.g. `saveState()` losing an
+ * update when `mindvault_setup_wallet` and `mindvault_register` interleave).
+ */
+const STATE_MUTATING_TOOLS = new Set([
+  "mindvault_setup_wallet",
+  "mindvault_use_profile",
+  "mindvault_register",
+  "mindvault_publish",
+  "mindvault_buy",
+  "mindvault_register_onchain",
+  "mindvault_update_metadata",
+  "mindvault_set_price",
+  "mindvault_transfer_ownership",
+  "mindvault_set_listed",
+  "mindvault_set_tags",
+  "mindvault_reset",
+  "mindvault_restore_state",
+  "mindvault_import_wallet",
+  "mindvault_rotate_publisher_key",
+  "mindvault_metrics",
+]);
+
+/** Serializes state-mutating tool calls so reads and writes cannot interleave. */
+const stateMutex = new Mutex();
+
+/**
  * Route a validated tool call to its implementation. Used by the MCP CallTool
  * handler and by unit tests.
  */
@@ -2518,107 +2548,118 @@ export async function dispatchTool(
 
   assertMainnetMutationAllowed(NETWORK, name, rawRecord);
 
-  switch (name) {
-    case "mindvault_setup_wallet":
-      return setupWallet(optionalString(args, "profile"));
-    case "mindvault_wallet_info":
-      return walletInfo();
-    case "mindvault_use_profile":
-      return useProfile(requiredString(args, "name"));
-    case "mindvault_list_profiles":
-      return listProfiles();
-    case "mindvault_browse": {
-      const parsed = parseCatalogFilters(rawRecord);
-      return parsed.ok ? browse(parsed.filters) : parsed.error;
+  // State-mutating tools run under a single in-process async lock (#550) so
+  // overlapping read-modify-write on the module-level profile/wallet state and
+  // its persisted file cannot interleave and lose an update.
+  const execute = async (): Promise<string> => {
+    switch (name) {
+      case "mindvault_setup_wallet":
+        return setupWallet(optionalString(args, "profile"));
+      case "mindvault_wallet_info":
+        return walletInfo();
+      case "mindvault_use_profile":
+        return useProfile(requiredString(args, "name"));
+      case "mindvault_list_profiles":
+        return listProfiles();
+      case "mindvault_browse": {
+        const parsed = parseCatalogFilters(rawRecord);
+        return parsed.ok ? browse(parsed.filters) : parsed.error;
+      }
+      case "mindvault_search": {
+        const parsed = parseCatalogFilters(rawRecord, { requireCriteria: true });
+        return parsed.ok ? search(parsed.filters) : parsed.error;
+      }
+      case "mindvault_preview":
+        return preview(requiredString(args, "resourceId"));
+      case "mindvault_register":
+        return register(
+          requiredString(args, "name"),
+          requiredString(args, "email"),
+          optionalString(args, "walletAddress"),
+        );
+      case "mindvault_publish":
+        return publish({
+          title: requiredString(dryRunArgs, "title"),
+          description: optionalString(dryRunArgs, "description"),
+          price: requiredString(dryRunArgs, "price"),
+          externalUrl: requiredString(dryRunArgs, "externalUrl"),
+          dryRun: flag(dryRunArgs, "dryRun"),
+        });
+      case "mindvault_publish_status":
+        return publishStatus(rawRecord);
+      case "mindvault_buy":
+        return buy(requiredString(args, "resourceId"), flag(args, "dryRun"), undefined, onProgress);
+      case "mindvault_purchase_history":
+        return purchaseHistoryTool(rawRecord);
+      case "mindvault_export_receipts":
+        return exportReceiptsTool(rawRecord);
+      case "mindvault_register_onchain":
+        return registerOnchain(requiredString(args, "resourceId"), onProgress);
+      case "mindvault_agent_status":
+        return agentStatus();
+      case "mindvault_registry_info":
+        return registryInfo();
+      case "mindvault_network_profile":
+        return networkProfile();
+      case "mindvault_check_bindings":
+        return checkBindings();
+      case "mindvault_check_consistency":
+        return checkConsistency(
+          requiredString(args, "resourceId"),
+          optionalString(args, "expectedMetadataHash"),
+        );
+      case "mindvault_registry_lookup":
+        return registryLookup(requiredString(args, "resourceId"));
+      case "mindvault_registry_list":
+        return registryList(
+          optionalInt(args, "start", REGISTRY_LIST_DEFAULT_START),
+          optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
+        );
+      case "mindvault_update_metadata":
+        return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
+      case "mindvault_set_price":
+        return setPrice(requiredString(args, "resourceId"), requiredString(args, "price"));
+      case "mindvault_transfer_ownership":
+        return transferOwnership(
+          requiredString(args, "resourceId"),
+          requiredString(args, "newCreator"),
+        );
+      case "mindvault_set_listed":
+        return setListed(requiredString(args, "resourceId"), flag(args, "listed"));
+      case "mindvault_tx_status":
+        return txStatus(requiredString(args, "txHash"));
+      case "mindvault_reset":
+        return resetState(flag(args, "all"), rawRecord.confirm);
+      case "mindvault_backup_state":
+        return backupState(requiredString(args, "passphrase"));
+      case "mindvault_restore_state":
+        return restoreStateTool(requiredString(args, "blob"), requiredString(args, "passphrase"));
+      case "mindvault_metrics":
+        return toolMetrics(flag(args, "reset"));
+      case "mindvault_check_state_permissions":
+        return checkStatePermissionsTool();
+      case "mindvault_registry_health":
+        return registryHealth();
+      case "mindvault_import_wallet":
+        return importWallet({
+          secretKey: optionalString(args, "secretKey"),
+          profile: optionalString(args, "profile"),
+          persist: flag(args, "persist"),
+        });
+      case "mindvault_rotate_publisher_key":
+        return rotatePublisherKey(optionalString(args, "profile"));
+      case "mindvault_verify_install":
+        return formatVerifyInstall(verifyInstall(process.env));
+      default:
+        throw new Error(`Unknown tool: ${name}`);
     }
-    case "mindvault_search": {
-      const parsed = parseCatalogFilters(rawRecord, { requireCriteria: true });
-      return parsed.ok ? search(parsed.filters) : parsed.error;
-    }
-    case "mindvault_preview":
-      return preview(requiredString(args, "resourceId"));
-    case "mindvault_register":
-      return register(
-        requiredString(args, "name"),
-        requiredString(args, "email"),
-        optionalString(args, "walletAddress"),
-      );
-    case "mindvault_publish":
-      return publish({
-        title: requiredString(dryRunArgs, "title"),
-        description: optionalString(dryRunArgs, "description"),
-        price: requiredString(dryRunArgs, "price"),
-        externalUrl: requiredString(dryRunArgs, "externalUrl"),
-        dryRun: flag(dryRunArgs, "dryRun"),
-      });
-    case "mindvault_publish_status":
-      return publishStatus(rawRecord);
-    case "mindvault_buy":
-      return buy(requiredString(args, "resourceId"), flag(args, "dryRun"), undefined, onProgress);
-    case "mindvault_purchase_history":
-      return purchaseHistoryTool(rawRecord);
-    case "mindvault_export_receipts":
-      return exportReceiptsTool(rawRecord);
-    case "mindvault_register_onchain":
-      return registerOnchain(requiredString(args, "resourceId"), onProgress);
-    case "mindvault_agent_status":
-      return agentStatus();
-    case "mindvault_registry_info":
-      return registryInfo();
-    case "mindvault_network_profile":
-      return networkProfile();
-    case "mindvault_check_bindings":
-      return checkBindings();
-    case "mindvault_check_consistency":
-      return checkConsistency(
-        requiredString(args, "resourceId"),
-        optionalString(args, "expectedMetadataHash"),
-      );
-    case "mindvault_registry_lookup":
-      return registryLookup(requiredString(args, "resourceId"));
-    case "mindvault_registry_list":
-      return registryList(
-        optionalInt(args, "start", REGISTRY_LIST_DEFAULT_START),
-        optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
-      );
-    case "mindvault_update_metadata":
-      return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
-    case "mindvault_set_price":
-      return setPrice(requiredString(args, "resourceId"), requiredString(args, "price"));
-    case "mindvault_transfer_ownership":
-      return transferOwnership(
-        requiredString(args, "resourceId"),
-        requiredString(args, "newCreator"),
-      );
-    case "mindvault_set_listed":
-      return setListed(requiredString(args, "resourceId"), flag(args, "listed"));
-    case "mindvault_tx_status":
-      return txStatus(requiredString(args, "txHash"));
-    case "mindvault_reset":
-      return resetState(flag(args, "all"), rawRecord.confirm);
-    case "mindvault_backup_state":
-      return backupState(requiredString(args, "passphrase"));
-    case "mindvault_restore_state":
-      return restoreStateTool(requiredString(args, "blob"), requiredString(args, "passphrase"));
-    case "mindvault_metrics":
-      return toolMetrics(flag(args, "reset"));
-    case "mindvault_check_state_permissions":
-      return checkStatePermissionsTool();
-    case "mindvault_registry_health":
-      return registryHealth();
-    case "mindvault_import_wallet":
-      return importWallet({
-        secretKey: optionalString(args, "secretKey"),
-        profile: optionalString(args, "profile"),
-        persist: flag(args, "persist"),
-      });
-    case "mindvault_rotate_publisher_key":
-      return rotatePublisherKey(optionalString(args, "profile"));
-    case "mindvault_verify_install":
-      return formatVerifyInstall(verifyInstall(process.env));
-    default:
-      throw new Error(`Unknown tool: ${name}`);
+  };
+
+  if (STATE_MUTATING_TOOLS.has(name)) {
+    return stateMutex.runExclusive(execute);
   }
+
+  return execute();
 }
 
 /**

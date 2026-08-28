@@ -2012,3 +2012,61 @@ describe("setListed", () => {
     }
   });
 });
+
+// ── state-mutating calls are serialized (#550) ──────────────────────────────
+
+describe("state-mutating calls are serialized (#550)", () => {
+  beforeEach(() => {
+    _resetProfiles();
+  });
+
+  afterEach(() => {
+    _resetProfiles();
+    vi.restoreAllMocks();
+  });
+
+  it("persists the results of two concurrent mutating calls", async () => {
+    // Each setupWallet call read-modify-writes the module-level profile state
+    // across an `await` boundary (the sponsored-account POST). Serialized under
+    // the state mutex, neither may clobber the other's saveState(), so both
+    // profiles must survive.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ publicKey: "GPTESTALICE", secretKey: "STESTALICE" }),
+    );
+
+    const [alice, bob] = await Promise.all([
+      dispatchTool("mindvault_setup_wallet", { profile: "alice" }),
+      dispatchTool("mindvault_setup_wallet", { profile: "bob" }),
+    ]);
+
+    expect(alice).toContain("Wallet created.");
+    expect(bob).toContain("Wallet created.");
+    expect(alice).toContain("Address: GPTESTALICE");
+    expect(bob).toContain("Address: GPTESTALICE");
+
+    const list = listProfiles();
+    expect(list).toContain("alice — GPTESTALICE");
+    expect(list).toContain("bob — GPTESTALICE");
+  });
+
+  it("keeps a serialized mutating call from losing an earlier profile", async () => {
+    // Interleave a quick synchronous mutating call with a slow async one. Both
+    // go through the same lock, so the slow wallet setup cannot run its
+    // read-modify-write while use_profile is mid-flight and drop its profile.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ publicKey: "GPTESTBOB", secretKey: "STESTBOB" }),
+    );
+
+    const [profile, wallet] = await Promise.all([
+      dispatchTool("mindvault_use_profile", { name: "buyer" }),
+      dispatchTool("mindvault_setup_wallet", { profile: "bob" }),
+    ]);
+
+    expect(profile).toContain("Active profile: buyer");
+    expect(wallet).toContain("Address: GPTESTBOB");
+
+    const list = listProfiles();
+    expect(list).toContain("buyer");
+    expect(list).toContain("bob — GPTESTBOB");
+  });
+});
