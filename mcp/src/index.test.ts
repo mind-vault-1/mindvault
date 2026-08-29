@@ -1351,7 +1351,7 @@ describe("setupWallet – sponsored account failure diagnostics", () => {
       await dispatchTool("mindvault_setup_wallet", {});
     } catch (err: any) {
       const msg = err.message;
-      expect(msg).toContain("Failed to create wallet");
+      expect(msg).toContain("failed to create wallet");
       expect(msg).toContain("unavailable");
       expect(msg).toMatch(/restarting|wait/i);
     }
@@ -2090,6 +2090,9 @@ describe("API health preflight before mutation tools (#603)", () => {
     });
     expect(JSON.parse(result).mode).toBe("dry-run");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 // ── state-mutating calls are serialized (#550) ──────────────────────────────
 
 describe("state-mutating calls are serialized (#550)", () => {

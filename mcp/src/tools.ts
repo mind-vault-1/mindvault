@@ -9,6 +9,26 @@
  */
 
 import { catalogFilterInputProperties } from "./catalogFilters.js";
+import {
+  AGENT_STATUS_OUTPUT_SCHEMA,
+  CATALOG_LIST_OUTPUT_SCHEMA,
+  CONSISTENCY_OUTPUT_SCHEMA,
+  LIST_PROFILES_OUTPUT_SCHEMA,
+  METRICS_OUTPUT_SCHEMA,
+  NETWORK_PROFILE_OUTPUT_SCHEMA,
+  ONCHAIN_MUTATION_OUTPUT_SCHEMA,
+  PREVIEW_OUTPUT_SCHEMA,
+  PUBLISH_BUY_OUTPUT_SCHEMA,
+  RECOVER_CACHE_OUTPUT_SCHEMA,
+  REGISTER_ONCHAIN_OUTPUT_SCHEMA,
+  REGISTRY_INFO_OUTPUT_SCHEMA,
+  REGISTRY_LIST_OUTPUT_SCHEMA,
+  REGISTRY_LOOKUP_OUTPUT_SCHEMA,
+  TX_STATUS_OUTPUT_SCHEMA,
+  USE_PROFILE_OUTPUT_SCHEMA,
+  WALLET_INFO_OUTPUT_SCHEMA,
+  WALLET_SETUP_OUTPUT_SCHEMA,
+} from "./outputSchemas.js";
 import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_EXPORT_OUTPUT_SCHEMA } from "./receipts.js";
 
 /** JSON Schema (draft subset) advertised for a tool's arguments. */
@@ -70,6 +90,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    outputSchema: WALLET_SETUP_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Set Up Wallet",
       readOnlyHint: false,
@@ -82,6 +103,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Check the active profile name, its agent wallet address, USDC balance, and whether it is registered as a publisher.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: WALLET_INFO_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Wallet Info",
       readOnlyHint: true,
@@ -105,6 +127,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["name"],
     },
+    outputSchema: USE_PROFILE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Use Profile",
       readOnlyHint: false,
@@ -117,6 +140,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "List all named wallet profiles, marking the active one and showing each profile's wallet address and whether it is registered as a publisher. Secret keys are never shown.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: LIST_PROFILES_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "List Profiles",
       readOnlyHint: true,
@@ -133,6 +157,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: { ...catalogFilterInputProperties },
       required: [],
     },
+    outputSchema: CATALOG_LIST_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Browse Catalog",
       readOnlyHint: true,
@@ -149,6 +174,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: { ...catalogFilterInputProperties },
       required: [],
     },
+    outputSchema: CATALOG_LIST_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Search Catalog",
       readOnlyHint: true,
@@ -172,6 +198,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId"],
     },
+    outputSchema: PREVIEW_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Preview Resource",
       readOnlyHint: true,
@@ -263,6 +290,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["title", "price", "externalUrl"],
     },
+    outputSchema: PUBLISH_BUY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Publish Resource",
       readOnlyHint: false,
@@ -296,6 +324,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId"],
     },
+    outputSchema: PUBLISH_BUY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Buy Resource",
       readOnlyHint: false,
@@ -378,6 +407,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId"],
     },
+    outputSchema: REGISTER_ONCHAIN_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Register On-Chain",
       readOnlyHint: false,
@@ -390,6 +420,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Check the verification agent's earnings and activity. Returns total verifications, pass/fail counts, total USDC earned, average confidence score, and recent verification history with resource titles.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: AGENT_STATUS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Agent Status",
       readOnlyHint: true,
@@ -402,6 +433,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Return the on-chain vault-registry contract ID, network passphrase, RPC URL, and the resource fields available for direct Soroban queries. Use this to verify ownership, price, and listing state directly from Stellar without trusting the MindVault API.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: REGISTRY_INFO_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Registry Info",
       readOnlyHint: true,
@@ -414,6 +446,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Report current Stellar/x402 network configuration (testnet/mainnet), RPC URLs, registry contract ID, and warnings for custom overrides. Use this to verify which network the MCP is connected to and diagnose configuration issues.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: NETWORK_PROFILE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Network Profile",
       readOnlyHint: true,
@@ -456,6 +489,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId"],
     },
+    outputSchema: CONSISTENCY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Check Consistency",
       readOnlyHint: true,
@@ -479,6 +513,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId"],
     },
+    outputSchema: REGISTRY_LOOKUP_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Registry Lookup",
       readOnlyHint: true,
@@ -511,6 +546,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    outputSchema: REGISTRY_LIST_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Registry List",
       readOnlyHint: true,
@@ -537,6 +573,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["txHash"],
     },
+    outputSchema: TX_STATUS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Transaction Status",
       readOnlyHint: true,
@@ -634,6 +671,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    outputSchema: METRICS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Tool Metrics",
       readOnlyHint: false,
@@ -706,6 +744,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId", "metadata"],
     },
+    outputSchema: ONCHAIN_MUTATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Update Metadata",
       readOnlyHint: false,
@@ -739,6 +778,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId", "price"],
     },
+    outputSchema: ONCHAIN_MUTATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Set Price",
       readOnlyHint: false,
@@ -771,6 +811,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId", "newCreator"],
     },
+    outputSchema: ONCHAIN_MUTATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Transfer Ownership",
       readOnlyHint: false,
@@ -804,6 +845,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId", "listed"],
     },
+    outputSchema: ONCHAIN_MUTATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Set Listed",
       readOnlyHint: false,
@@ -867,6 +909,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    outputSchema: WALLET_SETUP_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Import Wallet",
       readOnlyHint: false,
@@ -919,5 +962,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Attempt a catalog stale-cache recovery: requests the MCP to refresh or re-fetch catalog index data and provides recovery guidance. Useful when browse results appear stale.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: RECOVER_CACHE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Recover Catalog Cache",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
 ];

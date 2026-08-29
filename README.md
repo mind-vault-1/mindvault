@@ -126,7 +126,7 @@ For fast Vitest coverage of the MCP request surface itself (`listTools` / `callT
 
 Tool failures from the API, x402, Horizon, and the vault-registry are normalized into a single structured form — a summary, a machine-readable `Source · Category · HTTP` line, and one actionable next step. See **[docs/mcp-error-reference.md](docs/mcp-error-reference.md)**.
 
-Receipts from `mindvault_buy` can be exported as a schema-versioned JSON or CSV document with an explicit currency and total, returned as MCP `structuredContent`. See **[docs/mcp-receipt-export.md](docs/mcp-receipt-export.md)**.
+Tools with structured results (catalog, wallet, preview, buy, registry, receipts, …) return a stable JSON object as MCP `structuredContent` next to the existing text block. See **[docs/mcp-structured-output.md](docs/mcp-structured-output.md)**. Receipts from `mindvault_buy` can be exported as a schema-versioned JSON or CSV document with an explicit currency and total. See **[docs/mcp-receipt-export.md](docs/mcp-receipt-export.md)**.
 
 Every outbound call runs under a configurable `AbortController` deadline, so a hung backend fails fast instead of blocking the agent. Idempotent reads additionally retry transient failures with bounded, jittered backoff — payments never do, since a replay could settle twice. See **[docs/mcp-timeouts-retries.md](docs/mcp-timeouts-retries.md)**.
 
