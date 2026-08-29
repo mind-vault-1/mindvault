@@ -87,6 +87,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("update_metadata", "creator"),
     ("freeze_metadata", "creator"),
     ("set_tags", "creator"),
+    ("set_royalty_recipient", "creator"),
     ("set_listed", "creator"),
     ("delist", "creator"),
     ("freeze_resource", "creator"),
@@ -253,6 +254,7 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
         "settags",
         "(prev_tags: Vec<String>, next_tags: Vec<String>)",
     ),
+    ("setroyal", "(old_recipient: Option<Address>, new_recipient: Option<Address>)"),
     ("transfer", "(previous_owner: Address, new_owner: Address)"),
     ("propose", "(owner: Address, proposed: Address)"),
     ("cancel", "owner: Address"),
@@ -446,6 +448,10 @@ pub struct Resource {
     /// once at registration via `register_with_hash`. `None` for resources
     /// registered through plain `register`.
     pub content_hash: Option<String>,
+    /// Optional per-resource royalty recipient override. When set, royalties
+    /// for this resource go to this address instead of the global fee_recipient.
+    /// Only the resource creator may set this field via `set_royalty_recipient`.
+    pub royalty_recipient: Option<Address>,
 }
 
 /// Structured payload emitted by `register()`.
@@ -984,6 +990,34 @@ impl VaultRegistry {
         // Emit event with both previous and next tags for indexer reconciliation
         env.events()
             .publish((symbol_short!("settags"), id), (prev_tags, norm_tags));
+        Ok(())
+    }
+
+    /// Set a per-resource royalty recipient override. Only the creator may call
+    /// this. When set, royalties for this resource will go to this address instead
+    /// of the global `fee_recipient` from `FeeConfig`. Set to `None` to clear the
+    /// override and use the global recipient.
+    ///
+    /// Emits a `setroyal` event with the old and new recipient addresses.
+    pub fn set_royalty_recipient(
+        env: Env,
+        id: String,
+        recipient: Option<Address>,
+    ) -> Result<(), Error> {
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&id)?;
+        let mut resource = Self::load(&env, &id)?;
+        resource.creator.require_auth();
+        Self::ensure_mutable(&resource)?;
+
+        let old_recipient = resource.royalty_recipient.clone();
+        resource.royalty_recipient = recipient.clone();
+        Self::save(&env, &mut resource);
+
+        env.events().publish(
+            (symbol_short!("setroyal"), id),
+            (old_recipient, recipient),
+        );
         Ok(())
     }
 
@@ -3052,6 +3086,7 @@ impl VaultRegistry {
             schema_version: RESOURCE_SCHEMA_VERSION,
             version: 1,
             content_hash: content_hash.clone(),
+            royalty_recipient: None,
         };
         env.storage().persistent().set(&key, &resource);
         Self::bump_persistent(&env, &key);
