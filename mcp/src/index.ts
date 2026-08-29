@@ -9,10 +9,6 @@ import {
   createRegistryClient,
   Errors as RegistryErrors,
   listResources,
-  networks as registryNetworks,
-  normalizeX402Network,
-  resolveStellarNetwork,
-  X402_NETWORK_IDS,
   type Resource,
 } from "@mindvault/registry-client";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -33,11 +29,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { homedir } from "os";
 import { join } from "path";
 import { cacheStalenessNotice } from "./cacheStaleness.js";
-import {
-  collectStartupDiagnostics,
-  formatDiagnostics,
-  hasBlockingDiagnostics,
-} from "./diagnostics.js";
+import { buildConfig, resolveConfig } from "./config.js";
 import {
   assertMainnetMutationAllowed,
   formatMainnetDiagnostics,
@@ -153,32 +145,33 @@ import {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const STELLAR_NETWORK = resolveStellarNetwork(process.env.STELLAR_NETWORK);
-const networkPreset = registryNetworks[STELLAR_NETWORK];
+// Network, URL, and contract-id resolution lives in ./config.ts as a pure,
+// unit-tested function so the config path no longer runs as an untestable
+// top-level side effect. The named aliases below keep the rest of this file
+// unchanged.
+const {
+  stellarNetwork: STELLAR_NETWORK,
+  networkPreset,
+  x402Network: NETWORK,
+  baseUrl: BASE_URL,
+  registryContractId: REGISTRY_CONTRACT_ID,
+  registryNetworkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  sponsoredAccountUrl: SPONSORED_ACCOUNT_URL,
+  horizonUrl: HORIZON_URL,
+  sorobanRpcUrl: SOROBAN_RPC_URL,
+} = buildConfig(process.env);
 
 // Startup diagnostics: collect every configuration problem in one pass so the
 // operator sees the full list (with exact variable names and expected values)
-// instead of fixing them one failed launch at a time. Warnings are printed but
-// non-fatal; any error stops the server. Skipped under tests and in mock mode
-// so unit runs and offline local development never exit the process.
+// instead of fixing them one failed launch at a time. `resolveConfig` returns
+// the validation result rather than exiting; the fail-fast decision stays here.
+// Warnings are printed but non-fatal; any error stops the server. Skipped under
+// tests and in mock mode so unit runs and offline local development never exit.
 if (!process.env.VITEST && !mockEnabledFromEnv(process.env)) {
-  const diagnostics = collectStartupDiagnostics(process.env);
-  if (diagnostics.length > 0) console.error(formatDiagnostics(diagnostics));
-  if (hasBlockingDiagnostics(diagnostics)) process.exit(1);
+  const startup = resolveConfig(process.env);
+  if (startup.report) console.error(startup.report);
+  if (!startup.ok) process.exit(1);
 }
-
-const BASE_URL = process.env.MINDVAULT_URL ?? "https://mindvault-hyr3.onrender.com";
-const REGISTRY_CONTRACT_ID =
-  process.env.VAULT_REGISTRY_CONTRACT_ID ?? networkPreset.defaultRegistryContractId ?? "";
-const REGISTRY_NETWORK_PASSPHRASE = networkPreset.networkPassphrase;
-const SPONSORED_ACCOUNT_URL =
-  process.env.SPONSORED_ACCOUNT_URL ?? "https://stellar-sponsored-agent-account.onrender.com";
-const HORIZON_URL = process.env.HORIZON_URL ?? networkPreset.horizonUrl;
-const SOROBAN_RPC_URL = process.env.SOROBAN_RPC_URL ?? networkPreset.sorobanRpcUrl;
-type X402Network = (typeof X402_NETWORK_IDS)[keyof typeof X402_NETWORK_IDS];
-const NETWORK: X402Network = normalizeX402Network(
-  process.env.NETWORK ?? networkPreset.x402Network,
-) as X402Network;
 
 // Opt-in tool-level metrics (set MINDVAULT_METRICS=1). Disabled by default so
 // there is zero bookkeeping unless an operator turns it on.
@@ -2590,12 +2583,6 @@ export {
   _resetProfiles,
   _setMockMode,
 };
-
-if (!process.env.VITEST && !mockEnabledFromEnv(process.env)) {
-  const diagnostics = collectStartupDiagnostics(process.env);
-  if (diagnostics.length > 0) console.error(formatDiagnostics(diagnostics));
-  if (hasBlockingDiagnostics(diagnostics)) process.exit(1);
-}
 
 const TOOLS_WITHOUT_ARG_VALIDATION = new Set([
   "mindvault_publish_status",
