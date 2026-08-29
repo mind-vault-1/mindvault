@@ -914,4 +914,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       idempotentHint: true,
     },
   },
+  {
+    name: "mindvault_recover_catalog_cache",
+    description:
+      "Attempt a catalog stale-cache recovery: requests the MCP to refresh or re-fetch catalog index data and provides recovery guidance. Useful when browse results appear stale.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
 ];

@@ -2216,6 +2216,35 @@ export async function registryList(
   );
 }
 
+/**
+ * Request a catalog stale-cache recovery.
+ *
+ * This tool is a light-weight operator-facing recovery helper: in mock mode
+ * it returns a predictable message for tests; in real mode it returns an
+ * actionable instruction for operators/agents. Implementing an automated
+ * server-side invalidation is out of scope for this small change.
+ */
+export async function recoverCatalogCache(): Promise<string> {
+  if (_isMock()) {
+    return JSON.stringify(
+      { source: "mcp", action: "recover_catalog_cache", message: "Mock: catalog cache recovery triggered (no-op in mock)." },
+      null,
+      2,
+    );
+  }
+
+  return JSON.stringify(
+    {
+      source: "mcp",
+      action: "recover_catalog_cache",
+      message:
+        "Catalog cache recovery requested. The MCP does not perform automatic invalidation; re-run `mindvault_browse` to refresh client caches, restart the MCP to prime server-side caches, or trigger your API server's reindex endpoint if available.",
+    },
+    null,
+    2,
+  );
+}
+
 function registryInfo(): string {
   const info: {
     contractId: string;
@@ -2634,6 +2663,91 @@ export async function dispatchTool(
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
+    case "mindvault_preview":
+      return preview(requiredString(args, "resourceId"));
+    case "mindvault_register":
+      return register(
+        requiredString(args, "name"),
+        requiredString(args, "email"),
+        optionalString(args, "walletAddress"),
+      );
+    case "mindvault_publish":
+      return publish({
+        title: requiredString(dryRunArgs, "title"),
+        description: optionalString(dryRunArgs, "description"),
+        price: requiredString(dryRunArgs, "price"),
+        externalUrl: requiredString(dryRunArgs, "externalUrl"),
+        dryRun: flag(dryRunArgs, "dryRun"),
+      });
+    case "mindvault_publish_status":
+      return publishStatus(rawRecord);
+    case "mindvault_buy":
+      return buy(requiredString(args, "resourceId"), flag(args, "dryRun"), undefined, onProgress);
+    case "mindvault_purchase_history":
+      return purchaseHistoryTool(rawRecord);
+    case "mindvault_export_receipts":
+      return exportReceiptsTool(rawRecord);
+    case "mindvault_register_onchain":
+      return registerOnchain(requiredString(args, "resourceId"), onProgress);
+    case "mindvault_agent_status":
+      return agentStatus();
+    case "mindvault_registry_info":
+      return registryInfo();
+    case "mindvault_network_profile":
+      return networkProfile();
+    case "mindvault_check_bindings":
+      return checkBindings();
+    case "mindvault_check_consistency":
+      return checkConsistency(
+        requiredString(args, "resourceId"),
+        optionalString(args, "expectedMetadataHash"),
+      );
+    case "mindvault_registry_lookup":
+      return registryLookup(requiredString(args, "resourceId"));
+    case "mindvault_registry_list":
+      return registryList(
+        optionalInt(args, "start", REGISTRY_LIST_DEFAULT_START),
+        optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
+      );
+    case "mindvault_update_metadata":
+      return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
+    case "mindvault_set_price":
+      return setPrice(requiredString(args, "resourceId"), requiredString(args, "price"));
+    case "mindvault_transfer_ownership":
+      return transferOwnership(
+        requiredString(args, "resourceId"),
+        requiredString(args, "newCreator"),
+      );
+    case "mindvault_set_listed":
+      return setListed(requiredString(args, "resourceId"), flag(args, "listed"));
+    case "mindvault_tx_status":
+      return txStatus(requiredString(args, "txHash"));
+    case "mindvault_reset":
+      return resetState(flag(args, "all"), rawRecord.confirm);
+    case "mindvault_backup_state":
+      return backupState(requiredString(args, "passphrase"));
+    case "mindvault_restore_state":
+      return restoreStateTool(requiredString(args, "blob"), requiredString(args, "passphrase"));
+    case "mindvault_metrics":
+      return toolMetrics(flag(args, "reset"));
+    case "mindvault_check_state_permissions":
+      return checkStatePermissionsTool();
+    case "mindvault_registry_health":
+      return registryHealth();
+    case "mindvault_import_wallet":
+      return importWallet({
+        secretKey: optionalString(args, "secretKey"),
+        profile: optionalString(args, "profile"),
+        persist: flag(args, "persist"),
+      });
+    case "mindvault_rotate_publisher_key":
+      return rotatePublisherKey(optionalString(args, "profile"));
+    case "mindvault_verify_install":
+      return formatVerifyInstall(verifyInstall(process.env));
+    case "mindvault_recover_catalog_cache":
+      return recoverCatalogCache();
+    default:
+      throw new Error(`Unknown tool: ${name}`);
   };
 
   if (STATE_MUTATING_TOOLS.has(name)) {

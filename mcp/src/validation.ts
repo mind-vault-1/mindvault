@@ -290,6 +290,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     confirmMainnet: CONFIRM_MAINNET,
   },
   mindvault_verify_install: {},
+  mindvault_recover_catalog_cache: {},
 };
 
 // ── Errors ────────────────────────────────────────────────────────────────────

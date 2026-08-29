@@ -135,6 +135,14 @@ describe("MCP integration harness", () => {
     expect(harnessResultText(empty)).toMatch(/No on-chain resources in range/);
   });
 
+  it("calls mindvault_recover_catalog_cache and returns guidance", async () => {
+    const result = await harness.callTool("mindvault_recover_catalog_cache");
+    expect(harnessIsToolError(result)).toBe(false);
+    const text = harnessResultText(result);
+    expect(text.toLowerCase()).toContain("catalog");
+    expect(text.toLowerCase()).toContain("recover");
+  });
+
   it("browses the catalog sorted by price through callTool", async () => {
     const sorted = await harness.callTool("mindvault_browse", { sort: "price_asc", limit: 10 });
     expect(harnessIsToolError(sorted)).toBe(false);
