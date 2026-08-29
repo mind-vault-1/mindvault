@@ -2216,6 +2216,35 @@ export async function registryList(
   );
 }
 
+/**
+ * Request a catalog stale-cache recovery.
+ *
+ * This tool is a light-weight operator-facing recovery helper: in mock mode
+ * it returns a predictable message for tests; in real mode it returns an
+ * actionable instruction for operators/agents. Implementing an automated
+ * server-side invalidation is out of scope for this small change.
+ */
+export async function recoverCatalogCache(): Promise<string> {
+  if (_isMock()) {
+    return JSON.stringify(
+      { source: "mcp", action: "recover_catalog_cache", message: "Mock: catalog cache recovery triggered (no-op in mock)." },
+      null,
+      2,
+    );
+  }
+
+  return JSON.stringify(
+    {
+      source: "mcp",
+      action: "recover_catalog_cache",
+      message:
+        "Catalog cache recovery requested. The MCP does not perform automatic invalidation; re-run `mindvault_browse` to refresh client caches, restart the MCP to prime server-side caches, or trigger your API server's reindex endpoint if available.",
+    },
+    null,
+    2,
+  );
+}
+
 function registryInfo(): string {
   const info: {
     contractId: string;
@@ -2619,6 +2648,8 @@ export async function dispatchTool(
       return rotatePublisherKey(optionalString(args, "profile"));
     case "mindvault_verify_install":
       return formatVerifyInstall(verifyInstall(process.env));
+    case "mindvault_recover_catalog_cache":
+      return recoverCatalogCache();
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

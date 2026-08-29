@@ -692,4 +692,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       "Verify the MindVault MCP server is installed and configured correctly. Checks Node.js version (>=20), network settings, URL variables, vault-registry contract ID, and warns about plaintext secrets in the environment. No network calls are made — all checks are local. Run this first when setting up a new agent or diagnosing a configuration problem.",
     inputSchema: { type: "object", properties: {}, required: [] },
   },
+  {
+    name: "mindvault_recover_catalog_cache",
+    description:
+      "Attempt a catalog stale-cache recovery: requests the MCP to refresh or re-fetch catalog index data and provides recovery guidance. Useful when browse results appear stale.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  },
 ];
