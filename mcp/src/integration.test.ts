@@ -107,6 +107,36 @@ describe("MCP integration harness", () => {
     expect(previewText).toMatch(/1\.5|1\.50/);
   });
 
+  it("calls mindvault_batch_catalog_lookup with mocked fetch", async () => {
+    const result = await harness.callTool("mindvault_batch_catalog_lookup", {
+      resourceIds: "mock-1, mock-2, does-not-exist, mock-1",
+    });
+    expect(harnessIsToolError(result)).toBe(false);
+    const parsed = JSON.parse(harnessResultText(result));
+
+    // The trailing duplicate "mock-1" is deduplicated before fetching.
+    expect(parsed.requested).toBe(3);
+    expect(parsed.found).toBe(2);
+    expect(parsed.notFound).toBe(1);
+    expect(parsed.results).toHaveLength(3);
+
+    const byId = Object.fromEntries(parsed.results.map((r: any) => [r.resourceId, r]));
+    expect(byId["mock-1"].found).toBe(true);
+    expect(byId["mock-1"].title).toBeTruthy();
+    expect(byId["mock-2"].found).toBe(true);
+    expect(byId["does-not-exist"].found).toBe(false);
+    expect(byId["does-not-exist"].message).toBeTruthy();
+  });
+
+  it("rejects mindvault_batch_catalog_lookup with too many ids", async () => {
+    const tooMany = Array.from({ length: 21 }, (_, i) => `res-${i}`).join(",");
+    const result = await harness.callTool("mindvault_batch_catalog_lookup", {
+      resourceIds: tooMany,
+    });
+    expect(harnessIsToolError(result)).toBe(true);
+    expect(harnessResultText(result)).toContain("batch limit");
+  });
+
   it("calls mindvault_registry_lookup with mocked registry dependency", async () => {
     const hit = await harness.callTool("mindvault_registry_lookup", { resourceId: "mock-1" });
     expect(harnessIsToolError(hit)).toBe(false);

@@ -38,7 +38,11 @@ function groupOf(name: string): string {
   if (["mindvault_setup_wallet", "mindvault_wallet_info", "mindvault_import_wallet"].includes(name))
     return "Wallet";
   if (["mindvault_use_profile", "mindvault_list_profiles"].includes(name)) return "Profiles";
-  if (["mindvault_browse", "mindvault_search", "mindvault_preview"].includes(name))
+  if (
+    ["mindvault_browse", "mindvault_search", "mindvault_preview", "mindvault_batch_catalog_lookup"].includes(
+      name,
+    )
+  )
     return "Catalog";
   if (
     [

@@ -65,6 +65,7 @@ import { TOOL_DEFINITIONS, type ToolDefinition } from "./tools.js";
 import { dryRunPublish, dryRunBuy } from "./dryRun.js";
 import { initAuditLogging } from "./auditLog.js";
 import { REGISTRY_LIST_DEFAULT_LIMIT, REGISTRY_LIST_DEFAULT_START } from "./registryPagination.js";
+import { BATCH_CATALOG_LOOKUP_MAX_IDS } from "./catalogBatch.js";
 import {
   flag,
   optionalInt,
@@ -1311,6 +1312,57 @@ export async function preview(resourceId: string): Promise<string> {
       type: r.resourceType,
       verificationStatus: r.verificationStatus,
       accessUrl: r.accessUrl,
+    },
+    null,
+    2,
+  );
+}
+
+/**
+ * Look up multiple resources from the API catalog in one call.
+ *
+ * Fetches each id's mindvault_preview data in parallel. A failure on one id
+ * (not found, API error) is reported for that id alone — one bad id in a
+ * batch of twenty must not fail the other nineteen. Duplicate ids in the
+ * input are deduplicated before fetching.
+ */
+export async function batchCatalogLookup(resourceIdsRaw: string): Promise<string> {
+  const resourceIds = [
+    ...new Set(
+      resourceIdsRaw
+        .split(",")
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0),
+    ),
+  ];
+
+  if (resourceIds.length === 0) {
+    throw new Error("resourceIds must contain at least one non-empty resource ID.");
+  }
+  if (resourceIds.length > BATCH_CATALOG_LOOKUP_MAX_IDS) {
+    throw new Error(
+      `resourceIds contains ${resourceIds.length} ids; the batch limit is ${BATCH_CATALOG_LOOKUP_MAX_IDS}. Split into multiple calls.`,
+    );
+  }
+
+  const results = await Promise.all(
+    resourceIds.map(async (resourceId) => {
+      try {
+        const entry = JSON.parse(await preview(resourceId));
+        return { resourceId, found: true, ...entry };
+      } catch (err) {
+        return { resourceId, found: false, message: safeErrorMessage(err) };
+      }
+    }),
+  );
+
+  const foundCount = results.filter((r) => r.found).length;
+  return JSON.stringify(
+    {
+      requested: resourceIds.length,
+      found: foundCount,
+      notFound: resourceIds.length - foundCount,
+      results,
     },
     null,
     2,
@@ -2675,6 +2727,8 @@ export async function dispatchTool(
       }
       case "mindvault_preview":
         return preview(requiredString(args, "resourceId"));
+      case "mindvault_batch_catalog_lookup":
+        return batchCatalogLookup(requiredString(args, "resourceIds"));
       case "mindvault_register":
         return register(
           requiredString(args, "name"),
@@ -2754,94 +2808,11 @@ export async function dispatchTool(
         return rotatePublisherKey(optionalString(args, "profile"));
       case "mindvault_verify_install":
         return formatVerifyInstall(verifyInstall(process.env));
+      case "mindvault_recover_catalog_cache":
+        return recoverCatalogCache();
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
-    case "mindvault_preview":
-      return preview(requiredString(args, "resourceId"));
-    case "mindvault_register":
-      return register(
-        requiredString(args, "name"),
-        requiredString(args, "email"),
-        optionalString(args, "walletAddress"),
-      );
-    case "mindvault_publish":
-      return publish({
-        title: requiredString(dryRunArgs, "title"),
-        description: optionalString(dryRunArgs, "description"),
-        price: requiredString(dryRunArgs, "price"),
-        externalUrl: requiredString(dryRunArgs, "externalUrl"),
-        dryRun: flag(dryRunArgs, "dryRun"),
-      });
-    case "mindvault_publish_status":
-      return publishStatus(rawRecord);
-    case "mindvault_buy":
-      return buy(requiredString(args, "resourceId"), flag(args, "dryRun"), undefined, onProgress);
-    case "mindvault_purchase_history":
-      return purchaseHistoryTool(rawRecord);
-    case "mindvault_export_receipts":
-      return exportReceiptsTool(rawRecord);
-    case "mindvault_register_onchain":
-      return registerOnchain(requiredString(args, "resourceId"), onProgress);
-    case "mindvault_agent_status":
-      return agentStatus();
-    case "mindvault_registry_info":
-      return registryInfo();
-    case "mindvault_network_profile":
-      return networkProfile();
-    case "mindvault_check_bindings":
-      return checkBindings();
-    case "mindvault_check_consistency":
-      return checkConsistency(
-        requiredString(args, "resourceId"),
-        optionalString(args, "expectedMetadataHash"),
-      );
-    case "mindvault_registry_lookup":
-      return registryLookup(requiredString(args, "resourceId"));
-    case "mindvault_registry_list":
-      return registryList(
-        optionalInt(args, "start", REGISTRY_LIST_DEFAULT_START),
-        optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
-      );
-    case "mindvault_update_metadata":
-      return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
-    case "mindvault_set_price":
-      return setPrice(requiredString(args, "resourceId"), requiredString(args, "price"));
-    case "mindvault_transfer_ownership":
-      return transferOwnership(
-        requiredString(args, "resourceId"),
-        requiredString(args, "newCreator"),
-      );
-    case "mindvault_set_listed":
-      return setListed(requiredString(args, "resourceId"), flag(args, "listed"));
-    case "mindvault_tx_status":
-      return txStatus(requiredString(args, "txHash"));
-    case "mindvault_reset":
-      return resetState(flag(args, "all"), rawRecord.confirm);
-    case "mindvault_backup_state":
-      return backupState(requiredString(args, "passphrase"));
-    case "mindvault_restore_state":
-      return restoreStateTool(requiredString(args, "blob"), requiredString(args, "passphrase"));
-    case "mindvault_metrics":
-      return toolMetrics(flag(args, "reset"));
-    case "mindvault_check_state_permissions":
-      return checkStatePermissionsTool();
-    case "mindvault_registry_health":
-      return registryHealth();
-    case "mindvault_import_wallet":
-      return importWallet({
-        secretKey: optionalString(args, "secretKey"),
-        profile: optionalString(args, "profile"),
-        persist: flag(args, "persist"),
-      });
-    case "mindvault_rotate_publisher_key":
-      return rotatePublisherKey(optionalString(args, "profile"));
-    case "mindvault_verify_install":
-      return formatVerifyInstall(verifyInstall(process.env));
-    case "mindvault_recover_catalog_cache":
-      return recoverCatalogCache();
-    default:
-      throw new Error(`Unknown tool: ${name}`);
   };
 
   if (STATE_MUTATING_TOOLS.has(name)) {
@@ -2998,6 +2969,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
         },
         required: ["resourceId"],
+      },
+    },
+    {
+      name: "mindvault_batch_catalog_lookup",
+      description:
+        `Look up multiple resources from the API catalog in one call (up to ${BATCH_CATALOG_LOOKUP_MAX_IDS} ids), instead of calling mindvault_preview once per id. Returns each resource's title, description, price, type, verification status, and access URL when found. A per-id failure (not found, API error) is reported alongside successful lookups rather than failing the whole batch.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          resourceIds: {
+            type: "string",
+            description: `Comma-separated resource IDs to look up (1-${BATCH_CATALOG_LOOKUP_MAX_IDS} ids; duplicates are ignored). Example: 'res-001,res-002,res-003'.`,
+            examples: ["res-001,res-002", "cm7x8y9z,ckx9j2h3f,res-042"],
+          },
+        },
+        required: ["resourceIds"],
       },
     },
     {

@@ -185,6 +185,9 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_browse: { ...CATALOG_FILTER_ARGS },
   mindvault_search: { ...CATALOG_FILTER_ARGS },
   mindvault_preview: { resourceId: RESOURCE_ID },
+  mindvault_batch_catalog_lookup: {
+    resourceIds: { kind: "string", required: true, maxLength: 3000 },
+  },
   mindvault_register: {
     name: { kind: "string", required: true, maxLength: 128 },
     email: {

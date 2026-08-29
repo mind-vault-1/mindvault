@@ -10,6 +10,7 @@
 
 import { catalogFilterInputProperties } from "./catalogFilters.js";
 import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_EXPORT_OUTPUT_SCHEMA } from "./receipts.js";
+import { BATCH_CATALOG_LOOKUP_MAX_IDS } from "./catalogBatch.js";
 
 /** JSON Schema (draft subset) advertised for a tool's arguments. */
 export interface ToolInputSchema {
@@ -174,6 +175,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
     annotations: {
       title: "Preview Resource",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_batch_catalog_lookup",
+    description:
+      `Look up multiple resources from the API catalog in one call (up to ${BATCH_CATALOG_LOOKUP_MAX_IDS} ids), instead of calling mindvault_preview once per id. Returns each resource's title, description, price, type, verification status, and access URL when found. A per-id failure (not found, API error) is reported alongside successful lookups rather than failing the whole batch.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceIds: {
+          type: "string",
+          description: `Comma-separated resource IDs to look up (1-${BATCH_CATALOG_LOOKUP_MAX_IDS} ids; duplicates are ignored). Example: 'res-001,res-002,res-003'.`,
+          examples: ["res-001,res-002", "cm7x8y9z,ckx9j2h3f,res-042"],
+        },
+      },
+      required: ["resourceIds"],
+    },
+    annotations: {
+      title: "Batch Catalog Lookup",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

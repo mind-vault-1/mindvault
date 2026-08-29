@@ -31,6 +31,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_browse: {},
   mindvault_search: { query: "stellar" },
   mindvault_preview: { resourceId: "res-001" },
+  mindvault_batch_catalog_lookup: { resourceIds: "res-001,res-002" },
   mindvault_register: { name: "Agent A", email: "agent@example.com" },
   mindvault_publish: {
     title: "Dataset",

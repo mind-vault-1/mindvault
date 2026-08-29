@@ -9,6 +9,7 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_browse",
   "mindvault_search",
   "mindvault_preview",
+  "mindvault_batch_catalog_lookup",
   "mindvault_register",
   "mindvault_publish",
   "mindvault_buy",

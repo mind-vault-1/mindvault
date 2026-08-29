@@ -71,6 +71,7 @@ on the failure rather than parse prose.
 |                                | `verificationStatus`   | no       | `pending`, `verified`, `rejected`, `skipped`    |
 |                                | `resourceType`         | no       | `file`, `link`                                  |
 | `mindvault_preview`            | `resourceId`           | yes      | letters, digits, dot, dash, underscore (≤128)   |
+| `mindvault_batch_catalog_lookup` | `resourceIds`        | yes      | comma-separated resource ids (≤20 ids, ≤3000 chars total) |
 | `mindvault_register`           | `name`                 | yes      | 1–128 characters                                |
 |                                | `email`                | yes      | email address (≤254)                            |
 |                                | `walletAddress`        | no       | Stellar public key (`G…`, 56 chars)             |

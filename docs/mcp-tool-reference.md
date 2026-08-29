@@ -13,7 +13,7 @@ For argument contracts and validation rules see
 For client installation and configuration see
 [mcp-client-configs.md](mcp-client-configs.md).
 
-**34 tools** as of last generation.
+**35 tools** as of last generation.
 
 ---
 
@@ -39,6 +39,7 @@ For client installation and configuration see
 | `mindvault_browse`  | List resources in the MindVault catalog with the same optional filters as mindvault_search and GET /resources: keyword, price range, verification status, resource type, owner, sort, pagination, tags, and listed state. Sort accepts newest, price_asc, price_desc, or title; results are ordered client-side too, so the order holds even when the backend ignores the parameter. |
 | `mindvault_search`  | Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries.                                                                                                                                      |
 | `mindvault_preview` | Get details and price for a specific resource before purchasing. Returns title, description, price, type, verification status, and access URL.                                                                                                                                                                                                                                       |
+| `mindvault_batch_catalog_lookup` | Look up multiple resources from the API catalog in one call (up to 20 ids), instead of calling mindvault_preview once per id. Returns each resource's title, description, price, type, verification status, and access URL when found. A per-id failure (not found, API error) is reported alongside successful lookups rather than failing the whole batch. |
 
 ## Publishing & Buying
 
@@ -98,4 +99,4 @@ For client installation and configuration see
 
 ---
 
-_This file was generated from `mcp/src/tools.ts` — 34 tools._
+_This file was generated from `mcp/src/tools.ts` — 35 tools._
