@@ -7,9 +7,16 @@
  */
 
 import { redactSecrets, redactObject } from "./redaction.js";
+import { currentCorrelationId } from "./correlation.js";
 
 export interface AuditLogEntry {
   timestamp: string;
+  /**
+   * Ties every entry from one tool call together (#572). Absent outside a tool
+   * call — an unattributed entry should say so rather than claim a correlation
+   * that does not exist.
+   */
+  correlationId?: string;
   toolName: string;
   status: "start" | "success" | "error";
   duration?: number;
@@ -24,6 +31,8 @@ export interface AuditLogEntry {
 
 export interface NetworkAuditLog {
   timestamp: string;
+  /** The tool call this request was made under (#572). */
+  correlationId?: string;
   method: "GET" | "POST" | "PUT" | "DELETE";
   endpoint: string;
   status: number;
@@ -68,6 +77,22 @@ function formatTimestamp(): string {
 }
 
 /**
+ * Stamp the in-flight tool call's correlation ID onto an entry (#572).
+ *
+ * Applied centrally rather than at each of the ten log sites, so a log helper
+ * added later is correlated automatically instead of being silently orphaned.
+ */
+function withCorrelation<T extends AuditLogEntry | NetworkAuditLog>(entry: T): T {
+  const correlationId = currentCorrelationId();
+  return correlationId ? { ...entry, correlationId } : entry;
+}
+
+/** Single exit point for every audit entry, so correlation is never skipped. */
+function emit(entry: AuditLogEntry | NetworkAuditLog): void {
+  console.error(JSON.stringify(withCorrelation(entry), null, 2));
+}
+
+/**
  * Log a tool call start.
  */
 export function logToolStart(toolName: string, args?: Record<string, unknown>): void {
@@ -83,7 +108,7 @@ export function logToolStart(toolName: string, args?: Record<string, unknown>): 
     entry.details = redactObject(args);
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -115,7 +140,7 @@ export function logToolSuccess(
     if (data.message) entry.message = data.message;
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -150,7 +175,7 @@ export function logToolError(
     if (context.httpStatus) entry.httpStatus = context.httpStatus;
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -187,7 +212,7 @@ export function logNetworkRequest(
     }
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -209,7 +234,7 @@ export function logPaymentInitiation(
     message: `Initiating payment: ${estimatedAmount} USDC`,
   };
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -236,7 +261,7 @@ export function logPaymentSuccess(
     entry.txHash = txHash;
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -263,7 +288,7 @@ export function logPaymentError(
     message,
   };
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -290,7 +315,7 @@ export function logOnchainTransaction(
     entry.txHash = txHash;
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -315,5 +340,5 @@ export function logWalletOperation(
     entry.message = redactSecrets(message);
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
