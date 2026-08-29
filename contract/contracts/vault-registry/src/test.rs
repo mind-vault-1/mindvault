@@ -4100,7 +4100,7 @@ fn full_workflow_emits_exactly_the_documented_events() {
         &workflow_receipt,
         &r0,
         &payer,
-        &1_000_000i128,
+        &200i128,
         &String::from_str(&env, "txhash123"),
     ); // -> "payment"
     record(&env, &client, &mut observed);
@@ -4112,6 +4112,15 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.set_paused(&admin2, &true); // -> "pause"
     record(&env, &client, &mut observed);
     client.set_paused(&admin2, &false);
+    record(&env, &client, &mut observed);
+
+    // Network bootstrap and the creator reactivation path round out the
+    // documented event schema (`netinit`, `reactive`).
+    client.initialize_network(&env.ledger().network_id());
+    record(&env, &client, &mut observed);
+    client.freeze_resource(&r0);
+    record(&env, &client, &mut observed);
+    client.reactivate_resource(&r0);
     record(&env, &client, &mut observed);
 
     // Moderator role and dispute flagging (#389).
@@ -4409,6 +4418,24 @@ fn register_default<'a>(
         creator,
         &id,
         &100i128,
+        &String::from_str(env, "ipfs://m"),
+        &empty_tags(env),
+    );
+    id
+}
+
+fn register_priced<'a>(
+    env: &Env,
+    creator: &Address,
+    client: &VaultRegistryClient<'a>,
+    id: &str,
+    price: i128,
+) -> String {
+    let id = String::from_str(env, id);
+    client.register(
+        creator,
+        &id,
+        &price,
         &String::from_str(env, "ipfs://m"),
         &empty_tags(env),
     );
@@ -6147,7 +6174,7 @@ fn is_settler_false_for_unknown_address() {
 #[test]
 fn record_payment_creates_escrowed_receipt() {
     let (env, creator, _admin, settler, client) = setup_with_settler();
-    let id = register_default(&env, &creator, &client, "payr0");
+    let id = register_priced(&env, &creator, &client, "payr0", 1_000_000);
 
     client.record_payment(
         &settler,
@@ -6262,7 +6289,7 @@ fn record_payment_stamps_ledger_sequence() {
 #[test]
 fn record_payment_index_tracks_most_recent_receipt() {
     let (env, creator, _admin, settler, client) = setup_with_settler();
-    let id = register_default(&env, &creator, &client, "payrecow");
+    let id = register_priced(&env, &creator, &client, "payrecow", 500);
     let payer = Address::generate(&env);
 
     let first = String::from_str(&env, "rcptow1");
@@ -6280,17 +6307,17 @@ fn record_payment_index_tracks_most_recent_receipt() {
         &second,
         &id,
         &payer,
-        &750i128,
+        &500i128,
         &String::from_str(&env, "second_tx"),
     );
 
     // Both receipts remain individually addressable...
     assert_eq!(client.get_payment(&first).amount, 500i128);
-    assert_eq!(client.get_payment(&second).amount, 750i128);
+    assert_eq!(client.get_payment(&second).amount, 500i128);
     // ...but the pair index points at the latest.
     let latest = client.get_payment_receipt(&id, &payer);
     assert_eq!(latest.receipt_id, second);
-    assert_eq!(latest.amount, 750i128);
+    assert_eq!(latest.amount, 500i128);
 }
 
 /// A receipt can only leave `Escrowed` once — settling twice fails.
@@ -6318,7 +6345,7 @@ fn settle_payment_twice_fails() {
 #[test]
 fn record_payment_duplicate_receipt_id_fails() {
     let (env, creator, _admin, settler, client) = setup_with_settler();
-    let id = register_default(&env, &creator, &client, "payr3");
+    let id = register_priced(&env, &creator, &client, "payr3", 1_000_000);
     let receipt_id = String::from_str(&env, "rcpt4");
 
     client.record_payment(
@@ -6363,7 +6390,7 @@ fn record_payment_nonexistent_resource_fails() {
 #[test]
 fn record_payment_emits_payment_event() {
     let (env, creator, _admin, settler, client) = setup_with_settler();
-    let id = register_default(&env, &creator, &client, "payrecev");
+    let id = register_priced(&env, &creator, &client, "payrecev", 4_200);
     let payer = Address::generate(&env);
     let receipt_id = String::from_str(&env, "rcptev1");
     let tx_hash = String::from_str(&env, "0xtxev");
@@ -6417,7 +6444,7 @@ fn non_settler_cannot_record_payment() {
 #[test]
 fn non_settler_cannot_settle_payment() {
     let (env, creator, _admin, settler, client) = setup_with_settler();
-    let id = register_default(&env, &creator, &client, "payr5");
+    let id = register_priced(&env, &creator, &client, "payr5", 1_000_000);
     let receipt_id = String::from_str(&env, "rcpt7");
 
     client.record_payment(
@@ -6555,7 +6582,7 @@ fn record_payment_rejects_negative_amount() {
 #[test]
 fn settle_payment_emits_settle_event() {
     let (env, creator, _admin, settler, client) = setup_with_settler();
-    let id = register_default(&env, &creator, &client, "payr11");
+    let id = register_priced(&env, &creator, &client, "payr11", 3_000_000);
     let receipt_id = String::from_str(&env, "rcptevt2");
 
     client.record_payment(
@@ -6671,7 +6698,7 @@ fn get_payment_receipt_bumps_ttl_on_read() {
 #[test]
 fn record_payment_does_not_mutate_resource() {
     let (env, creator, _admin, settler, client) = setup_with_settler();
-    let id = register_default(&env, &creator, &client, "payr12");
+    let id = register_priced(&env, &creator, &client, "payr12", 1_000_000);
     let before = client.get(&id);
 
     client.record_payment(
@@ -7722,7 +7749,6 @@ fn listed_count_decrements_on_freeze() {
         &String::from_str(&env, "ipfs://a"),
         &empty_tags(&env),
     );
-    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
     client.freeze_resource(&String::from_str(&env, "res1"));
     assert_eq!(client.listed_count(), 0);
@@ -7738,7 +7764,6 @@ fn listed_count_decrements_on_tombstone() {
         &String::from_str(&env, "ipfs://a"),
         &empty_tags(&env),
     );
-    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
     client.tombstone_resource(&String::from_str(&env, "res1"), &_admin);
     assert_eq!(client.listed_count(), 0);
@@ -7754,7 +7779,6 @@ fn listed_count_increments_when_dispute_resolved_to_listed() {
         &String::from_str(&env, "ipfs://a"),
         &empty_tags(&env),
     );
-    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
     client.open_dispute(&String::from_str(&env, "res1"), &_admin);
     assert_eq!(client.listed_count(), 0);
@@ -8071,7 +8095,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 23] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 24] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -8113,6 +8137,7 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 23] {
         (DataKey::Settler(who.clone()), "Settler", 2),
         (DataKey::ListedCount, "ListedCount", 1),
         (DataKey::FlagReasonHash(id.clone()), "FlagReasonHash", 2),
+        (DataKey::PaymentTxHash(id.clone()), "PaymentTxHash", 2),
         (DataKey::AttestationHash(id), "AttestationHash", 2),
     ]
 }
@@ -8155,7 +8180,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        23,
+        24,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -8183,6 +8208,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::Settler(_) => "Settler",
             DataKey::ListedCount => "ListedCount",
             DataKey::FlagReasonHash(_) => "FlagReasonHash",
+            DataKey::PaymentTxHash(_) => "PaymentTxHash",
             DataKey::AttestationHash(_) => "AttestationHash",
         };
         assert_eq!(
@@ -8259,7 +8285,8 @@ fn receipt_and_payment_index_keys_stay_distinct() {
     let party_b = Address::generate(&env);
 
     // PaymentReceipt is keyed by receipt_id alone. PaymentIndex is the
-    // resource/counterparty index and must vary in both of its arguments.
+    // resource/counterparty index and must vary in both of its arguments, and
+    // both wire shapes must remain distinct from purchase receipt anchors.
     env.as_contract(&client.address, || {
         let keys = [
             DataKey::PaymentReceipt(receipt_a.clone()),
@@ -9001,6 +9028,439 @@ proptest! {
             assert_eq!(client.count(), expected_count);
         }
     }
+}
+
+// ── #610: resource reactivation after dispute resolution ──────────────────
+//
+// `reactivate_resource` is the creator's exit from `Frozen`/`Delisted` back
+// to `Listed`. A resource that was resolved out of a dispute (or otherwise
+// left inactive) can be reactivated by its creator; `Disputed` and
+// `Tombstoned` resources have no creator exit.
+
+#[test]
+fn creator_reactivates_resource_resolved_to_frozen() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "reactv1");
+
+    client.open_dispute(&id, &admin);
+    client.resolve_dispute(&id, &admin, &ResourceState::Frozen);
+    assert_eq!(client.get(&id).state, ResourceState::Frozen);
+    assert!(!client.get(&id).listed);
+    assert_eq!(client.listed_count(), 0);
+
+    client.reactivate_resource(&id);
+    let resource = client.get(&id);
+    assert_eq!(resource.state, ResourceState::Listed);
+    assert!(resource.listed);
+    assert_eq!(client.listed_count(), 1);
+}
+
+#[test]
+fn creator_reactivates_resource_resolved_to_delisted() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "reactv2");
+
+    client.open_dispute(&id, &admin);
+    client.resolve_dispute(&id, &admin, &ResourceState::Delisted);
+    assert_eq!(client.get(&id).state, ResourceState::Delisted);
+
+    client.reactivate_resource(&id);
+    assert_eq!(client.get(&id).state, ResourceState::Listed);
+    assert!(client.get(&id).listed);
+    assert_eq!(client.listed_count(), 1);
+}
+
+#[test]
+fn creator_reactivates_own_frozen_resource_without_dispute() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "reactv3");
+
+    client.freeze_resource(&id);
+    assert_eq!(client.get(&id).state, ResourceState::Frozen);
+    assert_eq!(client.listed_count(), 0);
+
+    client.reactivate_resource(&id);
+    assert_eq!(client.get(&id).state, ResourceState::Listed);
+    assert!(client.get(&id).listed);
+    assert_eq!(client.listed_count(), 1);
+}
+
+#[test]
+fn reactivate_requires_prior_resolution_and_blocks_disputed() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "reactv4");
+
+    // A resource still under dispute has no creator exit: the admin must
+    // resolve the dispute first.
+    client.open_dispute(&id, &admin);
+    assert_eq!(
+        client.try_reactivate_resource(&id),
+        Err(Ok(Error::InvalidLifecycleTransition)),
+        "reactivating a Disputed resource without admin resolution must fail"
+    );
+    assert_eq!(client.get(&id).state, ResourceState::Disputed);
+}
+
+#[test]
+fn reactivate_rejects_active_and_tombstoned_resources() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let active = register_default(&env, &creator, &client, "reactv5");
+    let gone = register_default(&env, &creator, &client, "reactv6");
+
+    // Already Listed — nothing to reactivate.
+    assert_eq!(
+        client.try_reactivate_resource(&active),
+        Err(Ok(Error::InvalidLifecycleTransition))
+    );
+
+    // Tombstoned is terminal.
+    client.tombstone_resource(&gone, &admin);
+    assert_eq!(
+        client.try_reactivate_resource(&gone),
+        Err(Ok(Error::InvalidLifecycleTransition))
+    );
+    assert_eq!(client.get(&gone).state, ResourceState::Tombstoned);
+}
+
+#[test]
+#[should_panic]
+fn reactivate_requires_creator_authorization() {
+    let env = Env::default();
+    let contract_id = env.register(VaultRegistry, ());
+    let client = VaultRegistryClient::new(&env, &contract_id);
+    let creator = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let id = String::from_str(&env, "reactv7");
+
+    let meta = String::from_str(&env, "ipfs://auth");
+    client
+        .mock_all_auths()
+        .register(&creator, &id, &100i128, &meta, &empty_tags(&env));
+    client.mock_all_auths().freeze_resource(&id);
+    assert_eq!(client.get(&id).state, ResourceState::Frozen);
+
+    // The stranger signs; the creator's authorization is missing, so the
+    // `reactivate_resource` invocation must be reverted by the host.
+    let invoke = MockAuthInvoke {
+        contract: &client.address,
+        fn_name: "reactivate_resource",
+        args: (id.clone(),).into_val(&env),
+        sub_invokes: &[],
+    };
+    let auths = [MockAuth {
+        address: &stranger,
+        invoke: &invoke,
+    }];
+    client.mock_auths(&auths).reactivate_resource(&id);
+}
+
+#[test]
+fn reactivate_emits_reactive_event() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "reactv8");
+
+    client.open_dispute(&id, &admin);
+    client.resolve_dispute(&id, &admin, &ResourceState::Frozen);
+    client.reactivate_resource(&id);
+
+    let events = env.events().all();
+    let mut found = false;
+    for i in 0..events.len() {
+        let (address, topics, _data) = events.get(i).unwrap();
+        if address == client.address
+            && topic0_symbol(&env, &topics) == Some(Symbol::new(&env, "reactive"))
+        {
+            let carried: String = String::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
+            assert_eq!(carried, id);
+            found = true;
+        }
+    }
+    assert!(found, "reactive event must be emitted with the resource id");
+}
+
+// ── #612: pagination tests for empty indexes ──────────────────────────────
+//
+// Every paginated listing must degrade gracefully when its index is empty:
+// an empty page (never `NotFound`), and for cursor-based listers a `None`
+// next cursor.
+
+#[test]
+fn list_by_creator_empty_when_creator_has_no_resources() {
+    let (env, creator, client) = setup();
+    let stranger = Address::generate(&env);
+    register_default(&env, &creator, &client, "emptc1");
+    register_default(&env, &creator, &client, "emptc2");
+
+    let page = client.list_by_creator(&stranger, &0u32, &20u32);
+    assert_eq!(page.len(), 0);
+}
+
+#[test]
+fn list_by_creator_empty_when_catalog_empty() {
+    let (env, _creator, client) = setup();
+    let stranger = Address::generate(&env);
+    let page = client.list_by_creator(&stranger, &0u32, &20u32);
+    assert_eq!(page.len(), 0);
+}
+
+#[test]
+fn list_by_creator_empty_when_start_beyond_index() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "emptc3");
+    let page = client.list_by_creator(&creator, &5u32, &20u32);
+    assert_eq!(page.len(), 0);
+    assert_eq!(client.list_by_creator(&creator, &0u32, &1u32).get(0).unwrap().id, id);
+}
+
+#[test]
+fn list_by_dispute_status_empty_on_empty_catalog() {
+    let (_env, _creator, client) = setup();
+    let flagged = client.list_by_dispute_status(&true, &0u32, &20u32);
+    let unflagged = client.list_by_dispute_status(&false, &0u32, &20u32);
+    assert_eq!(flagged.len(), 0);
+    assert_eq!(unflagged.len(), 0);
+}
+
+#[test]
+fn list_by_dispute_status_empty_when_no_matching_flags() {
+    let (env, creator, client) = setup();
+    let id1 = register_default(&env, &creator, &client, "emptd1");
+    let id2 = register_default(&env, &creator, &client, "emptd2");
+    // No resource is flagged.
+    assert_eq!(client.list_by_dispute_status(&true, &0u32, &20u32).len(), 0);
+    // Both are unflagged — pagination still walks the catalog.
+    let unflagged = client.list_by_dispute_status(&false, &0u32, &20u32);
+    assert_eq!(unflagged.len(), 2);
+    assert_eq!(unflagged.get(0).unwrap().id, id1);
+    assert_eq!(unflagged.get(1).unwrap().id, id2);
+}
+
+#[test]
+fn list_by_dispute_status_empty_for_opposite_filter() {
+    let (env, creator, _admin, moderator, client) = setup_with_moderator();
+    let id1 = register_default(&env, &creator, &client, "emptf1");
+    let id2 = register_default(&env, &creator, &client, "emptf2");
+    client.flag_resource(&id1, &moderator, &FlagReason::Spam);
+
+    // Only id1 is flagged: the true-filter must not see id2, and the
+    // false-filter must not see id1 while still walking the catalog.
+    let flagged = client.list_by_dispute_status(&true, &0u32, &20u32);
+    assert_eq!(flagged.len(), 1);
+    assert_eq!(flagged.get(0).unwrap().id, id1);
+
+    let unflagged = client.list_by_dispute_status(&false, &0u32, &20u32);
+    assert_eq!(unflagged.len(), 1);
+    assert_eq!(unflagged.get(0).unwrap().id, id2);
+}
+
+#[test]
+fn list_by_verification_status_empty_on_empty_catalog() {
+    let (_env, _creator, client) = setup();
+    for status in [
+        VerificationStatus::Pending,
+        VerificationStatus::Verified,
+        VerificationStatus::Rejected,
+    ] {
+        let page = client.list_by_verification_status(&status, &0u32, &20u32);
+        assert_eq!(page.items.len(), 0);
+        assert_eq!(page.next_cursor, None, "{status:?} on an empty catalog");
+    }
+}
+
+#[test]
+fn list_by_verification_status_empty_when_no_matching_status() {
+    let (env, creator, client) = setup();
+    register_default(&env, &creator, &client, "emptv1");
+    register_default(&env, &creator, &client, "emptv2");
+
+    let page = client.list_by_verification_status(&VerificationStatus::Verified, &0u32, &20u32);
+    assert_eq!(page.items.len(), 0);
+    assert_eq!(page.next_cursor, None);
+
+    let pending = client.list_by_verification_status(&VerificationStatus::Pending, &0u32, &20u32);
+    assert_eq!(pending.items.len(), 2);
+    assert_eq!(pending.next_cursor, None);
+}
+
+// ── #613: boundary tests for maximum tag count ────────────────────────────
+//
+// MAX_TAGS is 8. These tests pin the exact boundary: registration and
+// set_tags both accept exactly 8 tags and reject the 9th, including the
+// case-normalized and structurally-invalid boundary cases.
+
+#[test]
+fn register_accepts_exactly_max_tags() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "maxregok");
+    let eight = tags(&env, &["a", "b", "c", "d", "e", "f", "g", "h"]);
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &eight,
+    );
+    assert_eq!(client.get(&id).tags.len(), 8);
+}
+
+#[test]
+fn register_rejects_one_past_max_tag_count() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "maxreg9");
+    let nine = tags(&env, &["a", "b", "c", "d", "e", "f", "g", "h", "i"]);
+    assert_eq!(
+        client.try_register(
+            &creator,
+            &id,
+            &100i128,
+            &String::from_str(&env, "ipfs://m"),
+            &nine,
+        ),
+        Err(Ok(Error::InvalidTag)),
+        "register must reject tag counts > MAX_TAGS (8)"
+    );
+    assert_eq!(client.try_get(&id), Err(Ok(Error::NotFound)));
+}
+
+#[test]
+fn set_tags_accepts_growth_at_the_boundary_then_rejects_boundary_plus_one() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "maxgrow");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &empty_tags(&env),
+    );
+
+    let seven = tags(&env, &["a", "b", "c", "d", "e", "f", "g"]);
+    client.set_tags(&id, &seven);
+    let eight = tags(&env, &["a", "b", "c", "d", "e", "f", "g", "h"]);
+    client.set_tags(&id, &eight);
+    assert_eq!(client.get(&id).tags.len(), 8);
+
+    let nine = tags(&env, &["a", "b", "c", "d", "e", "f", "g", "h", "i"]);
+    assert_eq!(
+        client.try_set_tags(&id, &nine),
+        Err(Ok(Error::InvalidTag)),
+        "growing past exactly MAX_TAGS must be rejected"
+    );
+    assert_eq!(client.get(&id).tags.len(), 8);
+}
+
+#[test]
+fn max_tag_count_with_an_empty_entry_is_rejected() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "maxempty");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &empty_tags(&env),
+    );
+
+    // 8 entries, one of which is empty — structurally over the constraint.
+    let bad = tags(&env, &["a", "b", "c", "d", "", "f", "g", "h"]);
+    assert_eq!(
+        client.try_set_tags(&id, &bad),
+        Err(Ok(Error::InvalidTag)),
+        "a max-count set containing an empty tag must be rejected"
+    );
+    assert_eq!(client.get(&id).tags.len(), 0);
+}
+
+#[test]
+fn max_tag_count_with_a_duplicate_normalized_entry_is_rejected() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "maxdup");
+    client.register(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &empty_tags(&env),
+    );
+
+    // 8 entries but "ML"/"ml" normalize to the same tag — must not pass the
+    // boundary check as if it were 8 distinct labels.
+    let bad = tags(&env, &["ML", "ml", "c", "d", "e", "f", "g", "h"]);
+    assert_eq!(
+        client.try_set_tags(&id, &bad),
+        Err(Ok(Error::InvalidTag)),
+        "max-count set must still reject duplicate normalized tags"
+    );
+    assert_eq!(client.get(&id).tags.len(), 0);
+}
+
+// ── #614: duplicate payment receipts by tx hash ───────────────────────────
+//
+// `record_payment` must refuse to store a second receipt backed by the same
+// Stellar transaction hash, so a single settlement cannot be double-counted.
+
+#[test]
+fn record_payment_rejects_same_tx_hash_with_different_receipt_id() {
+    let (env, creator, _admin, settler, client) = setup_with_settler();
+    let id = register_priced(&env, &creator, &client, "duptx1", 1_000_000);
+    let shared_tx = String::from_str(&env, "0xdeadbeefsharedtxhash");
+
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "rcpt-a"),
+        &id,
+        &creator,
+        &1_000_000i128,
+        &shared_tx,
+    );
+
+    assert_eq!(
+        client.try_record_payment(
+            &settler,
+            &String::from_str(&env, "rcpt-b"),
+            &id,
+            &creator,
+            &1_000_000i128,
+            &shared_tx,
+        ),
+        Err(Ok(Error::DuplicateTxHash)),
+        "a second receipt reusing the same tx_hash must be rejected explicitly"
+    );
+    // The first receipt stays usable; the second never materialized.
+    assert_eq!(client.get_payment(&String::from_str(&env, "rcpt-a")).state, PaymentState::Escrowed);
+    assert_eq!(
+        client.try_get_payment(&String::from_str(&env, "rcpt-b")),
+        Err(Ok(Error::NotFound))
+    );
+}
+
+#[test]
+fn record_payment_allows_same_receipt_id_with_different_tx_hash() {
+    let (env, creator, _admin, settler, client) = setup_with_settler();
+    let id = register_priced(&env, &creator, &client, "duptx2", 1_000_000);
+    let tx_a = String::from_str(&env, "0xtxhashone");
+    let tx_b = String::from_str(&env, "0xtxhashtwo");
+
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "rcpt-only"),
+        &id,
+        &creator,
+        &1_000_000i128,
+        &tx_a,
+    );
+    // Distinct tx hashes are fine for the same resource/payer — the change is
+    // scoped to the tx hash, not to the (resource, payer) pair.
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "rcpt-second"),
+        &id,
+        &creator,
+        &1_000_000i128,
+        &tx_b,
+    );
+    assert_eq!(client.get_payment(&String::from_str(&env, "rcpt-only")).tx_hash, tx_a);
+    assert_eq!(client.get_payment(&String::from_str(&env, "rcpt-second")).tx_hash, tx_b);
 }
 
 include!("test/storage_footprint.rs");
