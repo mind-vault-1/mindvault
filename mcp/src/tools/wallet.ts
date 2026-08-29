@@ -21,10 +21,11 @@ import {
 } from "../sponsoredDiagnostics.js";
 import {
   buildPublishStatusSnapshot,
-  isVerificationSettled,
   normalizeIntervalMs,
   normalizeTimeoutMs,
   normalizeWaitFlag,
+  pollPublishStatus,
+  type PublishProgressReporter,
   type PublishStatusFetch,
 } from "../publishStatus.js";
 
@@ -204,12 +205,21 @@ function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function publishStatus(args: {
-  resourceId?: string;
-  wait?: unknown;
-  timeoutMs?: unknown;
-  intervalMs?: unknown;
-}): Promise<string> {
+/**
+ * Poll verification / on-chain sync status for a published resource.
+ *
+ * With a client-supplied progress token, every poll streams a
+ * notifications/progress update so a `wait: true` call shows movement.
+ */
+export async function publishStatus(
+  args: {
+    resourceId?: string;
+    wait?: unknown;
+    timeoutMs?: unknown;
+    intervalMs?: unknown;
+  },
+  onProgress?: PublishProgressReporter,
+): Promise<string> {
   const resourceId = (args.resourceId ?? "").trim();
   if (!resourceId) {
     throw new Error(
@@ -221,32 +231,15 @@ export async function publishStatus(args: {
   const timeoutMs = normalizeTimeoutMs(args.timeoutMs);
   const intervalMs = normalizeIntervalMs(args.intervalMs);
 
-  let attempts = 0;
-  let timedOut = false;
-  const deadline = wait ? Date.now() + timeoutMs : Date.now();
-
-  let data = await fetchPublishStatusData(resourceId);
-  attempts += 1;
-
-  while (wait) {
-    const status = data.verification?.status ?? data.meta?.verificationStatus ?? "pending";
-    if (isVerificationSettled(status)) break;
-    if (Date.now() >= deadline) {
-      timedOut = true;
-      break;
-    }
-    const remaining = deadline - Date.now();
-    await sleepMs(Math.min(intervalMs, Math.max(0, remaining)));
-    if (Date.now() >= deadline) {
-      data = await fetchPublishStatusData(resourceId);
-      attempts += 1;
-      const last = data.verification?.status ?? data.meta?.verificationStatus ?? "pending";
-      timedOut = !isVerificationSettled(last);
-      break;
-    }
-    data = await fetchPublishStatusData(resourceId);
-    attempts += 1;
-  }
+  const { data, attempts, timedOut } = await pollPublishStatus({
+    resourceId,
+    wait,
+    timeoutMs,
+    intervalMs,
+    fetchStatus: fetchPublishStatusData,
+    onProgress,
+    sleep: sleepMs,
+  });
 
   const snapshot = buildPublishStatusSnapshot(resourceId, data, {
     polled: wait,

@@ -89,13 +89,15 @@ import {
 } from "./profiles.js";
 import {
   buildPublishStatusSnapshot,
-  isVerificationSettled,
   normalizeIntervalMs,
   normalizeTimeoutMs,
   normalizeWaitFlag,
+  pollPublishStatus,
+  type PublishProgressReporter,
   type PublishStatusFetch,
 } from "./publishStatus.js";
 import { safeErrorMessage } from "./redaction.js";
+import { assertAutoPaymentWithinCeiling } from "./paymentCeiling.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
   exportState,
@@ -130,6 +132,7 @@ import {
   mapTransportError,
   mappedErrorOf,
   mcpError,
+  troubleshootingHint,
   throwHttpError,
   isTimeoutError,
   type CredentialContext,
@@ -1501,13 +1504,20 @@ function sleepMs(ms: number): Promise<void> {
  * Reports verificationStatus (pending | verified | rejected | skipped) and
  * on-chain sync fields (onchainStatus, onchainTxHash). Pass wait: true to poll
  * until verification settles or timeoutMs elapses.
+ *
+ * When the client supplies a progress token, each poll streams a
+ * notifications/progress update so a long wait shows movement instead of
+ * looking hung.
  */
-export async function publishStatus(args: {
-  resourceId?: string;
-  wait?: unknown;
-  timeoutMs?: unknown;
-  intervalMs?: unknown;
-}): Promise<string> {
+export async function publishStatus(
+  args: {
+    resourceId?: string;
+    wait?: unknown;
+    timeoutMs?: unknown;
+    intervalMs?: unknown;
+  },
+  onProgress?: PublishProgressReporter,
+): Promise<string> {
   const resourceId = (args.resourceId ?? "").trim();
   if (!resourceId) {
     throw new Error(
@@ -1519,34 +1529,15 @@ export async function publishStatus(args: {
   const timeoutMs = normalizeTimeoutMs(args.timeoutMs);
   const intervalMs = normalizeIntervalMs(args.intervalMs);
 
-  let attempts = 0;
-  let timedOut = false;
-  const deadline = wait ? Date.now() + timeoutMs : Date.now();
-
-  // Always fetch at least once.
-  let data = await fetchPublishStatusData(resourceId);
-  attempts += 1;
-
-  while (wait) {
-    const status = data.verification?.status ?? data.meta?.verificationStatus ?? "pending";
-    if (isVerificationSettled(status)) break;
-    if (Date.now() >= deadline) {
-      timedOut = true;
-      break;
-    }
-    const remaining = deadline - Date.now();
-    await sleepMs(Math.min(intervalMs, Math.max(0, remaining)));
-    if (Date.now() >= deadline) {
-      // One last fetch after the wait window.
-      data = await fetchPublishStatusData(resourceId);
-      attempts += 1;
-      const last = data.verification?.status ?? data.meta?.verificationStatus ?? "pending";
-      timedOut = !isVerificationSettled(last);
-      break;
-    }
-    data = await fetchPublishStatusData(resourceId);
-    attempts += 1;
-  }
+  const { data, attempts, timedOut } = await pollPublishStatus({
+    resourceId,
+    wait,
+    timeoutMs,
+    intervalMs,
+    fetchStatus: fetchPublishStatusData,
+    onProgress,
+    sleep: sleepMs,
+  });
 
   const snapshot = buildPublishStatusSnapshot(resourceId, data, {
     polled: wait,
@@ -1732,6 +1723,7 @@ export async function buy(
   dryRun?: boolean,
   estimatedPrice?: string | null,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
+  maxAutoPayUsdc?: string,
 ): Promise<string> {
   if (dryRun) {
     return JSON.stringify(
@@ -1747,14 +1739,18 @@ export async function buy(
   // shortfall returns an actionable message instead of an opaque payment error.
   await onProgress?.(1, 4, "Validating resource");
   const meta = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
-  if (meta.ok && meta.data?.price != null) {
-    const shortMsg = await insufficientFundsMessage(
-      wallet,
-      meta.data.price,
-      `buy "${meta.data.title ?? resourceId}"`,
+  if (!meta.ok || meta.data?.price == null) {
+    throw new Error(
+      "Automatic payment blocked because the resource price could not be determined; no x402 payment was submitted.",
     );
-    if (shortMsg) return shortMsg;
   }
+  assertAutoPaymentWithinCeiling({ price: meta.data.price, maxAutoPayUsdc });
+  const shortMsg = await insufficientFundsMessage(
+    wallet,
+    meta.data.price,
+    `buy "${meta.data.title ?? resourceId}"`,
+  );
+  if (shortMsg) return shortMsg;
 
   const beforeState = meta.ok
     ? {
@@ -2827,13 +2823,14 @@ async function dispatchToolOutcome(
           dryRun: flag(dryRunArgs, "dryRun"),
         });
       case "mindvault_publish_status":
-        return publishStatus(rawRecord);
+        return publishStatus(rawRecord, onProgress);
       case "mindvault_buy":
         return buy(
           requiredString(dryRunArgs, "resourceId"),
           flag(dryRunArgs, "dryRun"),
           undefined,
           onProgress,
+          optionalString(dryRunArgs, "maxAutoPayUsdc"),
         );
       case "mindvault_purchase_history":
         return purchaseHistoryTool(rawRecord);
@@ -3488,7 +3485,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     );
     return normalizeToolResult(name, result, hasOutputSchema);
   } catch (err: any) {
-    return { content: [{ type: "text", text: `Error: ${safeErrorMessage(err)}` }], isError: true };
+    const mapped = mappedErrorOf(err);
+    return {
+      content: [{ type: "text", text: `Error: ${safeErrorMessage(err)}` }],
+      isError: true,
+      ...(mapped ? { structuredContent: { troubleshooting: troubleshootingHint(mapped) } } : {}),
+    };
   }
 });
 

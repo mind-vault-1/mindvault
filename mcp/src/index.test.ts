@@ -736,7 +736,7 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
       return Promise.resolve(mockResponse({}, false, 402));
     });
 
-    const result = await buy("res-001");
+    const result = await buy("res-001", undefined, undefined, undefined, "50.00");
     expect(result).toContain("Insufficient USDC");
     expect(result).toContain("50 USDC");
     expect(result).toContain("1 USDC");
@@ -810,7 +810,7 @@ describe("buy – output shape for agent consumption", () => {
       return () => Promise.resolve(mockResponse(resourcePayload));
     });
 
-    const result = await buy("res-007");
+    const result = await buy("res-007", undefined, undefined, undefined, "20.00");
     // Output must be parseable JSON – agents rely on this.
     expect(() => JSON.parse(result)).not.toThrow();
     const parsed = JSON.parse(result);
@@ -874,7 +874,7 @@ describe("buy – purchase receipt persistence", () => {
       return () => Promise.resolve(mockResponse(resourcePayload));
     });
 
-    await buy("res-purchase-001");
+    await buy("res-purchase-001", undefined, undefined, undefined, "10.50");
 
     const { listPurchases } = await import("./purchaseHistory.js");
     const purchases = listPurchases();

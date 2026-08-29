@@ -28,9 +28,28 @@ Next: Payment was required or rejected. Check the wallet with mindvault_wallet_i
 ```
 
 Line 1 keeps the operation label the tool has always used, so existing clients
-that match on `Browse failed` / `Preview failed` keep working. Line 2 is the
-machine-readable part: an agent can branch on `Category:` without parsing prose.
-Line 3 is always present and always actionable.
+that match on `Browse failed` / `Preview failed` keep working. Line 2 is a
+human-readable classification, and line 3 is always present and actionable.
+
+Mapped failures also include an MCP `structuredContent.troubleshooting` object,
+so clients can branch without parsing any text. Its versioned shape is:
+
+```json
+{
+  "schema": "mindvault.troubleshooting/v1",
+  "source": "api",
+  "category": "rate_limit",
+  "status": 429,
+  "summary": "Browse failed: too many requests",
+  "detail": "too many requests",
+  "action": "Rate limited. Wait for the window to pass before retrying."
+}
+```
+
+`status` is `null` for failures without an HTTP response, and `detail` is
+`null` when the source did not supply a separate detail string. The text
+response remains unchanged for MCP clients that do not consume structured
+content.
 
 The mapping is a pure function of `(source, status, payload)` — the same failure
 always produces the same text, so agent behavior is reproducible.
@@ -197,12 +216,13 @@ from the `Service:` field for the same reason.
 
 ## Relationship to the MCP error result
 
-Mapping decides the _text_. The CallTool handler still owns the _envelope_, and
-that contract is unchanged (see
+Mapping decides the _text_ and structured troubleshooting payload. The CallTool
+handler owns the envelope (see
 [mcp-integration-harness.md](mcp-integration-harness.md#error-handling-contract)):
 a thrown tool error becomes `isError: true` with the text prefixed `Error:`, and
 the message passes through `safeErrorMessage` so no wallet secret or API key can
-appear in it.
+appear in it. Mapped errors add `structuredContent.troubleshooting`; unmapped
+errors retain the existing text-only envelope.
 
 ## Coverage
 
