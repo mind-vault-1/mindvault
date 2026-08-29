@@ -48,6 +48,35 @@ export interface MappedError {
   action: string;
 }
 
+/**
+ * Stable payload returned in MCP tool-error `structuredContent`.
+ *
+ * The text rendering remains useful for humans and older clients, while this
+ * object lets agents branch on an error category without parsing prose.
+ */
+export interface TroubleshootingHint {
+  schema: "mindvault.troubleshooting/v1";
+  source: ErrorSource;
+  category: ErrorCategory;
+  status: number | null;
+  summary: string;
+  detail: string | null;
+  action: string;
+}
+
+/** Convert a mapped failure into the stable, machine-readable MCP payload. */
+export function troubleshootingHint(error: MappedError): TroubleshootingHint {
+  return {
+    schema: "mindvault.troubleshooting/v1",
+    source: error.source,
+    category: error.category,
+    status: error.status ?? null,
+    summary: error.summary,
+    detail: error.detail ?? null,
+    action: error.action,
+  };
+}
+
 /** Human label for a source, used in the summary. */
 const SOURCE_LABEL: Record<ErrorSource, string> = {
   api: "MindVault API",
