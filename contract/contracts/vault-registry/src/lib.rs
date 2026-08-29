@@ -155,6 +155,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Fees ──────────────────────────────────────────────────────────────
     ("set_fee_config", "admin"),
     ("get_fee_config", "—"),
+    ("set_fee_recipient", "admin"),
     // ── Index repair ──────────────────────────────────────────────────────
     ("repair_index", "admin"),
     ("repair_tag_index", "admin"),
@@ -224,6 +225,9 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (43, "InvalidPaymentTransition", "The requested payment receipt state transition is not allowed (e.g. settling an already-settled receipt)."),
     (44, "InvalidReceiptId", "`receipt_id` is empty or exceeds `MAX_RECEIPT_ID_LEN` (64 bytes)."),
     (45, "ContentHashTooLong", "`content_hash` exceeds `MAX_CONTENT_HASH_LEN` (128 bytes)."),
+    (46, "AttestationHashTooLong", "`attestation_hash` exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes)."),
+    (47, "PaymentAmountMismatch", "Payment receipt amount does not match the resource's current price."),
+    (48, "FeeConfigNotSet", "`set_fee_recipient` was called before any fee config was set via `set_fee_config`."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -739,6 +743,8 @@ pub enum Error {
     AttestationHashTooLong = 46,
     /// Payment receipt amount does not match the resource's current price.
     PaymentAmountMismatch = 47,
+    /// `set_fee_recipient` was called before any fee config was set via `set_fee_config`.
+    FeeConfigNotSet = 48,
 }
 
 #[contract]
@@ -1924,6 +1930,43 @@ impl VaultRegistry {
     /// if `set_fee_config` has never been called.
     pub fn get_fee_config(env: Env) -> Option<FeeConfig> {
         env.storage().instance().get(&DataKey::FeeConfig)
+    }
+
+    /// Update only the fee recipient address without changing fee rates.
+    /// Only the admin may call this. Errors `AdminNotSet` if no admin has been
+    /// set yet, or `FeeConfigNotSet` if `set_fee_config` has never been called.
+    ///
+    /// This is a convenience method that allows updating the recipient without
+    /// having to re-specify the existing `platform_fee_bps` and `royalty_bps`.
+    /// Emits a `setfee` event with the old and new complete `FeeConfig`.
+    pub fn set_fee_recipient(env: Env, recipient: Option<Address>) -> Result<(), Error> {
+        let admin = Self::require_admin(&env)?;
+        admin.require_auth();
+        Self::require_not_paused(&env)?;
+
+        // Retrieve existing fee config
+        let mut config = env
+            .storage()
+            .instance()
+            .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
+            .ok_or(Error::FeeConfigNotSet)?;
+
+        let old_config = OptFeeConfig::Some(config.clone());
+        
+        // Update only the recipient
+        config.fee_recipient = recipient;
+        
+        env.storage().instance().set(&DataKey::FeeConfig, &config);
+        Self::bump_instance(&env);
+
+        env.events().publish(
+            (symbol_short!("setfee"),),
+            FeeConfigUpdated {
+                old_config,
+                new_config: config,
+            },
+        );
+        Ok(())
     }
 
     /// Store a hash of creator marketplace terms.
