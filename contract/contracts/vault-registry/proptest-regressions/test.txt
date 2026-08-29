@@ -4,4 +4,5 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 586060c1d3d51df7f4d9bc7de5909731b57ed143164905619483e151b2417953 # shrinks to id_str = "a", body_len = 505, ch = "a"
+cc 1f536339cc4347f9de7f05792525b866964f08377493d8ef374d4cc4030cb14f # shrinks to id_str = "a", body_len = 505, ch = "A"
+cc 7be424e549468a9368671187f132047b0c93874fa12f6d0976f1e8fe03eb10d4 # shrinks to tag_count = 2, max_tag_len = 1, include_duplicate = true

@@ -6,7 +6,7 @@
  * are deterministic and agent-safe.
  */
 
-import { X402_NETWORK_IDS, type Resource } from "@mindvault/registry-client";
+
 
 export interface DryRunPublishInput {
   title: string;

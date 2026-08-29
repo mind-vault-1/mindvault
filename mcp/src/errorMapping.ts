@@ -15,6 +15,8 @@
  * `index.ts` owns the wiring; nothing here performs I/O.
  */
 
+import { CLOCK_SKEW_WINDOW_MS, isClockSkewRejection } from "./requestSignature.js";
+
 /** Which subsystem produced the failure. */
 export type ErrorSource = "api" | "x402" | "horizon" | "soroban" | "registry" | "sponsored";
 
@@ -39,8 +41,40 @@ export interface MappedError {
   status?: number;
   /** `<operation>: <detail>` — what failed, in the caller's vocabulary. */
   summary: string;
+  /** Just the detail half of the summary, so a caller can re-compose it under
+   * its own operation label without string-surgery on `summary`. */
+  detail?: string;
   /** One-line, imperative next step for the agent. */
   action: string;
+}
+
+/**
+ * Stable payload returned in MCP tool-error `structuredContent`.
+ *
+ * The text rendering remains useful for humans and older clients, while this
+ * object lets agents branch on an error category without parsing prose.
+ */
+export interface TroubleshootingHint {
+  schema: "mindvault.troubleshooting/v1";
+  source: ErrorSource;
+  category: ErrorCategory;
+  status: number | null;
+  summary: string;
+  detail: string | null;
+  action: string;
+}
+
+/** Convert a mapped failure into the stable, machine-readable MCP payload. */
+export function troubleshootingHint(error: MappedError): TroubleshootingHint {
+  return {
+    schema: "mindvault.troubleshooting/v1",
+    source: error.source,
+    category: error.category,
+    status: error.status ?? null,
+    summary: error.summary,
+    detail: error.detail ?? null,
+    action: error.action,
+  };
 }
 
 /** Human label for a source, used in the summary. */
@@ -124,24 +158,131 @@ function errorMessage(error: unknown): string {
 }
 
 /**
+ * The credential a request carried, when it carried one.
+ *
+ * A 401 means something different depending on this: with no credential the
+ * agent simply has not registered yet, while with a stored publisher key it
+ * means the key it has been using is no longer accepted — revoked, rotated from
+ * another session, or attached to a publisher that no longer exists. Those need
+ * opposite recovery steps, so the mapper needs to know which one happened.
+ */
+export interface CredentialContext {
+  kind: "publisher_api_key";
+  /** Profile the credential was read from, so the fix names the right profile. */
+  profile: string;
+}
+
+/**
+ * True when a rejected request carried a stored publisher API key that the
+ * server refused to recognise (401), rather than accepting the key and denying
+ * the operation (403).
+ */
+export function isRevokedApiKey(
+  status: number,
+  credential: CredentialContext | undefined,
+): boolean {
+  return status === 401 && credential?.kind === "publisher_api_key";
+}
+
+/** Recovery step for a publisher key the server no longer recognises. */
+function revokedKeyAction(profile: string): string {
+  return (
+    `The publisher API key stored in profile "${profile}" is no longer accepted — ` +
+    "it was revoked, rotated from another session, or its publisher record was removed. " +
+    "The stored key cannot be revived: run mindvault_register to obtain a new one, " +
+    "mindvault_use_profile to switch to a profile whose key still works, or " +
+    "mindvault_restore_state to restore a backup that holds a valid key."
+  );
+}
+
+/** Recovery step for a request signature rejected purely for clock skew. */
+function clockSkewAction(): string {
+  const minutes = Math.round(CLOCK_SKEW_WINDOW_MS / 60_000);
+  return (
+    `The request signature was rejected because its timestamp fell outside the accepted ` +
+    `${minutes}-minute window — the local clock is probably skewed, not the key. Sync the ` +
+    `system clock (e.g. enable NTP), then retry; the message disappears once the clocks agree.`
+  );
+}
+
+/** Recovery step for a key the server accepted but that lacks access here. */
+function forbiddenKeyAction(profile: string): string {
+  return (
+    `The publisher API key in profile "${profile}" is valid but not authorized for this ` +
+    "resource — it belongs to a different publisher. Switch to the owning profile with " +
+    "mindvault_use_profile, or act on a resource this publisher owns."
+  );
+}
+
+/**
  * Map a non-ok HTTP response into a structured error.
  *
  * `operation` is the caller-facing verb ("Browse failed", "Publish failed") and
  * is preserved verbatim at the head of the summary so existing tool contracts
  * and their assertions keep working.
+ *
+ * Pass `credential` on requests that carried a stored publisher API key: a 401
+ * then reports the key as revoked (naming the profile and the way back) instead
+ * of the generic "credentials are missing or not accepted".
  */
 export function mapHttpError(input: {
   operation: string;
   source: ErrorSource;
   status: number;
   data: unknown;
+  credential?: CredentialContext;
 }): MappedError {
   const category = categorizeStatus(input.status);
   const detail = extractDetail(input.data);
+  const credential = input.credential;
+
+  // A 401 naming the signature timestamp window is a system-clock problem, not
+  // a credential problem. It nests inside the 401-with-credential case (a
+  // signed request always carries the publisher key), so it must be checked
+  // before the revoked-key branch or every skew rejection would be reported as
+  // a revoked key and an agent would replace a credential that never went bad.
+  if (isClockSkewRejection(input.status, detail)) {
+    return {
+      source: input.source,
+      category,
+      status: input.status,
+      detail,
+      summary:
+        `${input.operation}: ${detail} ` +
+        "(request signature timestamp rejected as outside the allowed window)",
+      action: clockSkewAction(),
+    };
+  }
+
+  if (credential && isRevokedApiKey(input.status, credential)) {
+    return {
+      source: input.source,
+      category,
+      status: input.status,
+      detail,
+      summary:
+        `${input.operation}: ${detail} ` +
+        `(publisher API key for profile "${credential.profile}" was rejected as unknown)`,
+      action: revokedKeyAction(credential.profile),
+    };
+  }
+
+  if (credential && input.status === 403) {
+    return {
+      source: input.source,
+      category,
+      status: input.status,
+      detail,
+      summary: `${input.operation}: ${detail}`,
+      action: forbiddenKeyAction(credential.profile),
+    };
+  }
+
   return {
     source: input.source,
     category,
     status: input.status,
+    detail,
     summary: `${input.operation}: ${detail}`,
     action: ACTION[category],
   };
@@ -163,6 +304,7 @@ export function mapTransportError(input: {
   return {
     source: input.source,
     category,
+    detail,
     summary: `${input.operation}: ${detail}`,
     action: ACTION[category],
   };
@@ -218,9 +360,31 @@ export function formatMappedError(error: MappedError): string {
   return `${error.summary}\n${classification}\nNext: ${error.action}`;
 }
 
+/**
+ * An Error carrying the structured mapping it was rendered from, so a caller
+ * further up can refine the classification instead of re-parsing the message.
+ */
+export interface MappedErrorException extends Error {
+  mapped: MappedError;
+}
+
 /** A mapped error as a throwable, for the tool handlers' existing error path. */
-export function mcpError(error: MappedError): Error {
-  return new Error(formatMappedError(error));
+export function mcpError(error: MappedError): MappedErrorException {
+  const err = new Error(formatMappedError(error)) as MappedErrorException;
+  // Non-enumerable so the mapping never shows up in a JSON dump of the error.
+  Object.defineProperty(err, "mapped", { value: error, enumerable: false });
+  return err;
+}
+
+/**
+ * Recover the structured mapping from an error thrown by `mcpError`, or
+ * `undefined` for anything else. Lets a handler that knows more about the call
+ * than `jsonFetch` did enrich an already-classified failure.
+ */
+export function mappedErrorOf(error: unknown): MappedError | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const mapped = (error as { mapped?: unknown }).mapped;
+  return mapped && typeof mapped === "object" ? (mapped as MappedError) : undefined;
 }
 
 /** Convenience: map a non-ok HTTP response and throw it. */
@@ -229,6 +393,7 @@ export function throwHttpError(input: {
   source: ErrorSource;
   status: number;
   data: unknown;
+  credential?: CredentialContext;
 }): never {
   throw mcpError(mapHttpError(input));
 }

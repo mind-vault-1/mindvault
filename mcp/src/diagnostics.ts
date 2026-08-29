@@ -60,9 +60,30 @@ function isHttpUrl(value: string): boolean {
  * Inspect the given environment and return every configuration problem found.
  * An empty array means the configuration is internally consistent. Errors are
  * blocking (the server should exit); warnings are advisory (safe to continue).
+ *
+ * `hasGlobalFetch` defaults to a live check of the ambient `fetch`, but is
+ * overridable so the missing-runtime-fetch diagnostic below stays unit-testable
+ * without deleting the real global.
  */
-export function collectStartupDiagnostics(env: NodeJS.ProcessEnv): StartupDiagnostic[] {
+export function collectStartupDiagnostics(
+  env: NodeJS.ProcessEnv,
+  hasGlobalFetch: boolean = typeof fetch === "function",
+): StartupDiagnostic[] {
   const diagnostics: StartupDiagnostic[] = [];
+
+  // Every outbound call (MindVault API, Horizon, Soroban RPC, x402 payments)
+  // goes through the global `fetch`. Node <20, or an unusual runtime that never
+  // shipped one, would otherwise fail deep inside the first tool call with a
+  // bare `ReferenceError: fetch is not defined` — surface it here instead, at
+  // startup, with a fix an operator can act on.
+  if (!hasGlobalFetch) {
+    diagnostics.push({
+      variable: "globalThis.fetch",
+      severity: "error",
+      message: "No global `fetch` is available in this JavaScript runtime.",
+      expected: "Node.js >=20 (ships a global fetch), or another runtime that provides one",
+    });
+  }
 
   // STELLAR_NETWORK — an unrecognized value silently defaults to testnet, which
   // is surprising, so surface it as a warning rather than letting it pass.
@@ -91,9 +112,17 @@ export function collectStartupDiagnostics(env: NodeJS.ProcessEnv): StartupDiagno
       env.VAULT_REGISTRY_CONTRACT_ID ?? preset.defaultRegistryContractId ?? undefined,
   });
   for (const issue of networkIssues) {
+    // A mismatch between NETWORK (x402 payment network) and STELLAR_NETWORK
+    // (Soroban/Horizon target) is a warning: the server can still start, but
+    // payments will likely be rejected by the x402 facilitator because the
+    // signed auth entries will reference the wrong network. All other
+    // cross-network issues (wrong RPC endpoint, wrong USDC contract, wrong
+    // registry contract ID) are blocking errors because they will cause
+    // every Soroban call to fail immediately.
+    const severity: DiagnosticSeverity = issue.field === "NETWORK" ? "warning" : "error";
     diagnostics.push({
       variable: issue.field,
-      severity: "error",
+      severity,
       message: redactSecrets(issue.message),
     });
   }

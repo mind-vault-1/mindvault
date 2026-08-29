@@ -6,17 +6,17 @@ on:
       - main
       - master
     paths:
-      - 'server/**'
-      - 'web/**'
-      - 'packages/**'
-      - 'mcp/**'
-      - 'contract/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - '.eslintrc.cjs'
-      - '.prettierrc'
-      - 'prettier.config.js'
+      - "server/**"
+      - "web/**"
+      - "packages/**"
+      - "mcp/**"
+      - "contract/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".eslintrc.cjs"
+      - ".prettierrc"
+      - "prettier.config.js"
 
 jobs:
   node-ci:
@@ -27,8 +27,8 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
-          cache: 'pnpm'
+          node-version: "20"
+          cache: "pnpm"
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec eslint "server/src/**/*.{ts,tsx}" "web/src/**/*.{ts,tsx}" "packages/**/*.{ts,tsx}" "mcp/src/**/*.{ts,tsx}"
       - run: pnpm exec prettier --check "server/**/*.{ts,tsx,js,json,md}" "web/**/*.{ts,tsx,js,json,md}" "packages/**/*.{ts,tsx,js,json,md}" "mcp/**/*.{ts,tsx,js,json,md}"
@@ -36,6 +36,12 @@ jobs:
       - run: pnpm --filter @mindvault/server typecheck
       - run: pnpm --filter @mindvault/server build
       - run: pnpm --filter @mindvault/web build
+      # Build the MCP server, then start it the way an agent client does
+      # (node dist/index.js over stdio) and drive fixture-backed tool calls.
+      # Catches an install that compiles and packs but cannot boot or serve —
+      # the unit suites never start the process, so nothing else would.
+      - run: pnpm --filter @mindvault/mcp build
+      - run: pnpm --filter @mindvault/mcp smoke:install
       - run: pnpm test
 
   contract-ci:

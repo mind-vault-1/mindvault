@@ -59,50 +59,52 @@ on the failure rather than parse prose.
 **required on mainnet** unless `MINDVAULT_ALLOW_MAINNET=1` is set on the server
 — see [mainnet guardrails](mainnet-deployment-checklist.md).
 
-| Tool                          | Argument               | Required | Accepted values                               |
-| ----------------------------- | ---------------------- | -------- | --------------------------------------------- |
-| `mindvault_setup_wallet`      | `profile`              | no       | letters, digits, dot, dash, underscore (1–64) |
-| `mindvault_wallet_info`       | —                      | —        | takes no arguments                            |
-| `mindvault_use_profile`       | `name`                 | yes      | letters, digits, dot, dash, underscore (1–64) |
-| `mindvault_list_profiles`     | —                      | —        | takes no arguments                            |
-| `mindvault_browse`            | —                      | —        | takes no arguments                            |
-| `mindvault_search`            | `query`                | yes      | 1–256 characters                              |
-|                               | `minPrice`, `maxPrice` | no       | decimal USDC string, e.g. `"5.00"`            |
-|                               | `verificationStatus`   | no       | `pending`, `verified`, `rejected`, `skipped`  |
-|                               | `resourceType`         | no       | `file`, `link`                                |
-| `mindvault_preview`           | `resourceId`           | yes      | letters, digits, dot, dash, underscore (≤128) |
-| `mindvault_register`          | `name`                 | yes      | 1–128 characters                              |
-|                               | `email`                | yes      | email address (≤254)                          |
-|                               | `walletAddress`        | no       | Stellar public key (`G…`, 56 chars)           |
-| `mindvault_publish`           | `title`                | yes      | 1–256 characters                              |
-|                               | `description`          | no       | ≤2048 characters                              |
-|                               | `price`                | yes      | decimal USDC string                           |
-|                               | `externalUrl`          | yes      | `http(s)://…` (≤2048)                         |
-| `mindvault_buy`               | `resourceId`           | yes      | resource id                                   |
-| `mindvault_register_onchain`  | `resourceId`           | yes      | resource id                                   |
-| `mindvault_update_metadata`  | `resourceId`           | yes      | resource id                                   |
-|                               | `metadata`             | yes      | pointer (ipfs://, ar://, http(s)://, etc. ≤512)|
-| `mindvault_set_price`        | `resourceId`           | yes      | resource id                                   |
-|                               | `price`                | yes      | decimal USDC amount (e.g. `"10.00"`)          |
-| `mindvault_transfer_ownership`| `resourceId`          | yes      | resource id                                   |
-|                               | `newCreator`           | yes      | Stellar public key (`G…`, 56 chars)           |
-| `mindvault_set_listed`       | `resourceId`           | yes      | resource id                                   |
-|                               | `listed`               | yes      | boolean (`true`/`false`)                      |
-| `mindvault_agent_status`      | —                      | —        | takes no arguments                            |
-| `mindvault_registry_info`     | —                      | —        | takes no arguments                            |
-| `mindvault_network_profile`   | —                      | —        | takes no arguments                            |
-| `mindvault_check_bindings`    | —                      | —        | takes no arguments                            |
-| `mindvault_check_consistency` | `resourceId`           | yes      | resource id                                   |
-|                               | `expectedMetadataHash` | no       | [metadata digest](mcp-metadata-hash.md)       |
-| `mindvault_registry_lookup`   | `resourceId`           | yes      | resource id                                   |
-| `mindvault_registry_list`     | `start`                | no       | integer ≥ 0 (default 0)                       |
-|                               | `limit`                | no       | integer 1–20 (default 20; contract cap)       |
-| `mindvault_tx_status`         | `txHash`               | yes      | sha256 digest (64 hex chars)                  |
-| `mindvault_reset`             | `all`                  | no       | flag — clears every profile                   |
-| `mindvault_backup_state`      | `passphrase`           | yes      | 8–512 characters                              |
-| `mindvault_restore_state`     | `blob`                 | yes      | backup blob (`v1:…`)                          |
-|                               | `passphrase`           | yes      | 8–512 characters                              |
-| `mindvault_metrics`           | `reset`                | no       | flag — clears counters after reading          |
+| Tool                           | Argument               | Required | Accepted values                                 |
+| ------------------------------ | ---------------------- | -------- | ----------------------------------------------- |
+| `mindvault_setup_wallet`       | `profile`              | no       | letters, digits, dot, dash, underscore (1–64)   |
+| `mindvault_wallet_info`        | —                      | —        | takes no arguments                              |
+| `mindvault_use_profile`        | `name`                 | yes      | letters, digits, dot, dash, underscore (1–64)   |
+| `mindvault_list_profiles`      | —                      | —        | takes no arguments                              |
+| `mindvault_browse`             | —                      | —        | takes no arguments                              |
+| `mindvault_search`             | `query`                | yes      | 1–256 characters                                |
+|                                | `minPrice`, `maxPrice` | no       | decimal USDC string, e.g. `"5.00"`              |
+|                                | `verificationStatus`   | no       | `pending`, `verified`, `rejected`, `skipped`    |
+|                                | `resourceType`         | no       | `file`, `link`                                  |
+| `mindvault_preview`            | `resourceId`           | yes      | letters, digits, dot, dash, underscore (≤128)   |
+| `mindvault_register`           | `name`                 | yes      | 1–128 characters                                |
+|                                | `email`                | yes      | email address (≤254)                            |
+|                                | `walletAddress`        | no       | Stellar public key (`G…`, 56 chars)             |
+| `mindvault_publish`            | `title`                | yes      | 1–256 characters                                |
+|                                | `description`          | no       | ≤2048 characters                                |
+|                                | `price`                | yes      | decimal USDC string                             |
+|                                | `externalUrl`          | yes      | `http(s)://…` (≤2048)                           |
+| `mindvault_buy`                | `resourceId`           | yes      | resource id                                     |
+|                                | `maxAutoPayUsdc`       | no       | explicit USDC ceiling override for this purchase |
+| `mindvault_register_onchain`   | `resourceId`           | yes      | resource id                                     |
+| `mindvault_update_metadata`    | `resourceId`           | yes      | resource id                                     |
+|                                | `metadata`             | yes      | pointer (ipfs://, ar://, http(s)://, etc. ≤512) |
+| `mindvault_set_price`          | `resourceId`           | yes      | resource id                                     |
+|                                | `price`                | yes      | decimal USDC amount (e.g. `"10.00"`)            |
+| `mindvault_transfer_ownership` | `resourceId`           | yes      | resource id                                     |
+|                                | `newCreator`           | yes      | Stellar public key (`G…`, 56 chars)             |
+| `mindvault_set_listed`         | `resourceId`           | yes      | resource id                                     |
+|                                | `listed`               | yes      | boolean (`true`/`false`)                        |
+| `mindvault_agent_status`       | —                      | —        | takes no arguments                              |
+| `mindvault_registry_info`      | —                      | —        | takes no arguments                              |
+| `mindvault_network_profile`    | —                      | —        | takes no arguments                              |
+| `mindvault_check_bindings`     | —                      | —        | takes no arguments                              |
+| `mindvault_verify_install`     | —                      | —        | takes no arguments                              |
+| `mindvault_check_consistency`  | `resourceId`           | yes      | resource id                                     |
+|                                | `expectedMetadataHash` | no       | [metadata digest](mcp-metadata-hash.md)         |
+| `mindvault_registry_lookup`    | `resourceId`           | yes      | resource id                                     |
+| `mindvault_registry_list`      | `start`                | no       | integer ≥ 0 (default 0)                         |
+|                                | `limit`                | no       | integer 1–20 (default 20; contract cap)         |
+| `mindvault_tx_status`          | `txHash`               | yes      | sha256 digest (64 hex chars)                    |
+| `mindvault_reset`              | `all`                  | no       | flag — clears every profile                     |
+| `mindvault_backup_state`       | `passphrase`           | yes      | 8–512 characters                                |
+| `mindvault_restore_state`      | `blob`                 | yes      | backup blob (`v1:…`)                            |
+|                                | `passphrase`           | yes      | 8–512 characters                                |
+| `mindvault_metrics`            | `reset`                | no       | flag — clears counters after reading            |
 
 ### Why resource ids are restricted
 

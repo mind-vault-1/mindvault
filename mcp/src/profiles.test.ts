@@ -114,3 +114,50 @@ describe("migrateState", () => {
     }
   });
 });
+
+describe("migrateState rollback (#601)", () => {
+  const legacy = {
+    wallet,
+    apiKey: "legacy-key",
+    extraField: "kept-out-of-state-but-preserved",
+  };
+
+  it("returns the raw legacy input as the rollback source when migrated", () => {
+    const { state, migrated, legacy: rollback } = migrateState(legacy);
+    expect(migrated).toBe(true);
+    expect(rollback).toBeDefined();
+    expect(rollback).toEqual(legacy);
+    expect(state.profiles[DEFAULT_PROFILE]).toEqual({ wallet, apiKey: "legacy-key" });
+  });
+
+  it("rolls back by feeding the preserved legacy straight back into the store", () => {
+    const first = migrateState(legacy);
+    // The rollback step: re-persisting `legacy` restores the exact original
+    // object, and migrating it a second time reproduces the identical state.
+    const second = migrateState(first.legacy);
+    expect(second.migrated).toBe(true);
+    expect(second.legacy).toEqual(legacy);
+    expect(second.state).toEqual(first.state);
+  });
+
+  it("does not attach a rollback source when nothing was migrated", () => {
+    const current = {
+      version: STATE_VERSION,
+      activeProfile: "publisher",
+      profiles: { publisher: { wallet, apiKey: "pk" } },
+    };
+    const { migrated, legacy: rollback } = migrateState(current);
+    expect(migrated).toBe(false);
+    expect(rollback).toBeUndefined();
+  });
+
+  it("is re-entrant: migrating the migrated state is a stable no-op", () => {
+    const first = migrateState(legacy);
+    expect(first.migrated).toBe(true);
+    const again = migrateState(first.state);
+    expect(again.migrated).toBe(false);
+    expect(again.state).toEqual(first.state);
+    // The profiles object is not re-folded into a nested default profile.
+    expect(again.state.profiles[DEFAULT_PROFILE]).toEqual(first.state.profiles[DEFAULT_PROFILE]);
+  });
+});

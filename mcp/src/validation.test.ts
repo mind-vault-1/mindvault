@@ -38,6 +38,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
     externalUrl: "https://example.com/data.json",
   },
   mindvault_buy: { resourceId: "res-001" },
+  mindvault_export_receipts: {},
   mindvault_register_onchain: { resourceId: "res-001" },
   mindvault_agent_status: {},
   mindvault_registry_info: {},
@@ -58,10 +59,12 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
     newCreator: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
   },
   mindvault_set_listed: { resourceId: "res-001", listed: true },
+  mindvault_set_tags: { resourceId: "res-001", tags: ["dataset"] },
   mindvault_check_state_permissions: {},
   mindvault_registry_health: {},
   mindvault_import_wallet: {},
   mindvault_rotate_publisher_key: {},
+  mindvault_verify_install: {},
 };
 
 function expectInvalid(tool: string, args: unknown): ToolValidationError {
@@ -376,5 +379,75 @@ describe("normalized output", () => {
       externalUrl: "https://example.com/data.json",
     });
     expect(optionalString(args, "description")).toBeUndefined();
+  });
+});
+
+// ── Catalog filters: the browse/search argument surface ─────────────────────
+
+describe("catalog filter arguments", () => {
+  it("accepts every sort value on browse and on search", () => {
+    for (const sort of ["newest", "price_asc", "price_desc", "title"]) {
+      expect(() => validateToolArgs("mindvault_browse", { sort })).not.toThrow();
+      expect(() => validateToolArgs("mindvault_search", { query: "x", sort })).not.toThrow();
+    }
+  });
+
+  it("rejects an unknown sort value", () => {
+    const err = expectInvalid("mindvault_browse", { sort: "cheapest" });
+    expect(err.issues[0].code).toBe("not_in_enum");
+  });
+
+  it("accepts the whole advertised filter set on browse", () => {
+    expect(() =>
+      validateToolArgs("mindvault_browse", {
+        query: "stellar",
+        minPrice: "0.10",
+        maxPrice: "5.00",
+        verificationStatus: "verified",
+        resourceType: "link",
+        owner: "Alice",
+        sort: "price_asc",
+        limit: 20,
+        offset: 0,
+        tags: "dataset,research",
+        listed: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it("still reports a typo rather than silently ignoring it", () => {
+    const err = expectInvalid("mindvault_browse", { sortBy: "price" });
+    expect(err.issues[0].code).toBe("unknown_argument");
+    expect(err.issues[0].message).toContain("sort");
+  });
+
+  it("browse and search validate against the same argument names", () => {
+    expect(Object.keys(TOOL_ARGUMENT_SPECS.mindvault_browse).sort()).toEqual(
+      Object.keys(TOOL_ARGUMENT_SPECS.mindvault_search).sort(),
+    );
+  });
+});
+
+describe("mindvault_export_receipts arguments", () => {
+  it("accepts the documented filters", () => {
+    expect(() =>
+      validateToolArgs("mindvault_export_receipts", {
+        format: "csv",
+        resourceId: "res-001",
+        network: "stellar:testnet",
+        since: "2026-08-01",
+        until: "2026-08-31",
+        limit: 50,
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a format it cannot produce", () => {
+    const err = expectInvalid("mindvault_export_receipts", { format: "xml" });
+    expect(err.issues[0].code).toBe("not_in_enum");
+  });
+
+  it("rejects a limit outside the supported range", () => {
+    expect(expectInvalid("mindvault_export_receipts", { limit: 0 }).issues).toHaveLength(1);
   });
 });

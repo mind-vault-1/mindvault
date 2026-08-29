@@ -74,17 +74,83 @@ jobs:
         working-directory: contract
         run: |
           WASM_FILE="target/wasm32v1-none/release/vault_registry.wasm"
-          # 36 KB. Raised from 28 KB: the 28 KB figure was set against a
-          # snapshot that did not yet include registry_info, the verifier role,
-          # the on-chain verification mirror, metadata freeze, and index repair
-          # — those merged together and the optimized build is now ~33 KB.
-          MAX_SIZE=36864
+          # 96 KB. Raised from 36 KB. The 36 KB figure was set against a
+          # snapshot from before the lifecycle state machine, moderator role
+          # and dispute flags, fee config, tag index and its repair, network
+          # guard, payment receipts and the settler role, purchase receipt
+          # anchoring, and the emergency pause all merged. It could not be
+          # re-measured while the crate was failing to compile, so it stood
+          # unenforced; against the repaired build the optimized WASM is
+          # ~82 KB.
+          MAX_SIZE=98304
           SIZE=$(stat -c%s "$WASM_FILE")
           echo "WASM Size: $SIZE bytes"
           if [ "$SIZE" -gt "$MAX_SIZE" ]; then
             echo "::error::WASM size ($SIZE bytes) exceeds the maximum allowed budget ($MAX_SIZE bytes). Please optimize or explicitly update the budget if this growth is expected."
             exit 1
           fi
+
+      # Complements the hard budget check above: that one only catches an
+      # absolute overage, so a build that grows 20% but stays under the cap
+      # sails through silently. This restores the last size recorded on
+      # main (if any) from cache and reports the delta, warning on a large
+      # jump so growth trends are visible before they ever approach the cap.
+      - name: Restore WASM size baseline
+        id: wasm-size-baseline
+        uses: actions/cache/restore@v6
+        with:
+          path: contract/.wasm-size-baseline
+          key: wasm-size-baseline-main-${{ github.sha }}
+          restore-keys: |
+            wasm-size-baseline-main-
+
+      - name: Check WASM size trend
+        working-directory: contract
+        run: |
+          WASM_FILE="target/wasm32v1-none/release/vault_registry.wasm"
+          SIZE=$(stat -c%s "$WASM_FILE")
+          BASELINE_FILE=".wasm-size-baseline"
+          WARN_PCT=5
+
+          {
+            echo "### WASM Size Trend"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -f "$BASELINE_FILE" ]; then
+            BASELINE=$(cat "$BASELINE_FILE")
+            DELTA=$((SIZE - BASELINE))
+            if [ "$BASELINE" -gt 0 ]; then
+              PCT=$(awk -v d="$DELTA" -v b="$BASELINE" 'BEGIN { printf "%.2f", (d / b) * 100 }')
+            else
+              PCT="0.00"
+            fi
+            echo "WASM size trend vs. main baseline: ${BASELINE} -> ${SIZE} bytes (Δ ${DELTA} bytes, ${PCT}%)"
+            {
+              echo "- Baseline (main): ${BASELINE} bytes"
+              echo "- Current: ${SIZE} bytes"
+              echo "- Delta: ${DELTA} bytes (${PCT}%)"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            if awk -v p="$PCT" -v w="$WARN_PCT" 'BEGIN { exit !(p > w) }'; then
+              echo "::warning::WASM size grew ${PCT}% versus the main baseline (${BASELINE} -> ${SIZE} bytes). Verify this growth is expected."
+            fi
+          else
+            echo "No WASM size baseline recorded yet; this build will seed it on merge to main."
+            echo "- No baseline yet. Current size: ${SIZE} bytes" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Save WASM size baseline
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        working-directory: contract
+        run: stat -c%s target/wasm32v1-none/release/vault_registry.wasm > .wasm-size-baseline
+
+      - name: Persist WASM size baseline
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/cache/save@v6
+        with:
+          path: contract/.wasm-size-baseline
+          key: wasm-size-baseline-main-${{ github.sha }}
 
       - name: Upload wasm artifact
         uses: actions/upload-artifact@v7

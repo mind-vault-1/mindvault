@@ -173,19 +173,22 @@ Anything that can launch a stdio MCP server works with:
 Every variable is optional: with none set, the server targets Stellar **testnet**
 and the hosted MindVault backend.
 
-| Variable                     | Default                                                | Description                                                                                   |
-| ---------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `MINDVAULT_URL`              | `https://mindvault-hyr3.onrender.com`                  | MindVault API base URL                                                                        |
-| `SPONSORED_ACCOUNT_URL`      | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service                                                             |
-| `STELLAR_NETWORK`            | `testnet`                                              | Deployment target: `testnet` or `mainnet` (`pubnet`/`public` also accepted)                   |
-| `NETWORK`                    | from `STELLAR_NETWORK`                                 | x402 network id (`stellar:testnet` / `stellar:pubnet`)                                        |
-| `SOROBAN_RPC_URL`            | preset for the network                                 | Soroban RPC (tx status, contract reads)                                                       |
-| `HORIZON_URL`                | preset for the network                                 | Horizon (balance checks)                                                                      |
-| `USDC_CONTRACT_ID`           | preset for the network                                 | USDC Stellar Asset Contract used by x402                                                      |
-| `VAULT_REGISTRY_CONTRACT_ID` | testnet default; **required on mainnet**               | Deployed vault-registry contract                                                              |
-| `MINDVAULT_ALLOW_MAINNET`    | unset                                                  | Allows mainnet mutations without per-call confirmation. See [security notes](#security-notes) |
-| `MINDVAULT_METRICS`          | unset                                                  | Set `1` to collect opt-in tool metrics ([docs](mcp-metrics.md))                               |
-| `MINDVAULT_MOCK`             | unset                                                  | Set `1` for offline mock mode — no network, no funds, deterministic fixtures                  |
+| Variable                     | Default                                                | Description                                                                                                   |
+| ---------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `MINDVAULT_URL`              | `https://mindvault-hyr3.onrender.com`                  | MindVault API base URL                                                                                        |
+| `SPONSORED_ACCOUNT_URL`      | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service                                                                             |
+| `STELLAR_NETWORK`            | `testnet`                                              | Deployment target: `testnet` or `mainnet` (`pubnet`/`public` also accepted)                                   |
+| `NETWORK`                    | from `STELLAR_NETWORK`                                 | x402 network id (`stellar:testnet` / `stellar:pubnet`)                                                        |
+| `SOROBAN_RPC_URL`            | preset for the network                                 | Soroban RPC (tx status, contract reads)                                                                       |
+| `HORIZON_URL`                | preset for the network                                 | Horizon (balance checks)                                                                                      |
+| `USDC_CONTRACT_ID`           | preset for the network                                 | USDC Stellar Asset Contract used by x402                                                                      |
+| `VAULT_REGISTRY_CONTRACT_ID` | testnet default; **required on mainnet**               | Deployed vault-registry contract                                                                              |
+| `MINDVAULT_ALLOW_MAINNET`    | unset                                                  | Allows mainnet mutations without per-call confirmation. See [security notes](#security-notes)                 |
+| `MINDVAULT_METRICS`          | unset                                                  | Set `1` to collect opt-in tool metrics ([docs](mcp-metrics.md))                                               |
+| `MINDVAULT_MOCK`             | unset                                                  | Set `1` for offline mock mode — no network, no funds, deterministic fixtures                                  |
+| `MINDVAULT_AUDIT_LOG`        | unset                                                  | Set `1` to log mutating tool calls to stderr (arguments and payloads are redacted)                            |
+| `MINDVAULT_AGENT_SECRET`     | unset                                                  | Stellar secret key `mindvault_import_wallet` reads when none is passed. See [security notes](#security-notes) |
+| `MINDVAULT_PURCHASES_FILE`   | `~/.mindvault/purchases.json`                          | Where purchase receipts are stored, read by `mindvault_purchase_history` and `mindvault_export_receipts`      |
 
 Overriding a network value without changing `STELLAR_NETWORK` is a common
 mistake, so the server cross-checks them at startup and refuses to launch on a
@@ -311,21 +314,24 @@ server will read from. Run both after changing a config.
 
 ## Troubleshooting
 
-| Symptom                                             | Cause / fix                                                                                      |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Client shows the server as failed                   | Path is wrong or `dist/` is not built. Run `pnpm build` in `mcp/`, use an absolute path.         |
-| `Cannot find module …/dist/index.js`                | Same — the config points at `src/` or a stale path.                                              |
-| Server exits at startup with a config error list    | A genuine env mismatch. The report names each variable and the expected value.                   |
-| Tools appear but every call errors with `No wallet` | Run `mindvault_setup_wallet` first; state lives per OS user.                                     |
-| Mainnet calls rejected with a guardrail message     | Expected — pass `confirmMainnet: true`, or set `MINDVAULT_ALLOW_MAINNET=1`.                      |
-| Node not found                                      | The client may not inherit your shell `PATH`. Use an absolute node path (`/usr/local/bin/node`). |
+| Symptom                                             | Cause / fix                                                                                                   |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Client shows the server as failed                   | Path is wrong or `dist/` is not built. Run `pnpm build` in `mcp/`, use an absolute path.                      |
+| `Cannot find module …/dist/index.js`                | Same — the config points at `src/` or a stale path.                                                           |
+| Server exits at startup with a config error list    | A genuine env mismatch. The report names each variable and the expected value.                                |
+| Tools appear but every call errors with `No wallet` | Run `mindvault_setup_wallet` first; state lives per OS user.                                                  |
+| Mainnet calls rejected with a guardrail message     | Expected — pass `confirmMainnet: true`, or set `MINDVAULT_ALLOW_MAINNET=1`.                                   |
+| Node not found                                      | The client may not inherit your shell `PATH`. Use an absolute node path (`/usr/local/bin/node`).              |
+| Not sure if the install is correct                  | Call `mindvault_verify_install` — it checks Node.js version, env vars, and config locally (no network calls). |
 
 ---
 
 ## Related
 
 - [MCP quickstart](mcp-quickstart.md) — full agent session, wallet through purchase
+- [Tool reference](mcp-tool-reference.md) — every tool with its description, grouped by function
 - [Tool argument validation](mcp-tool-arguments.md)
 - [Wallet profiles](mcp-wallet-profiles.md)
 - [Metrics](mcp-metrics.md)
 - [Smoke test](mcp-smoke-test.md)
+- [Install verification](mcp-verify-install.md)

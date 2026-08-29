@@ -7,12 +7,15 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   DEFAULT_TIMEOUTS,
+  DEFAULT_USER_AGENT,
   RequestTimeoutError,
   TIMEOUT_ENV_VARS,
+  USER_AGENT_ENV_VAR,
   describeTimeouts,
   fetchWithTimeout,
   isTimeoutDisabled,
   resolveTimeouts,
+  resolveUserAgent,
   withTimeout,
 } from "./httpTimeout.js";
 
@@ -208,5 +211,37 @@ describe("describeTimeouts", () => {
 
   it("shows a disabled budget explicitly", () => {
     expect(describeTimeouts({ ...DEFAULT_TIMEOUTS, http: 0 })).toContain("http=disabled");
+  });
+});
+
+describe("resolveUserAgent", () => {
+  it("returns the default when MINDVAULT_USER_AGENT is not set", () => {
+    expect(resolveUserAgent({})).toBe(DEFAULT_USER_AGENT);
+    expect(DEFAULT_USER_AGENT).toBe("mindvault-mcp/1.0.0");
+  });
+
+  it("documents the correct env var name", () => {
+    expect(USER_AGENT_ENV_VAR).toBe("MINDVAULT_USER_AGENT");
+  });
+
+  it("returns a custom value when the env var is set", () => {
+    expect(resolveUserAgent({ [USER_AGENT_ENV_VAR]: "my-bot/2.0" })).toBe("my-bot/2.0");
+  });
+
+  it("trims surrounding whitespace from the custom value", () => {
+    expect(resolveUserAgent({ [USER_AGENT_ENV_VAR]: "  my-bot/2.0  " })).toBe("my-bot/2.0");
+  });
+
+  it("falls back to the default when the value is whitespace-only", () => {
+    expect(resolveUserAgent({ [USER_AGENT_ENV_VAR]: "   " })).toBe(DEFAULT_USER_AGENT);
+  });
+
+  it("falls back to the default when the value is an empty string", () => {
+    expect(resolveUserAgent({ [USER_AGENT_ENV_VAR]: "" })).toBe(DEFAULT_USER_AGENT);
+  });
+
+  it("preserves values that include parenthetical comments", () => {
+    const ua = "my-agent/1.0 (mindvault-mcp)";
+    expect(resolveUserAgent({ [USER_AGENT_ENV_VAR]: ua })).toBe(ua);
   });
 });

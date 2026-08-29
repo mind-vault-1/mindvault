@@ -31,6 +31,7 @@ export interface NetworkAuditLog {
   source: "api" | "x402" | "horizon" | "soroban" | "registry" | "sponsored";
   txHash?: string;
   errorSummary?: string;
+  requestPayload?: unknown;
 }
 
 /** Global audit log configuration. */
@@ -164,6 +165,7 @@ export function logNetworkRequest(
   context?: {
     txHash?: string;
     errorSummary?: string;
+    requestPayload?: unknown;
   },
 ): void {
   if (!auditLogEnabled) return;
@@ -180,6 +182,9 @@ export function logNetworkRequest(
   if (context) {
     if (context.txHash) entry.txHash = context.txHash;
     if (context.errorSummary) entry.errorSummary = redactSecrets(context.errorSummary);
+    if (context.requestPayload !== undefined) {
+      entry.requestPayload = redactObject(context.requestPayload);
+    }
   }
 
   console.error(JSON.stringify(entry, null, 2));

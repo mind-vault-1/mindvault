@@ -54,6 +54,41 @@ describe("MCP tool metadata", () => {
     }
   });
 
+  it("every tool declares MCP annotations with a title (#552)", () => {
+    for (const tool of TOOL_DEFINITIONS) {
+      const annotations = tool.annotations;
+      expect(annotations, `tool ${tool.name} has annotations`).toBeDefined();
+      expect(typeof annotations.title, `tool ${tool.name} has a title`).toBe("string");
+      expect(annotations.title.length).toBeGreaterThan(0);
+      expect(typeof annotations.readOnlyHint).toBe("boolean");
+      expect(typeof annotations.destructiveHint).toBe("boolean");
+      expect(typeof annotations.idempotentHint).toBe("boolean");
+    }
+  });
+
+  it("read-only tools are not marked destructive (#552)", () => {
+    const readOnlyTools = TOOL_DEFINITIONS.filter((tool) => tool.annotations.readOnlyHint);
+    expect(readOnlyTools.length).toBeGreaterThan(0);
+    for (const tool of readOnlyTools) {
+      expect(
+        tool.annotations.destructiveHint,
+        `read-only tool ${tool.name} is not destructive`,
+      ).toBe(false);
+    }
+  });
+
+  it("destructive tools are not marked read-only (#552)", () => {
+    const destructiveTools = TOOL_DEFINITIONS.filter((tool) => tool.annotations.destructiveHint);
+    expect(destructiveTools.map((t) => t.name)).toEqual(
+      expect.arrayContaining(["mindvault_reset", "mindvault_restore_state"]),
+    );
+    for (const tool of destructiveTools) {
+      expect(tool.annotations.readOnlyHint, `destructive tool ${tool.name} is not read-only`).toBe(
+        false,
+      );
+    }
+  });
+
   it("exposes the expected tool surface", () => {
     expect(TOOL_DEFINITIONS.map((t) => t.name)).toMatchSnapshot();
   });
@@ -69,48 +104,9 @@ describe("MCP tool metadata", () => {
   });
 
   it("mindvault_publish inputSchema", () => {
-    // Snapshot mindvault_publish schema (critical tool for publishers).
-    const publishSchema = {
-      type: "object",
-      properties: {
-        title: {
-          type: "string",
-          description:
-            "Resource title shown in the catalog (concise, descriptive). Example: 'Intro to Stellar Consensus'",
-          examples: [
-            "Intro to Stellar Consensus",
-            "Soroban Smart Contract Tutorial",
-            "Stellar Anchor Guide",
-          ],
-        },
-        description: {
-          type: "string",
-          description:
-            "Optional detailed description of the resource content. Example: 'A beginner-friendly guide covering Stellar's Federated Byzantine Agreement protocol.'",
-          examples: [
-            "A beginner-friendly guide covering Stellar's Federated Byzantine Agreement protocol.",
-            "Step-by-step tutorial on building Soroban smart contracts with Rust.",
-          ],
-        },
-        price: {
-          type: "string",
-          description: "Price in USDC (decimal string). Example: '5.00' charges 5 USDC per access.",
-          examples: ["5.00", "10.50", "0.99", "25.00"],
-        },
-        externalUrl: {
-          type: "string",
-          description:
-            "Public URL buyers receive after payment. Example: 'https://docs.stellar.org/consensus'",
-          examples: [
-            "https://docs.stellar.org/consensus",
-            "https://example.com/soroban-tutorial",
-            "https://stellar-anchor-guide.com",
-          ],
-        },
-      },
-      required: ["title", "price", "externalUrl"],
-    };
-
-    expect(publishSchema).toMatchSnapshot();
+    // Snapshot the definition itself, not a copy of it: a hand-written literal
+    // drifts from the real schema and then snapshots its own drift.
+    const publish = TOOL_DEFINITIONS.find((t) => t.name === "mindvault_publish");
+    expect(publish?.inputSchema).toMatchSnapshot();
   });
 });

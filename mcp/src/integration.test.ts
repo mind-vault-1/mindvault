@@ -64,6 +64,28 @@ describe("MCP integration harness", () => {
     }
   });
 
+  it("advertises MCP annotations for every tool (#552)", async () => {
+    const { tools } = await harness.listTools();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      const annotations = (tool as { annotations?: Record<string, unknown> }).annotations;
+      expect(annotations, `tool ${tool.name} advertises annotations`).toBeDefined();
+      expect(typeof annotations?.title, `tool ${tool.name} has an annotations title`).toBe(
+        "string",
+      );
+      expect(typeof annotations?.readOnlyHint).toBe("boolean");
+      expect(typeof annotations?.destructiveHint).toBe("boolean");
+      expect(typeof annotations?.idempotentHint).toBe("boolean");
+    }
+    const readOnly = (tools as Array<{ annotations: { readOnlyHint: boolean } }>).filter(
+      (t) => t.annotations.readOnlyHint === true,
+    );
+    expect(readOnly.length).toBeGreaterThan(0);
+    for (const tool of readOnly) {
+      expect(tool.annotations.destructiveHint).toBe(false);
+    }
+  });
+
   it("calls mindvault_browse with mocked catalog fixtures", async () => {
     const result = await harness.callTool("mindvault_browse");
     expect(harnessIsToolError(result)).toBe(false);
@@ -113,10 +135,52 @@ describe("MCP integration harness", () => {
     expect(harnessResultText(empty)).toMatch(/No on-chain resources in range/);
   });
 
+  it("calls mindvault_recover_catalog_cache and returns guidance", async () => {
+    const result = await harness.callTool("mindvault_recover_catalog_cache");
+    expect(harnessIsToolError(result)).toBe(false);
+    const text = harnessResultText(result);
+    expect(text.toLowerCase()).toContain("catalog");
+    expect(text.toLowerCase()).toContain("recover");
+  });
+
+  it("browses the catalog sorted by price through callTool", async () => {
+    const sorted = await harness.callTool("mindvault_browse", { sort: "price_asc", limit: 10 });
+    expect(harnessIsToolError(sorted)).toBe(false);
+    const text = harnessResultText(sorted);
+    // mock-2 is $0.5 and mock-1 is $1.5, so ascending price puts mock-2 first.
+    expect(text.indexOf("mock-2")).toBeLessThan(text.indexOf("mock-1"));
+
+    const descending = await harness.callTool("mindvault_browse", { sort: "price_desc" });
+    const descendingText = harnessResultText(descending);
+    expect(descendingText.indexOf("mock-1")).toBeLessThan(descendingText.indexOf("mock-2"));
+  });
+
+  it("rejects a sort value the catalog does not support", async () => {
+    const result = await harness.callTool("mindvault_browse", { sort: "cheapest" });
+    expect(harnessResultText(result)).toContain("newest, price_asc, price_desc, title");
+  });
+
+  it("exports receipts as a structured document with an advertised schema", async () => {
+    const { tools } = await harness.listTools();
+    const exportTool = tools.find((t) => t.name === "mindvault_export_receipts");
+    expect(exportTool).toBeDefined();
+    expect((exportTool as { outputSchema?: unknown }).outputSchema).toBeDefined();
+
+    const result = await harness.callTool("mindvault_export_receipts", { format: "csv" });
+    expect(harnessIsToolError(result)).toBe(false);
+    const parsed = JSON.parse(harnessResultText(result));
+    expect(parsed.schema).toBe("mindvault.receipt-export/v1");
+    expect(parsed.currency).toBe("USDC");
+    expect(typeof parsed.csv).toBe("string");
+    expect(parsed.csv.split("\r\n")[0]).toContain("resourceId,title,amount");
+  });
+
   it("returns deterministic Error: results for unknown tools and missing wallet", async () => {
     const unknown = await harness.callTool("mindvault_not_a_real_tool");
     expect(unknown.isError).toBe(true);
-    expect(harnessResultText(unknown)).toMatch(/^Error: Unknown tool: mindvault_not_a_real_tool$/);
+    // The message continues with the list of available tools, so anchor on the
+    // name rather than the end of the line.
+    expect(harnessResultText(unknown)).toMatch(/^Error: Unknown tool: mindvault_not_a_real_tool\b/);
 
     const walletInfo = await harness.callTool("mindvault_wallet_info");
     expect(walletInfo.isError).toBe(true);

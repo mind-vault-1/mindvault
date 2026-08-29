@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  applyCatalogSort,
   applyClientCatalogFilters,
   buildCatalogQueryString,
+  CATALOG_SORT_VALUES,
   describeCatalogFilters,
   parseCatalogFilters,
 } from "./catalogFilters.js";
@@ -158,5 +160,72 @@ describe("describeCatalogFilters", () => {
         listed: true,
       }),
     ).toContain("tags [a]");
+  });
+});
+
+describe("catalog sort options", () => {
+  const rows = [
+    { id: "b", title: "Beta", price: "2.00", createdAt: "2026-08-02T00:00:00.000Z" },
+    { id: "a", title: "Alpha", price: "10.00", createdAt: "2026-08-03T00:00:00.000Z" },
+    { id: "c", title: "Gamma", price: "0.50", createdAt: "2026-08-01T00:00:00.000Z" },
+  ];
+
+  it("accepts every sort the catalog API supports", () => {
+    for (const sort of CATALOG_SORT_VALUES) {
+      const parsed = parseCatalogFilters({ sort });
+      expect(parsed.ok, `sort=${sort}`).toBe(true);
+      if (parsed.ok) expect(parsed.filters.sort).toBe(sort);
+    }
+  });
+
+  it("rejects an unknown sort with the accepted values", () => {
+    const parsed = parseCatalogFilters({ sort: "cheapest" });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.error).toContain("newest, price_asc, price_desc, title");
+  });
+
+  it("forwards sort to GET /resources", () => {
+    expect(buildCatalogQueryString({ sort: "price_desc" })).toBe("sort=price_desc");
+  });
+
+  it("orders by price ascending, comparing numerically not lexically", () => {
+    // "10.00" < "2.00" as strings — a string sort would put Alpha first.
+    expect(applyCatalogSort(rows, "price_asc").map((r) => r.id)).toEqual(["c", "b", "a"]);
+  });
+
+  it("orders by price descending", () => {
+    expect(applyCatalogSort(rows, "price_desc").map((r) => r.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("orders by title", () => {
+    expect(applyCatalogSort(rows, "title").map((r) => r.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("orders newest first when every row carries a timestamp", () => {
+    expect(applyCatalogSort(rows, "newest").map((r) => r.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("leaves the server order alone when timestamps are missing", () => {
+    const untimed = rows.map(({ createdAt: _createdAt, ...rest }) => rest);
+    expect(applyCatalogSort(untimed, "newest").map((r) => r.id)).toEqual(["b", "a", "c"]);
+  });
+
+  it("returns the input untouched when no sort is requested", () => {
+    expect(applyCatalogSort(rows, undefined)).toBe(rows);
+  });
+
+  it("does not mutate the caller's array", () => {
+    const input = [...rows];
+    applyCatalogSort(input, "price_asc");
+    expect(input.map((r) => r.id)).toEqual(["b", "a", "c"]);
+  });
+
+  it("sorts rows with unparseable prices last, keeping their relative order", () => {
+    const priced = [
+      { id: "x", title: "X", price: "" },
+      { id: "y", title: "Y", price: "1" },
+      { id: "z", title: "Z", price: "n/a" },
+    ];
+    expect(applyCatalogSort(priced, "price_asc").map((r) => r.id)).toEqual(["y", "x", "z"]);
   });
 });

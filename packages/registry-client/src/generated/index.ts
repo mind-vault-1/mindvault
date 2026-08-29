@@ -54,8 +54,16 @@ export const Errors = {
   21: { message: "AlreadyFrozen" },
   22: { message: "MetadataFrozen" },
   23: { message: "DuplicateInRepair" },
-  24: { message: "InvalidLifecycleTransition" },
-  25: { message: "ResourceNotMutable" },
+  24: { message: "InvalidTxHash" },
+  25: { message: "InvalidPaymentAmount" },
+  26: { message: "NotModerator" },
+  27: { message: "AlreadyFlagged" },
+  28: { message: "NotFlagged" },
+  29: { message: "InvalidLifecycleTransition" },
+  30: { message: "ResourceNotMutable" },
+  31: { message: "NetworkAlreadyInitialized" },
+  32: { message: "NetworkIdMismatch" },
+  33: { message: "NetworkNotInitialized" },
 };
 
 export type DataKey =
@@ -68,7 +76,8 @@ export type DataKey =
   | { tag: "CreatorResources"; values: readonly [string] }
   | { tag: "CreatorCount"; values: readonly [string] }
   | { tag: "PendingTransfer"; values: readonly [string] }
-  | { tag: "Verifier"; values: readonly [string] };
+  | { tag: "Verifier"; values: readonly [string] }
+  | { tag: "NetworkId"; values: void };
 
 export interface Resource {
   creator: string;
@@ -213,65 +222,30 @@ export interface MetadataUpdateEvent {
 }
 
 export interface Client {
-  /**
-   * Construct and simulate a get transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Fetch a resource. Errors with `NotFound` if it does not exist.
-   */
   get: (
     { id }: { id: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<Resource>>>;
 
-  /**
-   * Construct and simulate a list transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Paginated resource list in insertion order. `limit` is capped at 20.
-   *
-   * Kept for callers that only need the page body. Prefer `list_page` when
-   * the client must know the next cursor / end-of-list without recomputing
-   * offsets.
-   */
   list: (
     { start, limit }: { start: u32; limit: u32 },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Array<Resource>>>;
 
-  /**
-   * Construct and simulate a admin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Current contract admin.
-   */
   admin: (options?: MethodOptions) => Promise<AssembledTransaction<Option<string>>>;
 
-  /**
-   * Construct and simulate a count transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Total number of resources successfully registered (monotonic; not decremented on transfer).
-   */
   count: (options?: MethodOptions) => Promise<AssembledTransaction<u32>>;
 
-  /**
-   * Construct and simulate a delist transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Delist a resource (convenience method for set_listed(false)). Only the creator may call this.
-   */
   delist: (
     { id }: { id: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a exists transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Whether a resource with `id` is registered.
-   * Bumps the entry's TTL when found, keeping hot resources alive.
-   */
   exists: (
     { id }: { id: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<boolean>>;
 
-  /**
-   * Construct and simulate a register transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Register a new resource. Price is in USDC stroops (6 decimals).
-   * Rejects `price <= 0` (`InvalidPrice`) or `price > MAX_PRICE` (`PriceExceedsMax`).
-   * Requires the creator's authorization.
-   */
   register: (
     {
       creator,
@@ -283,332 +257,149 @@ export interface Client {
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a set_tags transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Replace a resource's discovery tags. Only the creator may call this.
-   * Does not modify `metadata` (the off-chain content pointer).
-   */
   set_tags: (
     { id, tags }: { id: string; tags: Array<string> },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a get_owner transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Get the owner address of a resource. Errors with `NotFound` if it does not exist.
-   */
   get_owner: (
     { id }: { id: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<string>>>;
 
-  /**
-   * Construct and simulate a list_page transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Paginated catalog page with next-cursor metadata.
-   *
-   * - `cursor` is a 0-based catalog index (same domain as `list`'s `start`).
-   * - `limit` is capped at 20.
-   * - `next_cursor` is `Some(next_index)` when more entries may exist after
-   * this page, or `None` at end-of-list (including empty catalog / cursor
-   * past the end).
-   * - Each persistent entry (Index slot and Resource) that is successfully
-   * read has its TTL bumped to keep hot catalog entries alive.
-   */
   list_page: (
     { cursor, limit }: { cursor: u32; limit: u32 },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<CatalogPage>>;
 
-  /**
-   * Construct and simulate a set_price transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Update a resource's price. Rejects `new_price <= 0` or `new_price > MAX_PRICE`.
-   * Only the creator may call this.
-   *
-   * Emits a `setprice` event whose data is a [`PriceUpdated`] value
-   * containing `id`, `old_price`, `new_price`, and `updater`.
-   */
   set_price: (
     { id, new_price }: { id: string; new_price: i128 },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a set_listed transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Set a resource's creator-controlled listing state. Only
-   * `Listed <-> Delisted` transitions are accepted; all other lifecycle
-   * states reject this method with `InvalidLifecycleTransition`.
-   */
+  network_id: (options?: MethodOptions) => Promise<AssembledTransaction<Result<Buffer>>>;
+
   set_listed: (
     { id, listed }: { id: string; listed: boolean },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a is_verifier transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Whether `address` currently holds the verifier role.
-   */
   is_verifier: (
     { address }: { address: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<boolean>>;
 
-  /**
-   * Construct and simulate a list_listed transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Paginated list of resources whose `listed` flag is true, in insertion order.
-   *
-   * - Resources are ordered by registration sequence.
-   * - `limit` is capped at `20`.
-   * - Delisted resources are skipped; relisted resources will reappear.
-   * - Returns an empty `Vec` if no listed resources fall in range.
-   * - Each persistent entry (Index slot and Resource) that is successfully
-   * read has its TTL bumped to keep hot catalog entries alive.
-   */
   list_listed: (
     { start, limit }: { start: u32; limit: u32 },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Array<Resource>>>;
 
-  /**
-   * Construct and simulate a accept_admin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Accept the pending admin nomination and become the contract admin.
-   * Only the pending admin may call this.
-   */
   accept_admin: (
     { new_admin }: { new_admin: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a add_verifier transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Grant the verifier role to `verifier`, authorizing `set_verification_status`.
-   * Only the admin may call this. Errors `AdminNotSet` if no admin has
-   * been set yet (see `nominate_new_admin`).
-   */
   add_verifier: (
     { verifier }: { verifier: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a open_dispute transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Place an active resource under an admin-controlled dispute hold.
-   */
   open_dispute: (
     { id, admin }: { id: string; admin: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a repair_index transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Rebuild the pagination index (`list`/`list_page`/`count`) from an
-   * authoritative, admin-supplied ordered list of resource ids. Only the
-   * admin may call this. Every id must already exist as a registered
-   * `Resource` (else `NotFound`) and the list must not contain duplicates
-   * (else `DuplicateInRepair`). Never touches `Resource` storage itself —
-   * only rewrites the derived `Index`/`Count` pointers, so it's safe to
-   * re-run with the current correct id list as a no-op. See
-   * `docs/index-repair.md` for the full repair strategy.
-   */
   repair_index: (
     { ids }: { ids: Array<string> },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a pending_admin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Pending nominated contract admin.
-   */
   pending_admin: (options?: MethodOptions) => Promise<AssembledTransaction<Option<string>>>;
 
-  /**
-   * Construct and simulate a registry_info transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Discover this registry's stable identity and capabilities in one
-   * read-only call: name, crate version, `Resource` schema version, and
-   * the network this contract is deployed on. Always succeeds — there is
-   * no failure mode a caller needs to handle.
-   */
   registry_info: (options?: MethodOptions) => Promise<AssembledTransaction<RegistryInfo>>;
 
-  /**
-   * Construct and simulate a get_terms_hash transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Fetch a creator's marketplace terms hash. Errors with `NotFound` if it does not exist.
-   * Bumps the entry's TTL on a successful read.
-   */
   get_terms_hash: (
     { creator }: { creator: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<string>>>;
 
-  /**
-   * Construct and simulate a set_terms_hash transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Store a hash of creator marketplace terms.
-   */
   set_terms_hash: (
     { creator, terms_hash }: { creator: string; terms_hash: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a accept_transfer transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Accept a proposed transfer. Only the pending owner can call this.
-   */
   accept_transfer: (
     { id }: { id: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a cancel_transfer transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Cancel a proposed transfer. Only the current owner can call this.
-   */
   cancel_transfer: (
     { id }: { id: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a freeze_metadata transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Permanently freeze a resource's metadata pointer. Only the creator may
-   * call this. Irreversible — errors `AlreadyFrozen` if called twice.
-   * Price, listing, tags, and ownership remain mutable after freezing.
-   */
   freeze_metadata: (
     { id }: { id: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a freeze_resource transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Freeze an otherwise active resource. The creator may freeze a listed or
-   * delisted resource, but only an admin can restore it through dispute
-   * resolution. This lifecycle freeze is separate from `freeze_metadata`.
-   */
   freeze_resource: (
     { id }: { id: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a list_by_creator transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Paginated listing of resources owned by `creator` in insertion order.
-   *
-   * - Results are ordered by global registration sequence for that creator.
-   * - `limit` is capped at `20`.
-   * - Returns empty `Vec` when `start` is beyond the creator's known items.
-   * - Each persistent Resource entry that is successfully read has its TTL
-   * bumped to keep hot resources alive.
-   */
   list_by_creator: (
     { creator, start, limit }: { creator: string; start: u32; limit: u32 },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Array<Resource>>>;
 
-  /**
-   * Construct and simulate a remove_verifier transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Revoke the verifier role from `verifier`. Only the admin may call this.
-   */
   remove_verifier: (
     { verifier }: { verifier: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a resolve_dispute transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Resolve a disputed resource to `Listed`, `Delisted`, or `Frozen`.
-   */
   resolve_dispute: (
     { id, admin, state }: { id: string; admin: string; state: ResourceState },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a update_metadata transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Update a resource's metadata pointer. Only the creator may call this.
-   *
-   * Emits a [`MetadataUpdateEvent`] containing the resource id, the previous
-   * metadata pointer (`old_metadata`), and the new one (`new_metadata`).
-   * Off-chain indexers can use these fields to build an audit trail without
-   * querying historical ledger state.
-   */
   update_metadata: (
     { id, metadata }: { id: string; metadata: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a contract_version transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Return the contract crate version and the `Resource` schema version as a
-   * stable, compact struct. Deployment scripts and upgrade tools should call
-   * this to confirm which version of the contract is running on-chain before
-   * and after a redeploy, without needing to parse the full `registry_info`
-   * response.
-   *
-   * Upgrade compatibility: `crate_version` is the Cargo semver string baked
-   * in at build time (`CARGO_PKG_VERSION`). `resource_schema_version` is an
-   * integer bumped only when the on-chain `Resource` struct changes in a way
-   * that requires callers to update how they decode it. A change to
-   * `crate_version` alone does not imply a schema change.
-   */
   contract_version: (options?: MethodOptions) => Promise<AssembledTransaction<ContractVersion>>;
 
-  /**
-   * Construct and simulate a propose_transfer transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Propose a transfer to a new owner. The new owner must accept it.
-   */
   propose_transfer: (
     { id, new_creator }: { id: string; new_creator: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a nominate_new_admin transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Nominate a new contract admin. Only the current admin may call this.
-   * Sets `pending_admin`. The nomination does not take effect until
-   * the pending admin calls `accept_admin`.
-   */
+  initialize_network: (
+    { network_id }: { network_id: Buffer },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<Result<void>>>;
+
   nominate_new_admin: (
     { new_admin }: { new_admin: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a tombstone_resource transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Permanently retire a resource. Only an admin may tombstone it; the
-   * tombstoned state has no outgoing transitions.
-   */
   tombstone_resource: (
     { id, admin }: { id: string; admin: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a transfer_ownership transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   */
   transfer_ownership: (
     { id, new_creator }: { id: string; new_creator: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<Result<void>>>;
 
-  /**
-   * Construct and simulate a creator_resource_count transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Number of resources currently owned by `creator` (moves with
-   * `transfer_ownership`/`accept_transfer`; unrelated to the monotonic,
-   * never-decremented `count()`).
-   */
   creator_resource_count: (
     { creator }: { creator: string },
     options?: MethodOptions,
   ) => Promise<AssembledTransaction<u32>>;
 
-  /**
-   * Construct and simulate a set_verification_status transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Update a resource's on-chain verification status. Only an address
-   * currently holding the verifier role (see `add_verifier`) may call
-   * this. Only `Pending -> Verified`, `Pending -> Rejected`,
-   * `Verified -> Rejected`, and `Rejected -> Verified` are allowed;
-   * self-transitions and reverting to `Pending` error with
-   * `InvalidVerificationTransition`.
-   */
   set_verification_status: (
     { id, verifier, status }: { id: string; verifier: string; status: VerificationStatus },
     options?: MethodOptions,
@@ -616,14 +407,10 @@ export interface Client {
 }
 export class Client extends ContractClient {
   static async deploy<T = Client>(
-    /** Options for initializing a Client as well as for calling a method, with extras specific to deploying. */
     options: MethodOptions &
       Omit<ContractClientOptions, "contractId"> & {
-        /** The hash of the Wasm blob, which must already be installed on-chain. */
         wasmHash: Buffer | string;
-        /** Salt used to generate the contract's ID. Passed through to {@link Operation.createCustomContract}. Default: random. */
         salt?: Buffer | Uint8Array;
-        /** The format used to decode `wasmHash`, if it's provided as a string. */
         format?: "hex" | "base64";
       },
   ): Promise<AssembledTransaction<T>> {
@@ -638,7 +425,7 @@ export class Client extends ContractClient {
         "AAAAAAAAAFtUb3RhbCBudW1iZXIgb2YgcmVzb3VyY2VzIHN1Y2Nlc3NmdWxseSByZWdpc3RlcmVkIChtb25vdG9uaWM7IG5vdCBkZWNyZW1lbnRlZCBvbiB0cmFuc2ZlcikuAAAAAAVjb3VudAAAAAAAAAAAAAABAAAABA==",
         "AAAAAAAAAF1EZWxpc3QgYSByZXNvdXJjZSAoY29udmVuaWVuY2UgbWV0aG9kIGZvciBzZXRfbGlzdGVkKGZhbHNlKSkuIE9ubHkgdGhlIGNyZWF0b3IgbWF5IGNhbGwgdGhpcy4AAAAAAAAGZGVsaXN0AAAAAAABAAAAAAAAAAJpZAAAAAAAEAAAAAEAAAPpAAAD7QAAAAAAAAAD",
         "AAAAAAAAAGpXaGV0aGVyIGEgcmVzb3VyY2Ugd2l0aCBgaWRgIGlzIHJlZ2lzdGVyZWQuCkJ1bXBzIHRoZSBlbnRyeSdzIFRUTCB3aGVuIGZvdW5kLCBrZWVwaW5nIGhvdCByZXNvdXJjZXMgYWxpdmUuAAAAAAAGZXhpc3RzAAAAAAABAAAAAAAAAAJpZAAAAAAAEAAAAAEAAAAB",
-        "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAAGQAAAAAAAAARQWxyZWFkeVJlZ2lzdGVyZWQAAAAAAAABAAAAAAAAAAhOb3RGb3VuZAAAAAIAAAAAAAAADEludmFsaWRQcmljZQAAAAMAAAAAAAAAD01ldGFkYXRhVG9vTG9uZwAAAAAEAAAAAAAAAApJbnZhbGlkVGFnAAAAAAAFAAAAAAAAAAxVbmF1dGhvcml6ZWQAAAAGAAAAAAAAABJQZW5kaW5nQWRtaW5Ob3RTZXQAAAAAAAcAAAAAAAAAFlBlbmRpbmdBZG1pbkFscmVhZHlTZXQAAAAAAAgAAAAAAAAACVNhbWVBZG1pbgAAAAAAAAkAAAAAAAAAEFRlcm1zSGFzaFRvb0xvbmcAAAAKAAAAAAAAABFJbnZhbGlkUmVzb3VyY2VJZAAAAAAAAAsAAAAAAAAAFkludmFsaWRNZXRhZGF0YVBvaW50ZXIAAAAAAAwAAAAAAAAADUVtcHR5TWV0YWRhdGEAAAAAAAANAAAAAAAAAAxBbHJlYWR5T3duZXIAAAAOAAAAAAAAABFOb1BlbmRpbmdUcmFuc2ZlcgAAAAAAAA8AAAAAAAAAClJlc2VydmVkSWQAAAAAABAAAAAAAAAAD1ByaWNlRXhjZWVkc01heAAAAAARAAAAAAAAAAtBZG1pbk5vdFNldAAAAAASAAAAAAAAAAtOb3RWZXJpZmllcgAAAAATAAAAAAAAAB1JbnZhbGlkVmVyaWZpY2F0aW9uVHJhbnNpdGlvbgAAAAAAABQAAAAAAAAADUFscmVhZHlGcm96ZW4AAAAAAAAVAAAAAAAAAA5NZXRhZGF0YUZyb3plbgAAAAAAFgAAAAAAAAARRHVwbGljYXRlSW5SZXBhaXIAAAAAAAAXAAAAAAAAABpJbnZhbGlkTGlmZWN5Y2xlVHJhbnNpdGlvbgAAAAAAGAAAAAAAAAASUmVzb3VyY2VOb3RNdXRhYmxlAAAAAAAZ",
+        "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAAGgAAAAAAAAARQWxyZWFkeVJlZ2lzdGVyZWQAAAAAAAABAAAAAAAAAAhOb3RGb3VuZAAAAAIAAAAAAAAADEludmFsaWRQcmljZQAAAAMAAAAAAAAAD01ldGFkYXRhVG9vTG9uZwAAAAAEAAAAAAAAAApJbnZhbGlkVGFnAAAAAAAFAAAAAAAAAAxVbmF1dGhvcml6ZWQAAAAGAAAAAAAAABJQZW5kaW5nQWRtaW5Ob3RTZXQAAAAAAAcAAAAAAAAAFlBlbmRpbmdBZG1pbkFscmVhZHlTZXQAAAAAAAgAAAAAAAAACVNhbWVBZG1pbgAAAAAAAAkAAAAAAAAAEFRlcm1zSGFzaFRvb0xvbmcAAAAKAAAAAAAAABFJbnZhbGlkUmVzb3VyY2VJZAAAAAAAAAsAAAAAAAAAFkludmFsaWRNZXRhZGF0YVBvaW50ZXIAAAAAAAwAAAAAAAAADUVtcHR5TWV0YWRhdGEAAAAAAAANAAAAAAAAAAxBbHJlYWR5T3duZXIAAAAOAAAAAAAAABFOb1BlbmRpbmdUcmFuc2ZlcgAAAAAAAA8AAAAAAAAAClJlc2VydmVkSWQAAAAAABAAAAAAAAAAD1ByaWNlRXhjZWVkc01heAAAAAARAAAAAAAAAAtBZG1pbk5vdFNldAAAAAASAAAAAAAAAAtOb3RWZXJpZmllcgAAAAATAAAAAAAAAB1JbnZhbGlkVmVyaWZpY2F0aW9uVHJhbnNpdGlvbgAAAAAAABQAAAAAAAAADUFscmVhZHlGcm96ZW4AAAAAAAAVAAAAAAAAAA5NZXRhZGF0YUZyb3plbgAAAAAAFgAAAAAAAAARRHVwbGljYXRlSW5SZXBhaXIAAAAAAAAXAAAAAAAAABlOZXR3b3JrQWxyZWFkeUluaXRpYWxpemVkAAAAAAAAGAAAAAAAAAARTmV0d29ya0lkTWlzbWF0Y2gAAAAAAAAZAAAAAAAAABVOZXR3b3JrTm90SW5pdGlhbGl6ZWQAAAAAAAAa",
         "AAAAAAAAALdSZWdpc3RlciBhIG5ldyByZXNvdXJjZS4gUHJpY2UgaXMgaW4gVVNEQyBzdHJvb3BzICg2IGRlY2ltYWxzKS4KUmVqZWN0cyBgcHJpY2UgPD0gMGAgKGBJbnZhbGlkUHJpY2VgKSBvciBgcHJpY2UgPiBNQVhfUFJJQ0VgIChgUHJpY2VFeGNlZWRzTWF4YCkuClJlcXVpcmVzIHRoZSBjcmVhdG9yJ3MgYXV0aG9yaXphdGlvbi4AAAAACHJlZ2lzdGVyAAAABQAAAAAAAAAHY3JlYXRvcgAAAAATAAAAAAAAAAJpZAAAAAAAEAAAAAAAAAAFcHJpY2UAAAAAAAALAAAAAAAAAAhtZXRhZGF0YQAAABAAAAAAAAAABHRhZ3MAAAPqAAAAEAAAAAEAAAPpAAAD7QAAAAAAAAAD",
         "AAAAAAAAAIBSZXBsYWNlIGEgcmVzb3VyY2UncyBkaXNjb3ZlcnkgdGFncy4gT25seSB0aGUgY3JlYXRvciBtYXkgY2FsbCB0aGlzLgpEb2VzIG5vdCBtb2RpZnkgYG1ldGFkYXRhYCAodGhlIG9mZi1jaGFpbiBjb250ZW50IHBvaW50ZXIpLgAAAAhzZXRfdGFncwAAAAIAAAAAAAAAAmlkAAAAAAAQAAAAAAAAAAR0YWdzAAAD6gAAABAAAAABAAAD6QAAA+0AAAAAAAAAAw==",
         "AAAAAAAAAFFHZXQgdGhlIG93bmVyIGFkZHJlc3Mgb2YgYSByZXNvdXJjZS4gRXJyb3JzIHdpdGggYE5vdEZvdW5kYCBpZiBpdCBkb2VzIG5vdCBleGlzdC4AAAAAAAAJZ2V0X293bmVyAAAAAAAAAQAAAAAAAAACaWQAAAAAABAAAAABAAAD6QAAABMAAAAD",
@@ -672,6 +459,8 @@ export class Client extends ContractClient {
         "AAAAAAAAAnxSZXR1cm4gdGhlIGNvbnRyYWN0IGNyYXRlIHZlcnNpb24gYW5kIHRoZSBgUmVzb3VyY2VgIHNjaGVtYSB2ZXJzaW9uIGFzIGEKc3RhYmxlLCBjb21wYWN0IHN0cnVjdC4gRGVwbG95bWVudCBzY3JpcHRzIGFuZCB1cGdyYWRlIHRvb2xzIHNob3VsZCBjYWxsCnRoaXMgdG8gY29uZmlybSB3aGljaCB2ZXJzaW9uIG9mIHRoZSBjb250cmFjdCBpcyBydW5uaW5nIG9uLWNoYWluIGJlZm9yZQphbmQgYWZ0ZXIgYSByZWRlcGxveSwgd2l0aG91dCBuZWVkaW5nIHRvIHBhcnNlIHRoZSBmdWxsIGByZWdpc3RyeV9pbmZvYApyZXNwb25zZS4KClVwZ3JhZGUgY29tcGF0aWJpbGl0eTogYGNyYXRlX3ZlcnNpb25gIGlzIHRoZSBDYXJnbyBzZW12ZXIgc3RyaW5nIGJha2VkCmluIGF0IGJ1aWxkIHRpbWUgKGBDQVJHT19QS0dfVkVSU0lPTmApLiBgcmVzb3VyY2Vfc2NoZW1hX3ZlcnNpb25gIGlzIGFuCmludGVnZXIgYnVtcGVkIG9ubHkgd2hlbiB0aGUgb24tY2hhaW4gYFJlc291cmNlYCBzdHJ1Y3QgY2hhbmdlcyBpbiBhIHdheQp0aGF0IHJlcXVpcmVzIGNhbGxlcnMgdG8gdXBkYXRlIGhvdyB0aGV5IGRlY29kZSBpdC4gQSBjaGFuZ2UgdG8KYGNyYXRlX3ZlcnNpb25gIGFsb25lIGRvZXMgbm90IGltcGx5IGEgc2NoZW1hIGNoYW5nZS4AAAAQY29udHJhY3RfdmVyc2lvbgAAAAAAAAABAAAH0AAAAA9Db250cmFjdFZlcnNpb24A",
         "AAAAAAAAAEBQcm9wb3NlIGEgdHJhbnNmZXIgdG8gYSBuZXcgb3duZXIuIFRoZSBuZXcgb3duZXIgbXVzdCBhY2NlcHQgaXQuAAAAEHByb3Bvc2VfdHJhbnNmZXIAAAACAAAAAAAAAAJpZAAAAAAAEAAAAAAAAAALbmV3X2NyZWF0b3IAAAAAEwAAAAEAAAPpAAAD7QAAAAAAAAAD",
         "AAAAAQAAAWdDb21wYWN0IHZlcnNpb24gc3RydWN0IHJldHVybmVkIGJ5IFtgVmF1bHRSZWdpc3RyeTo6Y29udHJhY3RfdmVyc2lvbmBdLgoKRGVwbG95bWVudCBzY3JpcHRzIGFuZCB1cGdyYWRlIHRvb2xpbmcgc2hvdWxkIGNhbGwgYGNvbnRyYWN0X3ZlcnNpb25gCmJlZm9yZSBhbmQgYWZ0ZXIgYSByZWRlcGxveSB0byBjb25maXJtIHdoaWNoIGJ1aWxkIGlzIHJ1bm5pbmcgb24tY2hhaW4uCk9ubHkgYHJlc291cmNlX3NjaGVtYV92ZXJzaW9uYCBpcyByZWxldmFudCB0byB3aGV0aGVyIGNhbGxlcnMgbXVzdCB1cGRhdGUKdGhlaXIgYFJlc291cmNlYCBkZWNvZGluZyBsb2dpYzsgYSBgY3JhdGVfdmVyc2lvbmAgYnVtcCBhbG9uZSBpcyBzYWZlLgAAAAAAAAAAD0NvbnRyYWN0VmVyc2lvbgAAAAACAAAAQUNhcmdvIHNlbXZlciBzdHJpbmcgYmFrZWQgaW4gYXQgYnVpbGQgdGltZSAoYENBUkdPX1BLR19WRVJTSU9OYCkuAAAAAAAADWNyYXRlX3ZlcnNpb24AAAAAAAAQAAAAhE9uLWNoYWluIGBSZXNvdXJjZWAgc2NoZW1hIHZlcnNpb24gKGBSRVNPVVJDRV9TQ0hFTUFfVkVSU0lPTmApLgpCdW1wIHRoaXMgb25seSB3aGVuIHRoZSBgUmVzb3VyY2VgIHN0cnVjdCBjaGFuZ2VzIGluIGEgYnJlYWtpbmcgd2F5LgAAABdyZXNvdXJjZV9zY2hlbWFfdmVyc2lvbgAAAAAE",
+        "AAAAAAAAAItSZXR1cm4gdGhlIGluaXRpYWxpemVkIG5ldHdvcmsgaWRlbnRpZmllci4gQ2FsbGVycyBjYW4gdXNlIHRoaXMgdmFsdWUKYXMgYSBkZXBsb3ltZW50IGd1YXJkIGJlZm9yZSBzdWJtaXR0aW5nIG5ldHdvcmstc2Vuc2l0aXZlIG9wZXJhdGlvbnMuAAAAAApuZXR3b3JrX2lkAAAAAAAAAAAAAQAAA+kAAAPuAAAAIAAAAAM=",
+        "AAAAAAAAAMhTdG9yZSB0aGUgaW50ZW5kZWQgbmV0d29yayBpZGVudGlmaWVyIG9uY2UuIFRoZSBzdXBwbGllZCBJRCBtdXN0IG1hdGNoCnRoZSBsZWRnZXIgdGhpcyBjb250cmFjdCBpcyBleGVjdXRpbmcgb24sIHByZXZlbnRpbmcgYSBkZXBsb3ltZW50CnNjcmlwdCBmcm9tIGFjY2lkZW50YWxseSByZWNvcmRpbmcgYSBkaWZmZXJlbnQgU3RlbGxhciBuZXR3b3JrLgAAABJpbml0aWFsaXplX25ldHdvcmsAAAAAAAEAAAAAAAAACm5ldHdvcmtfaWQAAAAAA+4AAAAgAAAAAQAAA+kAAAPtAAAAAAAAAAM=",
         "AAAAAAAAAKxOb21pbmF0ZSBhIG5ldyBjb250cmFjdCBhZG1pbi4gT25seSB0aGUgY3VycmVudCBhZG1pbiBtYXkgY2FsbCB0aGlzLgpTZXRzIGBwZW5kaW5nX2FkbWluYC4gVGhlIG5vbWluYXRpb24gZG9lcyBub3QgdGFrZSBlZmZlY3QgdW50aWwKdGhlIHBlbmRpbmcgYWRtaW4gY2FsbHMgYGFjY2VwdF9hZG1pbmAuAAAAEm5vbWluYXRlX25ld19hZG1pbgAAAAAAAQAAAAAAAAAJbmV3X2FkbWluAAAAAAAAEwAAAAEAAAPpAAAD7QAAAAAAAAAD",
         "AAAAAAAAAHBQZXJtYW5lbnRseSByZXRpcmUgYSByZXNvdXJjZS4gT25seSBhbiBhZG1pbiBtYXkgdG9tYnN0b25lIGl0OyB0aGUKdG9tYnN0b25lZCBzdGF0ZSBoYXMgbm8gb3V0Z29pbmcgdHJhbnNpdGlvbnMuAAAAEnRvbWJzdG9uZV9yZXNvdXJjZQAAAAAAAgAAAAAAAAACaWQAAAAAABAAAAAAAAAABWFkbWluAAAAAAAAEwAAAAEAAAPpAAAD7QAAAAAAAAAD",
         "AAAAAAAAAAAAAAASdHJhbnNmZXJfb3duZXJzaGlwAAAAAAACAAAAAAAAAAJpZAAAAAAAEAAAAAAAAAALbmV3X2NyZWF0b3IAAAAAEwAAAAEAAAPpAAAD7QAAAAAAAAAD",
@@ -695,6 +484,7 @@ export class Client extends ContractClient {
     get_owner: this.txFromJSON<Result<string>>,
     list_page: this.txFromJSON<CatalogPage>,
     set_price: this.txFromJSON<Result<void>>,
+    network_id: this.txFromJSON<Result<Buffer>>,
     set_listed: this.txFromJSON<Result<void>>,
     is_verifier: this.txFromJSON<boolean>,
     list_listed: this.txFromJSON<Array<Resource>>,
@@ -716,6 +506,7 @@ export class Client extends ContractClient {
     update_metadata: this.txFromJSON<Result<void>>,
     contract_version: this.txFromJSON<ContractVersion>,
     propose_transfer: this.txFromJSON<Result<void>>,
+    initialize_network: this.txFromJSON<Result<void>>,
     nominate_new_admin: this.txFromJSON<Result<void>>,
     tombstone_resource: this.txFromJSON<Result<void>>,
     transfer_ownership: this.txFromJSON<Result<void>>,

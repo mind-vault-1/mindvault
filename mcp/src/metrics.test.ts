@@ -26,21 +26,21 @@ describe("metricsEnabledFromEnv", () => {
 
 describe("disabled (noop) recorder", () => {
   it("reports a disabled, empty snapshot and records nothing", () => {
-    const recorder = createMetricsRecorder(false);
+    const recorder = createMetricsRecorder(false, 30000);
     expect(recorder.enabled).toBe(false);
     recorder.recordToolCall("mindvault_buy", 12, false);
     recorder.recordPayment(false);
     const snap = recorder.snapshot();
     expect(snap.enabled).toBe(false);
     expect(snap.tools).toEqual({});
-    expect(snap.totals).toEqual({ calls: 0, errors: 0 });
+    expect(snap.totals).toEqual({ calls: 0, errors: 0, budgetExceeded: 0 });
     expect(snap.payments).toEqual({ attempts: 0, failures: 0 });
   });
 });
 
 describe("active recorder", () => {
-  it("counts success and failure paths per tool", () => {
-    const recorder = createMetricsRecorder(true);
+  it("counts success and failure paths per tool and tracks budget", () => {
+    const recorder = createMetricsRecorder(true, 10);
     recorder.recordToolCall("mindvault_browse", 5, true);
     recorder.recordToolCall("mindvault_browse", 7, true);
     recorder.recordToolCall("mindvault_buy", 20, false);
@@ -52,13 +52,15 @@ describe("active recorder", () => {
       errors: 0,
       totalDurationMs: 12,
       maxDurationMs: 7,
+      budgetExceeded: 0,
     });
-    expect(snap.tools.mindvault_buy).toMatchObject({ calls: 1, errors: 1 });
-    expect(snap.totals).toEqual({ calls: 3, errors: 1 });
+    expect(snap.tools.mindvault_buy).toMatchObject({ calls: 1, errors: 1, budgetExceeded: 1 });
+    expect(snap.totals).toEqual({ calls: 3, errors: 1, budgetExceeded: 1 });
+    expect(snap.toolDurationBudgetMs).toBe(10);
   });
 
   it("tracks payment attempts and failures", () => {
-    const recorder = createMetricsRecorder(true);
+    const recorder = createMetricsRecorder(true, 30000);
     recorder.recordPayment(true);
     recorder.recordPayment(false);
     recorder.recordPayment(true);
@@ -66,7 +68,7 @@ describe("active recorder", () => {
   });
 
   it("clamps non-finite/negative durations to zero", () => {
-    const recorder = createMetricsRecorder(true);
+    const recorder = createMetricsRecorder(true, 30000);
     recorder.recordToolCall("mindvault_preview", Number.NaN, true);
     recorder.recordToolCall("mindvault_preview", -3, true);
     expect(recorder.snapshot().tools.mindvault_preview).toMatchObject({
@@ -77,24 +79,25 @@ describe("active recorder", () => {
   });
 
   it("reset clears counters and moves the since timestamp forward", () => {
-    const recorder = createMetricsRecorder(true);
+    const recorder = createMetricsRecorder(true, 30000);
     const before = recorder.snapshot().since;
     recorder.recordToolCall("mindvault_browse", 5, true);
     recorder.reset();
     const snap = recorder.snapshot();
-    expect(snap.totals).toEqual({ calls: 0, errors: 0 });
+    expect(snap.totals).toEqual({ calls: 0, errors: 0, budgetExceeded: 0 });
     expect(snap.tools).toEqual({});
     expect(snap.since).not.toBeNull();
     expect(before).not.toBeNull();
   });
 
   it("never records secret-looking material — only tool names and numbers", () => {
-    const recorder = createMetricsRecorder(true);
+    const recorder = createMetricsRecorder(true, 30000);
     recorder.recordToolCall("mindvault_register", 5, true);
     const serialized = JSON.stringify(recorder.snapshot());
     // Keys of a tool metric are strictly the numeric counters.
     const metric = recorder.snapshot().tools.mindvault_register;
     expect(Object.keys(metric).sort()).toEqual([
+      "budgetExceeded",
       "calls",
       "errors",
       "maxDurationMs",
@@ -109,12 +112,14 @@ describe("measureTool", () => {
     const calls: [string, number, boolean][] = [];
     const recorder: MetricsRecorder = {
       enabled: true,
+      toolDurationBudgetMs: 30000,
       recordToolCall: (tool, duration, ok) => calls.push([tool, duration, ok]),
       recordPayment: () => {},
       snapshot: () => ({
         enabled: true,
         since: null,
-        totals: { calls: 0, errors: 0 },
+        toolDurationBudgetMs: 30000,
+        totals: { calls: 0, errors: 0, budgetExceeded: 0 },
         payments: { attempts: 0, failures: 0 },
         tools: {},
       }),

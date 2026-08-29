@@ -1,0 +1,55 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`payment failure error snapshots > MindVault API payment required (402) 1`] = `
+"Buy failed: payment required to access this resource
+Source: MindVault API · Category: payment · HTTP 402
+Next: Payment was required or rejected. Check the wallet with mindvault_wallet_info, fund it with USDC, and retry."
+`;
+
+exports[`payment failure error snapshots > Soroban RPC payment settlement error 1`] = `
+"Payment settlement failed: {"code":-32602,"message":"invalid params"}
+Source: Soroban RPC · Category: contract
+Next: Verify the registry contract ID and network with mindvault_registry_info, then retry."
+`;
+
+exports[`payment failure error snapshots > payment error format is deterministic across calls 1`] = `
+"Buy failed [402]: stale auth entry
+Source: x402 payment · Category: payment · HTTP 402
+Next: Payment was required or rejected. Check the wallet with mindvault_wallet_info, fund it with USDC, and retry."
+`;
+
+exports[`payment failure error snapshots > registry not-found during buy (resource not on-chain) 1`] = `
+"Registry lookup for buy: Resource not found
+Source: vault-registry contract · Category: not_found
+Next: The resource is not registered on-chain. Publish it, or run mindvault_register_onchain to register an already-verified resource."
+`;
+
+exports[`payment failure error snapshots > x402 facilitator server error during settlement (500) 1`] = `
+"Payment settlement failed: internal facilitator error
+Source: x402 payment · Category: server · HTTP 500
+Next: The upstream service is failing. Retry shortly; if it persists the service is down."
+`;
+
+exports[`payment failure error snapshots > x402 network failure (fetch failed) 1`] = `
+"Buy failed: fetch failed
+Source: x402 payment · Category: network
+Next: Check network connectivity to the service and retry; idempotent reads retry automatically."
+`;
+
+exports[`payment failure error snapshots > x402 payment aborted (AbortError timeout) 1`] = `
+"Buy failed: The operation was aborted
+Source: x402 payment · Category: timeout
+Next: The request exceeded its configured timeout. Retry, or raise MINDVAULT_HTTP_TIMEOUT_MS for a slow endpoint."
+`;
+
+exports[`payment failure error snapshots > x402 payment rejected (402 with detail) 1`] = `
+"Buy failed [402]: payment rejected: insufficient balance
+Source: x402 payment · Category: payment · HTTP 402
+Next: Payment was required or rejected. Check the wallet with mindvault_wallet_info, fund it with USDC, and retry."
+`;
+
+exports[`payment failure error snapshots > x402 payment rejected (402 with no body) 1`] = `
+"Buy failed [402]: no response body
+Source: x402 payment · Category: payment · HTTP 402
+Next: Payment was required or rejected. Check the wallet with mindvault_wallet_info, fund it with USDC, and retry."
+`;

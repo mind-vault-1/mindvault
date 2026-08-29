@@ -28,7 +28,9 @@
  */
 
 import { parseMetadataHash, MetadataHashError, METADATA_HASH_FORMAT_HINT } from "./metadataHash.js";
+import { CATALOG_MAX_LIMIT, CATALOG_SORT_VALUES } from "./catalogFilters.js";
 import { REGISTRY_LIST_MAX_LIMIT } from "./registryPagination.js";
+import { RECEIPT_EXPORT_MAX_LIMIT } from "./receipts.js";
 import { TOOL_DEFINITIONS } from "./tools.js";
 
 // ── Spec model ────────────────────────────────────────────────────────────────
@@ -115,6 +117,9 @@ const USDC_AMOUNT: ArgumentSpec = {
 /** Confirmation flag for mainnet mutations (see mainnetGuardrails.ts). */
 const CONFIRM_MAINNET: ArgumentSpec = { kind: "flag" };
 
+/** Preview flag: publish/buy report what they would do without paying. */
+const DRY_RUN: ArgumentSpec = { kind: "flag" };
+
 /** Stellar public key (G... 56 chars). */
 const STELLAR_ADDRESS: ArgumentSpec = {
   kind: "string",
@@ -137,6 +142,35 @@ const METADATA_POINTER: ArgumentSpec = {
 /** Backup passphrases must survive a round-trip through stateBackup.ts. */
 const PASSPHRASE: ArgumentSpec = { kind: "string", required: true, minLength: 8, maxLength: 512 };
 
+/**
+ * Catalog filters shared by mindvault_browse and mindvault_search.
+ *
+ * The two tools advertise one schema (`catalogFilterInputProperties`) and hand
+ * their arguments to the same parser, so they validate against one spec as
+ * well — otherwise an argument the schema advertises (`sort` was the first) is
+ * rejected here as unknown before the parser ever sees it.
+ *
+ * Values are re-checked by `parseCatalogFilters`, which produces the friendlier
+ * message; this layer's job is to accept the right argument *names* and reject
+ * the obviously wrong shapes.
+ */
+const CATALOG_FILTER_ARGS: ToolArgumentSpec = {
+  query: { kind: "string", maxLength: 256 },
+  minPrice: USDC_AMOUNT,
+  maxPrice: USDC_AMOUNT,
+  verificationStatus: {
+    kind: "enum",
+    values: ["pending", "verified", "rejected", "skipped"],
+  },
+  resourceType: { kind: "enum", values: ["file", "link"] },
+  owner: { kind: "string", maxLength: 128 },
+  sort: { kind: "enum", values: CATALOG_SORT_VALUES },
+  limit: { kind: "integer", min: 1, max: CATALOG_MAX_LIMIT },
+  offset: { kind: "integer", min: 0 },
+  tags: { kind: "string", maxLength: 256 },
+  listed: { kind: "flag" },
+};
+
 // ── Per-tool specs ────────────────────────────────────────────────────────────
 
 /**
@@ -148,17 +182,8 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_wallet_info: {},
   mindvault_use_profile: { name: { ...PROFILE_NAME, required: true } },
   mindvault_list_profiles: {},
-  mindvault_browse: {},
-  mindvault_search: {
-    query: { kind: "string", required: true, maxLength: 256 },
-    minPrice: USDC_AMOUNT,
-    maxPrice: USDC_AMOUNT,
-    verificationStatus: {
-      kind: "enum",
-      values: ["pending", "verified", "rejected", "skipped"],
-    },
-    resourceType: { kind: "enum", values: ["file", "link"] },
-  },
+  mindvault_browse: { ...CATALOG_FILTER_ARGS },
+  mindvault_search: { ...CATALOG_FILTER_ARGS },
   mindvault_preview: { resourceId: RESOURCE_ID },
   mindvault_register: {
     name: { kind: "string", required: true, maxLength: 128 },
@@ -188,9 +213,23 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
       pattern: /^https?:\/\/[^\s]+$/,
       patternHint: "an http(s) URL, e.g. https://example.com/data.json",
     },
+    dryRun: DRY_RUN,
     confirmMainnet: CONFIRM_MAINNET,
   },
-  mindvault_buy: { resourceId: RESOURCE_ID, confirmMainnet: CONFIRM_MAINNET },
+  mindvault_buy: {
+    resourceId: RESOURCE_ID,
+    dryRun: DRY_RUN,
+    maxAutoPayUsdc: { ...USDC_AMOUNT, required: false },
+    confirmMainnet: CONFIRM_MAINNET,
+  },
+  mindvault_export_receipts: {
+    format: { kind: "enum", values: ["json", "csv"] },
+    resourceId: { ...RESOURCE_ID, required: false },
+    network: { kind: "string", maxLength: 64 },
+    since: { kind: "string", maxLength: 64 },
+    until: { kind: "string", maxLength: 64 },
+    limit: { kind: "integer", min: 1, max: RECEIPT_EXPORT_MAX_LIMIT },
+  },
   mindvault_register_onchain: { resourceId: RESOURCE_ID, confirmMainnet: CONFIRM_MAINNET },
   mindvault_agent_status: {},
   mindvault_registry_info: {},
@@ -216,6 +255,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_set_tags: {
     resourceId: RESOURCE_ID,
     tags: { kind: "tag_array", required: true },
+    confirmMainnet: CONFIRM_MAINNET,
   },
   mindvault_update_metadata: {
     resourceId: RESOURCE_ID,
@@ -254,6 +294,8 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     profile: PROFILE_NAME,
     confirmMainnet: CONFIRM_MAINNET,
   },
+  mindvault_verify_install: {},
+  mindvault_recover_catalog_cache: {},
 };
 
 // ── Errors ────────────────────────────────────────────────────────────────────

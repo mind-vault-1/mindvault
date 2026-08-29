@@ -8,6 +8,9 @@
  * TOOL_ARGUMENT_SPECS (see validation.ts) — enforced by validation.test.ts.
  */
 
+import { catalogFilterInputProperties } from "./catalogFilters.js";
+import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_EXPORT_OUTPUT_SCHEMA } from "./receipts.js";
+
 /** JSON Schema (draft subset) advertised for a tool's arguments. */
 export interface ToolInputSchema {
   type: "object";
@@ -15,10 +18,34 @@ export interface ToolInputSchema {
   required: string[];
 }
 
+/**
+ * MCP tool annotations (2025-06-18). These are advisory **hints** only — clients
+ * never gate tool use on them, but they let agents know which calls are safe to
+ * repeat and which can destroy local state.
+ */
+export interface ToolAnnotations {
+  /** Human-readable title shown next to the tool in client UIs. */
+  title: string;
+  /** The tool performs no state changes or side effects. */
+  readOnlyHint: boolean;
+  /** The tool can irreversibly destroy local state. */
+  destructiveHint: boolean;
+  /** Repeating the tool with identical arguments is safe and yields the same result. */
+  idempotentHint: boolean;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
   inputSchema: ToolInputSchema;
+  /**
+   * Optional JSON Schema for the tool's structured result. Tools that declare
+   * one return their result as `structuredContent` as well as text, and MUST
+   * conform to it (MCP 2025-06-18, "Structured Content").
+   */
+  outputSchema?: Record<string, unknown>;
+  /** MCP tool annotations advertised in ListTools (title + read/destructive/idempotent hints). */
+  annotations: ToolAnnotations;
 }
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -43,12 +70,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    annotations: {
+      title: "Set Up Wallet",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
   {
     name: "mindvault_wallet_info",
     description:
       "Check the active profile name, its agent wallet address, USDC balance, and whether it is registered as a publisher.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Wallet Info",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_use_profile",
@@ -66,59 +105,55 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["name"],
     },
+    annotations: {
+      title: "Use Profile",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_list_profiles",
     description:
       "List all named wallet profiles, marking the active one and showing each profile's wallet address and whether it is registered as a publisher. Secret keys are never shown.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "List Profiles",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_browse",
-    description: "List all available resources in the MindVault catalog.",
-    inputSchema: { type: "object", properties: {}, required: [] },
+    description:
+      "List resources in the MindVault catalog with the same optional filters as mindvault_search and GET /resources: keyword, price range, verification status, resource type, owner, sort, pagination, tags, and listed state. Sort accepts newest, price_asc, price_desc, or title; results are ordered client-side too, so the order holds even when the backend ignores the parameter.",
+    inputSchema: {
+      type: "object",
+      properties: { ...catalogFilterInputProperties },
+      required: [],
+    },
+    annotations: {
+      title: "Browse Catalog",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_search",
     description:
-      "Search the MindVault catalog by keyword and optional filters for price, resource type, and verification status. Uses server-side filtering and returns compact resource summaries.",
+      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries.",
     inputSchema: {
       type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description:
-            "Keyword(s) to match against resource title or description. Examples: 'Stellar tutorial', 'Soroban smart contracts', 'DeFi guide'",
-          examples: ["Stellar tutorial", "Soroban smart contracts", "DeFi guide"],
-        },
-        minPrice: {
-          type: "string",
-          description:
-            "Minimum USDC price to include (decimal string). Example: '5.00' includes resources priced 5 USDC and above.",
-          examples: ["5.00", "10.50", "0.50"],
-        },
-        maxPrice: {
-          type: "string",
-          description:
-            "Maximum USDC price to include (decimal string). Example: '20.00' excludes resources priced above 20 USDC.",
-          examples: ["20.00", "15.99", "100.00"],
-        },
-        verificationStatus: {
-          type: "string",
-          enum: ["pending", "verified", "rejected", "skipped"],
-          description:
-            "Filter by verification status. 'verified' = passed AI originality check, 'pending' = awaiting verification, 'rejected' = failed check, 'skipped' = verification skipped.",
-          examples: ["verified"],
-        },
-        resourceType: {
-          type: "string",
-          enum: ["file", "link"],
-          description:
-            "Filter by resource type. 'file' = downloadable file (PDF, ebook, etc.), 'link' = external URL to web content.",
-          examples: ["link", "file"],
-        },
-      },
-      required: ["query"],
+      properties: { ...catalogFilterInputProperties },
+      required: [],
+    },
+    annotations: {
+      title: "Search Catalog",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -136,6 +171,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["resourceId"],
+    },
+    annotations: {
+      title: "Preview Resource",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -169,6 +210,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["name", "email"],
+    },
+    annotations: {
+      title: "Register Publisher",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
     },
   },
   {
@@ -216,11 +263,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["title", "price", "externalUrl"],
     },
+    annotations: {
+      title: "Publish Resource",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
   {
     name: "mindvault_buy",
     description:
-      "Pay USDC via x402 and access a resource. On mainnet, pass confirmMainnet: true (or set MINDVAULT_ALLOW_MAINNET=1). Pass dryRun: true to validate the resource and show intended payment flow without submitting payment.",
+      "Pay USDC via x402 and access a resource. Payments above MINDVAULT_MAX_AUTO_PAY_USDC (10 USDC by default) require maxAutoPayUsdc set to at least the resource price. On mainnet, pass confirmMainnet: true (or set MINDVAULT_ALLOW_MAINNET=1). Pass dryRun: true to validate the resource and show intended payment flow without submitting payment.",
     inputSchema: {
       type: "object",
       properties: {
@@ -235,6 +288,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "Optional dry-run flag. When true, validates the resource ID and shows intended network, endpoint, and required wallet state without submitting payment.",
         },
+        maxAutoPayUsdc: {
+          type: "string",
+          description:
+            "Explicit per-call maximum automatic payment in USDC. Required when this resource costs more than MINDVAULT_MAX_AUTO_PAY_USDC; must be at least the advertised price.",
+          examples: ["25.00"],
+        },
         confirmMainnet: {
           type: "boolean",
           description:
@@ -242,6 +301,66 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["resourceId"],
+    },
+    annotations: {
+      title: "Buy Resource",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
+  },
+  {
+    name: "mindvault_export_receipts",
+    description:
+      "Export receipts for resources this agent has purchased as a schema-versioned document (JSON, or RFC 4180 CSV in the envelope's csv field). Filter by resource, network, and date range. Reports a row count and the summed USDC total, so an agent can reconcile spend without re-reading each purchase.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        format: {
+          type: "string",
+          enum: ["json", "csv"],
+          description:
+            'Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope\'s csv field.',
+          examples: ["json", "csv"],
+        },
+        resourceId: {
+          type: "string",
+          description: "Export only receipts for this resource id.",
+          examples: ["cm7x8y9z", "swcn98besxpp6t1u8e77fqz3"],
+        },
+        network: {
+          type: "string",
+          description:
+            "Export only receipts settled on this x402 network id. Example: 'stellar:testnet'.",
+          examples: ["stellar:testnet", "stellar:pubnet"],
+        },
+        since: {
+          type: "string",
+          description:
+            "Inclusive lower bound on the purchase time (ISO-8601 date or timestamp; a bare date is read as midnight UTC).",
+          examples: ["2026-08-01", "2026-08-01T12:00:00Z"],
+        },
+        until: {
+          type: "string",
+          description: "Inclusive upper bound on the purchase time (ISO-8601 date or timestamp).",
+          examples: ["2026-08-31", "2026-08-31T23:59:59Z"],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: RECEIPT_EXPORT_MAX_LIMIT,
+          description: `Max receipts to export, newest first (1–${RECEIPT_EXPORT_MAX_LIMIT}).`,
+          examples: [50, 100],
+        },
+      },
+      required: [],
+    },
+    outputSchema: RECEIPT_EXPORT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Export Receipts",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -265,30 +384,60 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId"],
     },
+    annotations: {
+      title: "Register On-Chain",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
   {
     name: "mindvault_agent_status",
     description:
       "Check the verification agent's earnings and activity. Returns total verifications, pass/fail counts, total USDC earned, average confidence score, and recent verification history with resource titles.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Agent Status",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_registry_info",
     description:
       "Return the on-chain vault-registry contract ID, network passphrase, RPC URL, and the resource fields available for direct Soroban queries. Use this to verify ownership, price, and listing state directly from Stellar without trusting the MindVault API.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Registry Info",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_network_profile",
     description:
       "Report current Stellar/x402 network configuration (testnet/mainnet), RPC URLs, registry contract ID, and warnings for custom overrides. Use this to verify which network the MCP is connected to and diagnose configuration issues.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Network Profile",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_check_bindings",
     description:
       "Verify the installed registry-client bindings match the deployed vault-registry contract interface. Reports a match, or a warning listing the drifting methods with the contract ID, network, client version, and a recommended fix (redeploy the contract or regenerate bindings). Useful after a contract redeploy or client upgrade.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Check Bindings",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_check_consistency",
@@ -313,6 +462,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId"],
     },
+    annotations: {
+      title: "Check Consistency",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_registry_lookup",
@@ -329,6 +484,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["resourceId"],
+    },
+    annotations: {
+      title: "Registry Lookup",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -356,6 +517,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    annotations: {
+      title: "Registry List",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_tx_status",
@@ -375,6 +542,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["txHash"],
+    },
+    annotations: {
+      title: "Transaction Status",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -398,6 +571,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    annotations: {
+      title: "Reset State",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_backup_state",
@@ -412,6 +591,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["passphrase"],
+    },
+    annotations: {
+      title: "Back Up State",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -432,6 +617,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["blob", "passphrase"],
     },
+    annotations: {
+      title: "Restore State",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+    },
   },
   {
     name: "mindvault_metrics",
@@ -448,6 +639,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: [],
+    },
+    annotations: {
+      title: "Tool Metrics",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -477,6 +674,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["resourceId", "tags"],
+    },
+    annotations: {
+      title: "Set Tags",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -509,6 +712,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId", "metadata"],
     },
+    annotations: {
+      title: "Update Metadata",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_set_price",
@@ -536,6 +745,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId", "price"],
     },
+    annotations: {
+      title: "Set Price",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_transfer_ownership",
@@ -561,6 +776,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["resourceId", "newCreator"],
+    },
+    annotations: {
+      title: "Transfer Ownership",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
     },
   },
   {
@@ -589,18 +810,36 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId", "listed"],
     },
+    annotations: {
+      title: "Set Listed",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_check_state_permissions",
     description:
       "Verify the state file (~/.mindvault/state.json) has safe permissions (mode 0600). Warns when the file is world-readable or group-readable, which would expose wallet secret keys and API keys to other system users. Safe by default; run after any manual file operations or environment migration.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Check State Permissions",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_registry_health",
     description:
       "Check the health of every dependency the MCP server relies on: MindVault API, Horizon, Soroban RPC, vault-registry contract, and x402 network alignment. Returns per-dependency status (ok/error) with actionable failure messages. Does not leak secrets or environment variables.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Registry Health",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_import_wallet",
@@ -634,6 +873,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    annotations: {
+      title: "Import Wallet",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
   {
     name: "mindvault_rotate_publisher_key",
@@ -656,5 +901,29 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    annotations: {
+      title: "Rotate Publisher Key",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
+  },
+  {
+    name: "mindvault_verify_install",
+    description:
+      "Verify the MindVault MCP server is installed and configured correctly. Checks Node.js version (>=20), network settings, URL variables, vault-registry contract ID, and warns about plaintext secrets in the environment. No network calls are made — all checks are local. Run this first when setting up a new agent or diagnosing a configuration problem.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Verify Install",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_recover_catalog_cache",
+    description:
+      "Attempt a catalog stale-cache recovery: requests the MCP to refresh or re-fetch catalog index data and provides recovery guidance. Useful when browse results appear stale.",
+    inputSchema: { type: "object", properties: {}, required: [] },
   },
 ];

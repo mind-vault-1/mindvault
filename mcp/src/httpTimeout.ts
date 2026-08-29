@@ -17,6 +17,37 @@
  * is unit-testable without real waiting.
  */
 
+// ── User-Agent ────────────────────────────────────────────────────────────────
+
+/**
+ * Environment variable that overrides the `User-Agent` header sent on every
+ * outbound HTTP request from the MCP server.
+ *
+ * The default value is `mindvault-mcp/1.0.0`. Set this variable when you want
+ * to identify the specific agent or deployment making requests — useful for
+ * distinguishing traffic in server logs or rate-limit buckets.
+ *
+ * @example MINDVAULT_USER_AGENT=my-bot/2.0 (mindvault-mcp)
+ */
+export const USER_AGENT_ENV_VAR = "MINDVAULT_USER_AGENT";
+
+/** The fallback sent when `MINDVAULT_USER_AGENT` is not set. */
+export const DEFAULT_USER_AGENT = "mindvault-mcp/1.0.0";
+
+/**
+ * Resolve the `User-Agent` string from the environment.
+ *
+ * Returns the value of `MINDVAULT_USER_AGENT` when it is set to a non-empty
+ * string, otherwise falls back to `DEFAULT_USER_AGENT`. Whitespace-only values
+ * are treated as unset.
+ */
+export function resolveUserAgent(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env[USER_AGENT_ENV_VAR];
+  return raw && raw.trim() ? raw.trim() : DEFAULT_USER_AGENT;
+}
+
+// ── Timeouts ──────────────────────────────────────────────────────────────────
+
 /** Services with independently tunable deadlines. */
 export type TimeoutService = "http" | "horizon" | "soroban" | "payment";
 

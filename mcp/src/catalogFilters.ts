@@ -294,6 +294,59 @@ export function applyClientCatalogFilters<T extends Record<string, unknown>>(
   });
 }
 
+/** Numeric price of a catalog row; NaN prices sort last. */
+function priceOf(row: Record<string, unknown>): number {
+  const value = parseFloat(String(row.price ?? ""));
+  return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
+}
+
+/** Creation timestamp as epoch ms; rows without one keep their incoming order. */
+function createdAtOf(row: Record<string, unknown>): number | null {
+  const raw = row.createdAt ?? row.created_at;
+  if (raw === undefined || raw === null) return null;
+  const ms = new Date(String(raw)).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Order catalog rows client-side.
+ *
+ * `sort` is forwarded to GET /resources, which orders the page before applying
+ * limit/offset — so against the live backend this is a no-op that re-confirms
+ * the order. It matters for backends that ignore the parameter (the mock
+ * fixtures, older deployments): the agent still gets the order it asked for
+ * instead of silently unsorted results.
+ *
+ * The sort is stable, so rows the comparator considers equal keep the order the
+ * server returned them in.
+ */
+export function applyCatalogSort<T extends Record<string, unknown>>(
+  items: T[],
+  sort: CatalogSort | undefined,
+): T[] {
+  if (!sort) return items;
+  const sorted = [...items];
+  switch (sort) {
+    case "price_asc":
+      sorted.sort((a, b) => priceOf(a) - priceOf(b));
+      break;
+    case "price_desc":
+      sorted.sort((a, b) => priceOf(b) - priceOf(a));
+      break;
+    case "title":
+      sorted.sort((a, b) => String(a.title ?? "").localeCompare(String(b.title ?? "")));
+      break;
+    case "newest":
+      // Only reorder when every row carries a usable timestamp; a partial sort
+      // would shuffle rows for no reason.
+      if (sorted.every((r) => createdAtOf(r) !== null)) {
+        sorted.sort((a, b) => (createdAtOf(b) as number) - (createdAtOf(a) as number));
+      }
+      break;
+  }
+  return sorted;
+}
+
 /** Shared JSON Schema properties for browse/search tool inputSchema. */
 export const catalogFilterInputProperties = {
   query: {

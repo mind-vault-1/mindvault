@@ -160,8 +160,8 @@ describe("dryRunPublish – result structure", () => {
       externalUrl: "https://example.com/data",
     };
     const result = dryRunPublish(input, network, baseUrl, true, true);
-    expect(result.steps).toContain("1. Create resource record");
-    expect(result.steps).toContain("2. Sign x402 payment");
+    expect(result.steps).toContain("1. Create resource record via POST /resources");
+    expect(result.steps).toContain("2. Sign x402 payment for verification (~0.10 USDC)");
     expect(result.steps.length).toBeGreaterThan(0);
   });
 
@@ -172,7 +172,7 @@ describe("dryRunPublish – result structure", () => {
       externalUrl: "not-a-url",
     };
     const result = dryRunPublish(input, network, baseUrl, true, true);
-    expect(result.steps).toContain("Validation failed");
+    expect(result.steps).toContain("Validation failed; see errors above");
   });
 });
 
@@ -227,9 +227,9 @@ describe("dryRunBuy – result structure", () => {
 
   it("includes payment steps", () => {
     const result = dryRunBuy("res-001", network, baseUrl, true);
-    expect(result.steps).toContain("1. Fetch resource metadata");
-    expect(result.steps).toContain("2. Verify wallet");
-    expect(result.steps).toContain("3. Create x402 payment");
+    expect(result.steps).toContain("1. Fetch resource metadata to confirm price");
+    expect(result.steps).toContain("2. Verify wallet has sufficient USDC balance");
+    expect(result.steps).toContain("3. Create x402 payment authorization (sign payment tx)");
   });
 });
 
@@ -277,9 +277,13 @@ describe("dryRunOnchain – result structure", () => {
 
   it("shows on-chain transaction steps", () => {
     const result = dryRunOnchain("register-onchain", "res-001", network, baseUrl, true, true);
-    expect(result.steps).toContain("1. Fetch resource details");
-    expect(result.steps).toContain("2. Prepare unsigned Soroban");
-    expect(result.steps).toContain("3. Sign transaction");
-    expect(result.steps).toContain("4. Submit signed transaction");
+    expect(result.steps).toContain(
+      "1. Fetch resource details (confirm resource exists and you own it)",
+    );
+    expect(result.steps).toContain("2. Prepare unsigned Soroban transaction via server");
+    expect(result.steps).toContain(
+      "3. Sign transaction with agent wallet (private key held locally)",
+    );
+    expect(result.steps).toContain("4. Submit signed transaction via Soroban RPC");
   });
 });

@@ -225,6 +225,18 @@ Returns `{ count, purchases }` (newest first). Empty history returns `count: 0` 
 
 ---
 
+### 12b. `mindvault_export_receipts`
+
+Export those receipts as a schema-versioned document for reconciliation — JSON, or RFC 4180 CSV in the envelope's `csv` field. Optional `resourceId`, `network`, `since`, `until`, and `limit` filters.
+
+```json
+{ "format": "csv", "since": "2026-08-01", "until": "2026-08-31" }
+```
+
+Returns a `mindvault.receipt-export/v1` envelope with `count`, an exact `totalAmount`, an explicit `currency`, and one normalized row per purchase (including the Stellar Expert link). The tool advertises an `outputSchema`, so the same envelope also arrives as MCP `structuredContent`. See [mcp-receipt-export.md](mcp-receipt-export.md).
+
+---
+
 ### 13. `mindvault_register_onchain`
 
 Registers an already-published, verified resource on the vault-registry contract.

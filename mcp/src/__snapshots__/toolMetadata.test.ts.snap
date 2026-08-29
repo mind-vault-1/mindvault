@@ -11,9 +11,8 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_preview",
   "mindvault_register",
   "mindvault_publish",
-  "mindvault_publish_status",
   "mindvault_buy",
-  "mindvault_purchase_history",
+  "mindvault_export_receipts",
   "mindvault_register_onchain",
   "mindvault_agent_status",
   "mindvault_registry_info",
@@ -27,10 +26,17 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_backup_state",
   "mindvault_restore_state",
   "mindvault_metrics",
+  "mindvault_set_tags",
   "mindvault_update_metadata",
   "mindvault_set_price",
   "mindvault_transfer_ownership",
   "mindvault_set_listed",
+  "mindvault_check_state_permissions",
+  "mindvault_registry_health",
+  "mindvault_import_wallet",
+  "mindvault_rotate_publisher_key",
+  "mindvault_verify_install",
+  "mindvault_recover_catalog_cache",
 ]
 `;
 
@@ -47,6 +53,10 @@ exports[`MCP tool metadata > mindvault_publish inputSchema 1`] = `
         "A beginner-friendly guide covering Stellar's Federated Byzantine Agreement protocol.",
       ],
       "type": "string",
+    },
+    "dryRun": {
+      "description": "Optional dry-run flag. When true, validates inputs and shows intended network, endpoint, and required wallet state without submitting payment or transactions.",
+      "type": "boolean",
     },
     "externalUrl": {
       "description": "Public http(s) URL buyers receive after payment.",
