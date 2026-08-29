@@ -15,9 +15,9 @@
  */
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import { STATE_VERSION, type ProfileState, type WalletProfile } from "./profiles.js";
 
 const STATE_DIR = join(homedir(), ".mindvault");
@@ -224,6 +224,46 @@ export function persistState(state: ProfileState): void {
     writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
   } catch (err) {
     throw new StateBackupError(`Failed to persist restored state: ${err}`);
+  }
+}
+
+/**
+ * Preserve an unreadable or structurally invalid state file instead of letting
+ * the next `saveState()` overwrite the only copy of it.
+ *
+ * The corrupted file is moved aside to `<file>.corrupt-<now-ms>` (same owner
+ * and mode as the original) so the evidence is never lost and the live path is
+ * clean for a fresh start. Returns the quarantine path when it worked and
+ * throws otherwise.
+ */
+export function quarantineStateFile(
+  filePath: string = STATE_FILE,
+  now: number = Date.now(),
+): string {
+  const quarantinePath = `${filePath}.corrupt-${now}`;
+  try {
+    mkdirSync(dirname(filePath), { recursive: true });
+    renameSync(filePath, quarantinePath);
+    return quarantinePath;
+  } catch (err) {
+    throw new StateBackupError(`Failed to quarantine corrupted state file: ${err}`);
+  }
+}
+
+/**
+ * Snapshot the pre-migration legacy state before it is re-persisted, so a later
+ * migration cannot destroy the only record of the original format.
+ *
+ * The legacy JSON is written to `<file>.legacy` (mode 0600, like the state file
+ * itself). Throws when the snapshot could not be saved so the caller can decide
+ * whether to proceed with the migration.
+ */
+export function preserveLegacyState(raw: unknown, filePath: string = STATE_FILE): void {
+  try {
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(`${filePath}.legacy`, JSON.stringify(raw, null, 2), { mode: 0o600 });
+  } catch (err) {
+    throw new StateBackupError(`Failed to preserve legacy state before migration: ${err}`);
   }
 }
 

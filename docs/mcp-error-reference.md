@@ -92,6 +92,42 @@ The classification line stays `Category: auth` in all three cases, so existing
 agent branches on the category keep working — the difference is carried by the
 summary and the next step.
 
+## Request signature clock skew
+
+When signatures are enforced (`REQUIRE_REQUEST_SIGNATURE=true` on the server), a
+signed mutation whose `X-Timestamp` falls outside the server's tolerance window
+is rejected with `401 "Request timestamp outside allowed window"`. That is a
+**system-clock** problem, not a credential problem — the MCP server signs with
+its own `Date.now()`, and a skewed local clock makes every signed request stale.
+The mapper detects the message before the revoked-key branch and says so:
+
+```text
+Publish failed: Request timestamp outside allowed window (request signature timestamp rejected as outside the allowed window)
+Source: MindVault API · Category: auth · HTTP 401
+Next: The request signature was rejected because its timestamp fell outside the accepted 5-minute window — the local clock is probably skewed, not the key. Sync the system clock (e.g. enable NTP), then retry; the message disappears once the clocks agree.
+```
+
+The other signature 401s (`Missing X-Timestamp`, `Missing X-Signature`,
+`Invalid request signature`) are signing bugs and stay on the generic auth/revoked
+path. See [request-signature.md](./request-signature.md#client-side-clock-skew-diagnostics).
+
+## API health preflight before mutations
+
+`mindvault_register`, `mindvault_publish` (non-dry-run), and
+`mindvault_rotate_publisher_key` mutate server-side state, so they run a light
+reachability probe (`GET /resources`) first. When the MindVault API is down the
+tool call is refused up front instead of failing mid-mutation with a bare
+transport error:
+
+```text
+mindvault_register was not attempted because the MindVault API is not reachable (Returned HTTP 503).
+Source: MindVault API · Category: network
+Next: Check network connectivity to the MindVault API and retry; if it stays down the mutation cannot succeed, so defer it.
+```
+
+Dry-run publish and buy still skip the probe — they inspect validation without
+touching the network.
+
 ## Soft failures are not errors
 
 Outcomes that are expected rather than broken stay **successful** tool results

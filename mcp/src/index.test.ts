@@ -2018,6 +2018,78 @@ describe("setListed", () => {
   });
 });
 
+describe("API health preflight before mutation tools (#603)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    _setAgentWallet(null);
+    _setAgentApiKey(null);
+    _resetProfiles();
+  });
+
+  it("refuses register before touching the network when the API is unreachable", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => mockResponse({ error: "down" }, false, 401));
+
+    await expect(
+      dispatchTool("mindvault_register", { name: "n", email: "e@example.com" }),
+    ).rejects.toThrow("not reachable");
+
+    // Only the preflight GET happened — no POST /publishers.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/resources");
+  });
+
+  it("refuses publish when the API is unreachable", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      mockResponse({ error: "down" }, false, 401),
+    );
+
+    await expect(
+      dispatchTool("mindvault_publish", {
+        title: "t",
+        price: "5.00",
+        externalUrl: "https://example.com/x",
+      }),
+    ).rejects.toThrow("mindvault_publish was not attempted");
+  });
+
+  it("refuses rotate_key when the API is unreachable", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      mockResponse({ error: "down" }, false, 401),
+    );
+
+    await expect(dispatchTool("mindvault_rotate_publisher_key", {})).rejects.toThrow(
+      "not reachable",
+    );
+  });
+
+  it("lets register proceed past the preflight when the API is healthy", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => mockResponse(sampleResources));
+
+    // Preflight passes; the handler then fails on the missing wallet before
+    // issuing any POST — proving the gate is passed, not that the tool ran.
+    await expect(
+      dispatchTool("mindvault_register", { name: "n", email: "e@example.com" }),
+    ).rejects.toThrow("No wallet in profile");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the preflight entirely for dry-run publish", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => mockResponse(sampleResources));
+
+    const result = await dispatchTool("mindvault_publish", {
+      title: "t",
+      price: "5.00",
+      externalUrl: "https://example.com/x",
+      dryRun: true,
+    });
+    expect(JSON.parse(result).mode).toBe("dry-run");
+    expect(fetchMock).not.toHaveBeenCalled();
 // ── state-mutating calls are serialized (#550) ──────────────────────────────
 
 describe("state-mutating calls are serialized (#550)", () => {
