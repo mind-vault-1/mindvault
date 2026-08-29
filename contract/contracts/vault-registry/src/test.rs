@@ -3985,6 +3985,77 @@ fn is_verifier_false_for_unknown_address() {
     assert!(!client.is_verifier(&stranger));
 }
 
+// ─── Verifier removal authorization regression tests (#615) ───────────────
+
+#[test]
+fn remove_verifier_before_admin_set_fails() {
+    let (env, _creator, client) = setup();
+    let verifier = Address::generate(&env);
+    let res = client.try_remove_verifier(&verifier);
+    assert_eq!(res, Err(Ok(Error::AdminNotSet)));
+}
+
+#[test]
+fn remove_verifier_idempotent() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    
+    // Add and remove verifier
+    client.add_verifier(&verifier);
+    assert!(client.is_verifier(&verifier));
+    
+    client.remove_verifier(&verifier);
+    assert!(!client.is_verifier(&verifier));
+    
+    // Removing again should not error (idempotent)
+    client.remove_verifier(&verifier);
+    assert!(!client.is_verifier(&verifier));
+}
+
+#[test]
+fn remove_verifier_requires_admin_auth() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    
+    // Admin adds a verifier
+    client.add_verifier(&verifier);
+    assert!(client.is_verifier(&verifier));
+    
+    // Without mocking auth, the call will fail auth check
+    env.mock_auths(&[]);
+    let res = client.try_remove_verifier(&verifier);
+    assert!(res.is_err());
+    
+    // With admin auth, it succeeds
+    env.mock_all_auths();
+    client.remove_verifier(&verifier);
+    assert!(!client.is_verifier(&verifier));
+}
+
+#[test]
+fn remove_verifier_revokes_verification_ability() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "revoke-test");
+    let verifier = Address::generate(&env);
+    
+    // Add verifier and verify they can set verification status
+    client.add_verifier(&verifier);
+    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
+    let resource = client.get(&id);
+    assert_eq!(resource.verified, VerificationStatus::Verified);
+    
+    // Remove verifier
+    client.remove_verifier(&verifier);
+    assert!(!client.is_verifier(&verifier));
+    
+    // Register another resource
+    let id2 = register_default(&env, &creator, &client, "revoke-test-2");
+    
+    // Removed verifier cannot set verification status
+    let res = client.try_set_verification_status(&id2, &verifier, &VerificationStatus::Verified, &None);
+    assert_eq!(res, Err(Ok(Error::NotVerifier)));
+}
+
 // ─── On-chain verification status mirror (#436) ────────────────────────────
 
 #[test]
@@ -7717,7 +7788,6 @@ fn address_keyed_variants_do_not_collide_for_one_address() {
 }
 
 #[test]
-fn receipt_and_payment_index_keys_remain_distinct() {
 fn receipt_and_payment_index_keys_stay_distinct() {
     let (env, _creator, client) = setup();
     let receipt_a = String::from_str(&env, "receipta");
@@ -7727,13 +7797,6 @@ fn receipt_and_payment_index_keys_stay_distinct() {
     let party_a = Address::generate(&env);
     let party_b = Address::generate(&env);
 
-    // PaymentReceipt is keyed by receipt id only. PaymentIndex separately
-    // scopes lookup by (resource, payer), and both wire shapes must remain
-    // distinct from purchase receipt anchors.
-    env.as_contract(&client.address, || {
-        let keys = [
-            DataKey::PaymentReceipt(String::from_str(&env, "receipt-a")),
-            DataKey::PaymentReceipt(String::from_str(&env, "receipt-b")),
     // PaymentReceipt is keyed by receipt_id alone. PaymentIndex is the
     // resource/counterparty index and must vary in both of its arguments.
     env.as_contract(&client.address, || {
@@ -7753,8 +7816,6 @@ fn receipt_and_payment_index_keys_stay_distinct() {
             assert_eq!(
                 env.storage().persistent().get::<DataKey, u32>(key),
                 Some(marker as u32),
-                "receipt/payment index key {marker} collided — distinct current \
-                 key variants and fields must remain independently addressable"
                 "receipt/payment key {marker} collided — distinct keys must not \
                  share a storage address"
             );
