@@ -128,6 +128,8 @@ Tool failures from the API, x402, Horizon, and the vault-registry are normalized
 
 Receipts from `mindvault_buy` can be exported as a schema-versioned JSON or CSV document with an explicit currency and total, returned as MCP `structuredContent`. See **[docs/mcp-receipt-export.md](docs/mcp-receipt-export.md)**.
 
+Long-running tools stream MCP `notifications/progress` updates when the client supplies a progress token — `mindvault_publish_status` with `wait: true` reports every poll while verification settles, so an agent sees movement instead of a hung call. See **[docs/mcp-progress-notifications.md](docs/mcp-progress-notifications.md)**.
+
 Every outbound call runs under a configurable `AbortController` deadline, so a hung backend fails fast instead of blocking the agent. Idempotent reads additionally retry transient failures with bounded, jittered backoff — payments never do, since a replay could settle twice. See **[docs/mcp-timeouts-retries.md](docs/mcp-timeouts-retries.md)**.
 
 ## Project Structure
