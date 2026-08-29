@@ -94,6 +94,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("resolve_dispute", "admin"),
     ("emergency_delist", "admin"),
     ("tombstone_resource", "admin"),
+    ("reactivate_resource", "creator"),
     // ── Ownership transfer ────────────────────────────────────────────────
     ("transfer_ownership", "creator"),
     ("propose_transfer", "creator"),
@@ -226,6 +227,9 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (43, "InvalidPaymentTransition", "The requested payment receipt state transition is not allowed (e.g. settling an already-settled receipt)."),
     (44, "InvalidReceiptId", "`receipt_id` is empty or exceeds `MAX_RECEIPT_ID_LEN` (64 bytes)."),
     (45, "ContentHashTooLong", "`content_hash` exceeds `MAX_CONTENT_HASH_LEN` (128 bytes)."),
+    (46, "AttestationHashTooLong", "`attestation_hash` exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes)."),
+    (47, "PaymentAmountMismatch", "Payment receipt amount does not match the resource's current price."),
+    (48, "DuplicateTxHash", "A payment receipt is already stored for the supplied settlement transaction hash (`tx_hash`)."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -293,6 +297,7 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("unflag", "resource id"),
     ("flagrsn", "(moderator: Address, reason_hash: String)"),
     ("retagidx", "new_count: u32"),
+    ("reactive", "resource id"),
     ("setfee", "FeeConfigUpdated { old_config, new_config }"),
     ("ttlext", "()"),
 ];
@@ -494,6 +499,10 @@ pub enum DataKey {
     /// the most recent payment recorded for that pair, so escrow/lease
     /// contracts can look up a settlement without scanning event history.
     PaymentIndex(String, Address),
+    /// Secondary index mapping a settlement transaction hash to the
+    /// `receipt_id` recorded for it, guaranteeing one payment receipt per
+    /// Stellar tx (`DuplicateTxHash` on reuse).
+    PaymentTxHash(String),
     /// Emergency pause flag. When `true`, every state-changing method
     /// returns `ContractPaused`.
     Paused,
@@ -741,6 +750,9 @@ pub enum Error {
     AttestationHashTooLong = 46,
     /// Payment receipt amount does not match the resource's current price.
     PaymentAmountMismatch = 47,
+    /// A payment receipt is already stored for the supplied settlement
+    /// transaction hash (`tx_hash`); a single Stellar tx must map to one receipt.
+    DuplicateTxHash = 48,
 }
 
 #[contract]
@@ -1128,8 +1140,9 @@ impl VaultRegistry {
     }
 
     /// Freeze an otherwise active resource. The creator may freeze a listed or
-    /// delisted resource, but only an admin can restore it through dispute
-    /// resolution. This lifecycle freeze is separate from `freeze_metadata`.
+    /// delisted resource, and may restore it (or a post-dispute `Frozen`
+    /// resolution) through `reactivate_resource`. This lifecycle freeze is
+    /// separate from `freeze_metadata`.
     pub fn freeze_resource(env: Env, id: String) -> Result<(), Error> {
         Self::require_not_paused(&env)?;
         Self::validate_resource_id(&id)?;
@@ -1188,6 +1201,43 @@ impl VaultRegistry {
             return Err(Error::InvalidLifecycleTransition);
         }
         Self::transition_state(&env, &mut resource, ResourceState::Delisted);
+        Ok(())
+    }
+
+    /// Reactivate a resource that was resolved out of a dispute (or otherwise
+    /// left inactive) back to the public `Listed` state. Only the creator may
+    /// call this, and only while the resource is `Frozen` or `Delisted`.
+    ///
+    /// `Disputed` resources have no creator exit: an admin must resolve the
+    /// dispute first, and `Tombstoned` resources are terminal — reactivation
+    /// from either fails with `InvalidLifecycleTransition`.
+    ///
+    /// Mirrors `set_listed(id, true)` for the `Delisted` case but is the only
+    /// creator path out of `Frozen`, and always flips the `listed` projection
+    /// and listed-count index back to active.
+    ///
+    /// Emits a `reactive` event whose topic carries the resource `id`.
+    ///
+    /// Errors deterministically:
+    /// - [`Error::Unauthorized`] — caller is not the resource creator
+    /// - [`Error::InvalidLifecycleTransition`] — resource is not `Frozen` or
+    ///   `Delisted` (e.g. still `Disputed`, already `Listed`, or `Tombstoned`)
+    /// - [`Error::InvalidResourceId`] — `id` fails format validation
+    /// - [`Error::NotFound`] — `id` is not a registered resource
+    /// - [`Error::ContractPaused`] — the registry is paused
+    pub fn reactivate_resource(env: Env, id: String) -> Result<(), Error> {
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&id)?;
+        let mut resource = Self::load(&env, &id)?;
+        resource.creator.require_auth();
+        if !matches!(
+            resource.state,
+            ResourceState::Frozen | ResourceState::Delisted
+        ) {
+            return Err(Error::InvalidLifecycleTransition);
+        }
+        Self::transition_state(&env, &mut resource, ResourceState::Listed);
+        env.events().publish((symbol_short!("reactive"), id), ());
         Ok(())
     }
 
@@ -1997,6 +2047,7 @@ impl VaultRegistry {
     /// - `amount` must match the resource's current price
     ///   (`PaymentAmountMismatch` otherwise).
     /// - `tx_hash` must be non-empty and at most 128 bytes (`InvalidTxHash`).
+    /// - `tx_hash` must not already back another receipt (`DuplicateTxHash`).
     ///
     /// Emits a `payment` event whose data is the full [`PaymentReceipt`] so
     /// off-chain indexers can index the receipt without reading contract
@@ -2034,6 +2085,13 @@ impl VaultRegistry {
         if env.storage().persistent().has(&receipt_key) {
             return Err(Error::ReceiptAlreadyExists);
         }
+        // A single Stellar transaction must settle at most one receipt: the
+        // tx hash is the ground truth the facilitator records against, so two
+        // receipts with the same tx_hash would double-count one payment.
+        let tx_hash_key = DataKey::PaymentTxHash(tx_hash.clone());
+        if env.storage().persistent().has(&tx_hash_key) {
+            return Err(Error::DuplicateTxHash);
+        }
         let receipt = PaymentReceipt {
             receipt_id: receipt_id.clone(),
             resource_id: resource_id.clone(),
@@ -2048,12 +2106,15 @@ impl VaultRegistry {
         env.storage().persistent().set(&receipt_key, &receipt);
         Self::bump_persistent(&env, &receipt_key);
 
-        // Secondary index: `(resource_id, payer)` -> most recent receipt id,
-        // so `get_payment_receipt` can resolve a settlement without scanning
-        // event history.
+        // Secondary indexes: `(resource_id, payer)` -> most recent receipt id
+        // (for `get_payment_receipt`), and `tx_hash` -> receipt id (enforces
+        // one receipt per Stellar settlement transaction).
         let index_key = DataKey::PaymentIndex(resource_id, payer);
         env.storage().persistent().set(&index_key, &receipt_id);
         Self::bump_persistent(&env, &index_key);
+
+        env.storage().persistent().set(&tx_hash_key, &receipt_id);
+        Self::bump_persistent(&env, &tx_hash_key);
 
         env.events()
             .publish((symbol_short!("payment"), receipt_id), receipt);
