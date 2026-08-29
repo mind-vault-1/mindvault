@@ -79,6 +79,7 @@ on the failure rather than parse prose.
 |                                | `price`                | yes      | decimal USDC string                             |
 |                                | `externalUrl`          | yes      | `http(s)://…` (≤2048)                           |
 | `mindvault_buy`                | `resourceId`           | yes      | resource id                                     |
+|                                | `maxAutoPayUsdc`       | no       | explicit USDC ceiling override for this purchase |
 | `mindvault_register_onchain`   | `resourceId`           | yes      | resource id                                     |
 | `mindvault_update_metadata`    | `resourceId`           | yes      | resource id                                     |
 |                                | `metadata`             | yes      | pointer (ipfs://, ar://, http(s)://, etc. ≤512) |

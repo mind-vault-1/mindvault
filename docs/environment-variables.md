@@ -75,6 +75,21 @@ AGENT_SECRET_KEY=<your-stellar-secret-key>
 | `MAX_FILE_SIZE_MB`   | no       | `50`    | Maximum size for file upload resources, in megabytes. Enforced by the multer middleware.        |
 | `VERIFICATION_PRICE` | no       | `0.10`  | Price in USDC charged per content verification (the x402-paywalled `/verify-content` endpoint). |
 
+### MCP automatic payment ceiling
+
+`mindvault_buy` will not automatically settle an x402 payment above
+`MINDVAULT_MAX_AUTO_PAY_USDC`, which defaults to `10` USDC. Set this environment
+variable to a non-negative decimal amount with up to seven decimal places to
+adjust the ceiling.
+
+For a resource above the configured ceiling, pass `maxAutoPayUsdc` to
+`mindvault_buy` with an amount at least equal to the advertised price. This is a
+per-call override; it does not change the configured default.
+
+```bash
+MINDVAULT_MAX_AUTO_PAY_USDC=5
+```
+
 ---
 
 ## Diagnosing Missing Variables
