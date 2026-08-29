@@ -1590,6 +1590,126 @@ fn set_tags_updates_value_without_touching_metadata() {
     assert_eq!(r.tags.get(0).unwrap(), String::from_str(&env, "finance"));
 }
 
+// ─── Per-resource royalty recipient override (#618) ───────────────────────
+
+#[test]
+fn set_royalty_recipient_overrides_for_resource() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "royal1");
+    let metadata = String::from_str(&env, "m");
+    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    
+    // Initially None
+    let resource = client.get(&id);
+    assert_eq!(resource.royalty_recipient, None);
+    
+    // Set royalty recipient
+    let recipient = Address::generate(&env);
+    client.set_royalty_recipient(&id, &Some(recipient.clone()));
+    
+    // Verify it's set
+    let resource = client.get(&id);
+    assert_eq!(resource.royalty_recipient, Some(recipient));
+}
+
+#[test]
+fn set_royalty_recipient_can_clear_override() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "royal2");
+    let metadata = String::from_str(&env, "m");
+    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    
+    // Set a recipient
+    let recipient = Address::generate(&env);
+    client.set_royalty_recipient(&id, &Some(recipient.clone()));
+    assert_eq!(client.get(&id).royalty_recipient, Some(recipient));
+    
+    // Clear it
+    client.set_royalty_recipient(&id, &None);
+    assert_eq!(client.get(&id).royalty_recipient, None);
+}
+
+#[test]
+fn set_royalty_recipient_requires_creator_auth() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "royal3");
+    let metadata = String::from_str(&env, "m");
+    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    
+    // Without auth, should fail
+    env.mock_auths(&[]);
+    let recipient = Address::generate(&env);
+    let res = client.try_set_royalty_recipient(&id, &Some(recipient));
+    assert!(res.is_err());
+}
+
+#[test]
+fn set_royalty_recipient_fails_for_nonexistent_resource() {
+    let (env, _creator, client) = setup();
+    let id = String::from_str(&env, "noexist");
+    let recipient = Address::generate(&env);
+    
+    let res = client.try_set_royalty_recipient(&id, &Some(recipient));
+    assert_eq!(res, Err(Ok(Error::NotFound)));
+}
+
+#[test]
+fn set_royalty_recipient_emits_event() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "royal4");
+    let metadata = String::from_str(&env, "m");
+    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    
+    // Set recipient
+    let recipient = Address::generate(&env);
+    client.set_royalty_recipient(&id, &Some(recipient.clone()));
+    
+    // Check event
+    let events = env.events().all();
+    let last_event = events.last().unwrap();
+    let (_contract, topics, data): (Address, soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val) = last_event;
+    
+    let topic_symbol: soroban_sdk::Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(topic_symbol, symbol_short!("setroyal"));
+    
+    // Data should be (old, new)
+    let (old, new): (Option<Address>, Option<Address>) = data.try_into_val(&env).unwrap();
+    assert_eq!(old, None);
+    assert_eq!(new, Some(recipient));
+}
+
+#[test]
+fn set_royalty_recipient_fails_when_paused() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let id = String::from_str(&env, "royal5");
+    let metadata = String::from_str(&env, "m");
+    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    
+    // Pause contract
+    client.set_paused(&admin, &true);
+    
+    // Try to set recipient while paused
+    let recipient = Address::generate(&env);
+    let res = client.try_set_royalty_recipient(&id, &Some(recipient));
+    assert_eq!(res, Err(Ok(Error::ContractPaused)));
+}
+
+#[test]
+fn set_royalty_recipient_fails_for_frozen_resource() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "royal6");
+    let metadata = String::from_str(&env, "m");
+    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    
+    // Freeze resource
+    client.freeze_resource(&id);
+    
+    // Try to set recipient on frozen resource
+    let recipient = Address::generate(&env);
+    let res = client.try_set_royalty_recipient(&id, &Some(recipient));
+    assert_eq!(res, Err(Ok(Error::ResourceNotMutable)));
+}
+
 #[test]
 fn invalid_metadata_pointer_rejected() {
     let (env, creator, client) = setup();
