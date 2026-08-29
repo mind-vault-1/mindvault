@@ -69,6 +69,11 @@ import {
   _setAgentApiKey,
   _resetProfiles,
 } from "./index.js";
+import {
+  recordCatalogSnapshot,
+  recordPreviewSnapshot,
+  _clearCatalogCache,
+} from "./catalogCache.js";
 
 function mockResponse(data: unknown, ok = true, status = 200): Response {
   const body = JSON.stringify(data);
@@ -675,7 +680,7 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
     // mock: meta fetch (balance check) → balance covers price
     // mock: Horizon balance check → sufficient balance
     // mock: paid fetch → success
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
       const u = String(url);
       if (u.includes("/accounts/")) {
         // Horizon balance: enough USDC
@@ -1133,7 +1138,7 @@ describe("registerOnchain – happy path", () => {
     const unsignedXdr = "AAAAAQAAAAD...unsigned";
     const txHash = "abc123txhash";
 
-    vi.spyOn(globalThis, "fetch").mockImplementation((url, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url, _init) => {
       const u = String(url);
       if (u.includes("/register/prepare")) {
         return Promise.resolve(
@@ -2010,5 +2015,143 @@ describe("setListed", () => {
     } finally {
       delete process.env.MINDVAULT_MOCK;
     }
+  });
+});
+
+// ── state-mutating calls are serialized (#550) ──────────────────────────────
+
+describe("state-mutating calls are serialized (#550)", () => {
+  beforeEach(() => {
+    _resetProfiles();
+  });
+
+  afterEach(() => {
+    _resetProfiles();
+    vi.restoreAllMocks();
+  });
+
+  it("persists the results of two concurrent mutating calls", async () => {
+    // Each setupWallet call read-modify-writes the module-level profile state
+    // across an `await` boundary (the sponsored-account POST). Serialized under
+    // the state mutex, neither may clobber the other's saveState(), so both
+    // profiles must survive.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ publicKey: "GPTESTALICE", secretKey: "STESTALICE" }),
+    );
+
+    const [alice, bob] = await Promise.all([
+      dispatchTool("mindvault_setup_wallet", { profile: "alice" }),
+      dispatchTool("mindvault_setup_wallet", { profile: "bob" }),
+    ]);
+
+    expect(alice).toContain("Wallet created.");
+    expect(bob).toContain("Wallet created.");
+    expect(alice).toContain("Address: GPTESTALICE");
+    expect(bob).toContain("Address: GPTESTALICE");
+
+    const list = listProfiles();
+    expect(list).toContain("alice — GPTESTALICE");
+    expect(list).toContain("bob — GPTESTALICE");
+  });
+
+  it("keeps a serialized mutating call from losing an earlier profile", async () => {
+    // Interleave a quick synchronous mutating call with a slow async one. Both
+    // go through the same lock, so the slow wallet setup cannot run its
+    // read-modify-write while use_profile is mid-flight and drop its profile.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({ publicKey: "GPTESTBOB", secretKey: "STESTBOB" }),
+    );
+
+    const [profile, wallet] = await Promise.all([
+      dispatchTool("mindvault_use_profile", { name: "buyer" }),
+      dispatchTool("mindvault_setup_wallet", { profile: "bob" }),
+    ]);
+
+    expect(profile).toContain("Active profile: buyer");
+    expect(wallet).toContain("Address: GPTESTBOB");
+
+    const list = listProfiles();
+    expect(list).toContain("buyer");
+    expect(list).toContain("bob — GPTESTBOB");
+  });
+});
+
+// ── offline catalog cache fallback (#556) ────────────────────────────────────
+
+describe("offline catalog cache fallback (#556)", () => {
+  beforeEach(() => {
+    _clearCatalogCache();
+    _resetProfiles();
+  });
+
+  afterEach(() => {
+    _clearCatalogCache();
+    _resetProfiles();
+    vi.restoreAllMocks();
+  });
+
+  const catalogItem = {
+    id: "c1",
+    title: "Cached One",
+    price: "3",
+    description: "A cached resource",
+    accessUrl: "https://example.com/c1",
+  };
+
+  it("browse serves the cached snapshot with an age label when the API is unreachable", async () => {
+    recordCatalogSnapshot([catalogItem]);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED: Connection refused"));
+
+    const out = await browse();
+    expect(out).toContain("[c1] Cached One");
+    expect(out).toContain("Offline catalog snapshot served");
+    expect(out).toContain("cached");
+  });
+
+  it("search applies filters to the cached snapshot and labels it when offline", async () => {
+    recordCatalogSnapshot([catalogItem]);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const out = await search("Cached");
+    expect(out).toContain("[c1] Cached One");
+    expect(out).toContain("Offline catalog snapshot served");
+
+    const empty = await search("no-match-whatsoever");
+    expect(empty).toContain("No resources match");
+  });
+
+  it("preview serves the cached meta with an age label when unreachable", async () => {
+    recordPreviewSnapshot("res-9", {
+      id: "res-9",
+      title: "Cached Preview",
+      price: "4",
+      description: "D",
+      resourceType: "article",
+      verificationStatus: "verified",
+      accessUrl: "https://example.com/9",
+    });
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const parsed = JSON.parse(await preview("res-9"));
+    expect(parsed.title).toBe("Cached Preview");
+    expect(parsed.offlineCache).toContain("Offline catalog snapshot served");
+  });
+
+  it("rethrows the deterministic reachability error when there is no cache", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED: Connection refused"));
+    await expect(browse()).rejects.toThrow();
+    await expect(preview("res-9")).rejects.toThrow();
+  });
+
+  it("a mutating tool never falls back to the cached catalog", async () => {
+    // Prime the cache as if a successful read had happened earlier.
+    recordCatalogSnapshot([catalogItem]);
+    _setAgentWallet(testWallet);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
+
+    // register must surface the network failure — not silently serve stale data.
+    await expect(
+      dispatchTool("mindvault_register", { name: "N", email: "e@example.com" }),
+    ).rejects.toThrow();
   });
 });

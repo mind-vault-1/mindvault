@@ -45,6 +45,10 @@ pub const MAX_RESOURCE_ID_LEN: u32 = 24;
 /// easy to find, document, and change in a single place instead of
 /// scattered `limit.min(20)` literals.
 pub const LIST_PAGE_CAP: u32 = 20;
+/// Maximum number of resources that can be registered in a single batch
+/// via `register_batch`. Keeps execution bounded and prevents transaction
+/// timeouts.
+pub const MAX_BATCH_REGISTER: u32 = 10;
 
 // ── Fee / royalty configuration ──────────────────────────────────────────────
 /// Fee basis-point ceiling: 50 % (5 000 bp). Neither platform_fee_bps nor
@@ -83,10 +87,12 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Resource lifecycle ────────────────────────────────────────────────
     ("register", "creator"),
     ("register_with_hash", "creator"),
+    ("register_batch", "creator"),
     ("set_price", "creator"),
     ("update_metadata", "creator"),
     ("freeze_metadata", "creator"),
     ("set_tags", "creator"),
+    ("set_royalty_recipient", "creator"),
     ("set_listed", "creator"),
     ("delist", "creator"),
     ("freeze_resource", "creator"),
@@ -117,8 +123,6 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("list_by_creator", "—"),
     ("list_by_tag", "—"),
     ("list_by_dispute_status", "—"),
-    ("list_by_verification_status", "—"),
-    ("list_payments", "—"),
     // ── Verification ──────────────────────────────────────────────────────
     ("add_verifier", "admin"),
     ("remove_verifier", "admin"),
@@ -158,6 +162,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Fees ──────────────────────────────────────────────────────────────
     ("set_fee_config", "admin"),
     ("get_fee_config", "—"),
+    ("set_fee_recipient", "admin"),
     // ── Index repair ──────────────────────────────────────────────────────
     ("repair_index", "admin"),
     ("repair_tag_index", "admin"),
@@ -230,6 +235,7 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (46, "AttestationHashTooLong", "`attestation_hash` exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes)."),
     (47, "PaymentAmountMismatch", "Payment receipt amount does not match the resource's current price."),
     (48, "DuplicateTxHash", "A payment receipt is already stored for the supplied settlement transaction hash (`tx_hash`)."),
+    (49, "FeeConfigNotSet", "`set_fee_recipient` was called before any fee config was set via `set_fee_config`."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -255,6 +261,7 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
         "settags",
         "(prev_tags: Vec<String>, next_tags: Vec<String>)",
     ),
+    ("setroyal", "(old_recipient: Option<Address>, new_recipient: Option<Address>)"),
     ("transfer", "(previous_owner: Address, new_owner: Address)"),
     ("propose", "(owner: Address, proposed: Address)"),
     ("cancel", "owner: Address"),
@@ -449,6 +456,32 @@ pub struct Resource {
     /// once at registration via `register_with_hash`. `None` for resources
     /// registered through plain `register`.
     pub content_hash: Option<String>,
+    /// Optional per-resource royalty recipient override. When set, royalties
+    /// for this resource go to this address instead of the global fee_recipient.
+    /// Only the resource creator may set this field via `set_royalty_recipient`.
+    pub royalty_recipient: Option<Address>,
+}
+
+/// Input for a single resource in a batch registration.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatchRegisterItem {
+    pub id: String,
+    pub price: i128,
+    pub metadata: String,
+    pub tags: Vec<String>,
+    pub content_hash: Option<String>,
+}
+
+/// Result of a batch registration attempt. Contains successfully registered
+/// resource IDs and any errors encountered (with their indices).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatchRegisterResult {
+    /// Resource IDs that were successfully registered (in order).
+    pub succeeded: Vec<String>,
+    /// Indices (into the input batch) of items that failed, paired with their error codes.
+    pub failed: Vec<(u32, u32)>,
 }
 
 /// Structured payload emitted by `register()`.
@@ -753,6 +786,8 @@ pub enum Error {
     /// A payment receipt is already stored for the supplied settlement
     /// transaction hash (`tx_hash`); a single Stellar tx must map to one receipt.
     DuplicateTxHash = 48,
+    /// `set_fee_recipient` was called before any fee config was set via `set_fee_config`.
+    FeeConfigNotSet = 48,
 }
 
 #[contract]
@@ -792,6 +827,63 @@ impl VaultRegistry {
         content_hash: Option<String>,
     ) -> Result<(), Error> {
         Self::register_internal(env, creator, id, price, metadata, tags, content_hash)
+    }
+
+    /// Register multiple resources in a single transaction. The batch is capped
+    /// at [`MAX_BATCH_REGISTER`] (10) to bound execution cost. All resources
+    /// are registered under the same `creator`.
+    ///
+    /// Returns a [`BatchRegisterResult`] containing:
+    /// - `succeeded`: IDs of successfully registered resources
+    /// - `failed`: Indices and error codes of failed registrations
+    ///
+    /// This function continues processing after individual failures, allowing
+    /// partial success. The creator is authorized once at the start, and each
+    /// resource is validated independently. Common failure causes include
+    /// duplicate IDs, invalid prices, or invalid metadata pointers.
+    ///
+    /// Use case: Bulk onboarding of resources by publishers or automated systems.
+    pub fn register_batch(
+        env: Env,
+        creator: Address,
+        items: Vec<BatchRegisterItem>,
+    ) -> Result<BatchRegisterResult, Error> {
+        creator.require_auth();
+        Self::require_not_paused(&env)?;
+
+        if items.len() > MAX_BATCH_REGISTER {
+            return Err(Error::BatchTooLarge);
+        }
+
+        let mut succeeded: Vec<String> = Vec::new(&env);
+        let mut failed: Vec<(u32, u32)> = Vec::new(&env);
+
+        for i in 0..items.len() {
+            let item = items.get(i).unwrap();
+            
+            // Attempt to register this resource
+            let result = Self::register_internal(
+                env.clone(),
+                creator.clone(),
+                item.id.clone(),
+                item.price,
+                item.metadata.clone(),
+                item.tags.clone(),
+                item.content_hash.clone(),
+            );
+
+            match result {
+                Ok(()) => {
+                    succeeded.push_back(item.id.clone());
+                }
+                Err(e) => {
+                    // Record the failure index and error code
+                    failed.push_back((i, e as u32));
+                }
+            }
+        }
+
+        Ok(BatchRegisterResult { succeeded, failed })
     }
 
     /// Update a resource's price. Rejects `new_price <= 0` or `new_price > MAX_PRICE`.
@@ -992,6 +1084,34 @@ impl VaultRegistry {
         // Emit event with both previous and next tags for indexer reconciliation
         env.events()
             .publish((symbol_short!("settags"), id), (prev_tags, norm_tags));
+        Ok(())
+    }
+
+    /// Set a per-resource royalty recipient override. Only the creator may call
+    /// this. When set, royalties for this resource will go to this address instead
+    /// of the global `fee_recipient` from `FeeConfig`. Set to `None` to clear the
+    /// override and use the global recipient.
+    ///
+    /// Emits a `setroyal` event with the old and new recipient addresses.
+    pub fn set_royalty_recipient(
+        env: Env,
+        id: String,
+        recipient: Option<Address>,
+    ) -> Result<(), Error> {
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&id)?;
+        let mut resource = Self::load(&env, &id)?;
+        resource.creator.require_auth();
+        Self::ensure_mutable(&resource)?;
+
+        let old_recipient = resource.royalty_recipient.clone();
+        resource.royalty_recipient = recipient.clone();
+        Self::save(&env, &mut resource);
+
+        env.events().publish(
+            (symbol_short!("setroyal"), id),
+            (old_recipient, recipient),
+        );
         Ok(())
     }
 
@@ -1600,10 +1720,11 @@ impl VaultRegistry {
         Self::load(&env, &id)
     }
 
-    /// Read the full state of a single resource. Errors with `NotFound` if absent.
-    pub fn get_resource_state(env: Env, id: String) -> Result<Resource, Error> {
+    /// Fetch the current lifecycle state of a resource. Errors with `NotFound` if absent.
+    pub fn get_resource_state(env: Env, id: String) -> Result<ResourceState, Error> {
         Self::validate_resource_id(&id)?;
-        Self::load(&env, &id)
+        let resource = Self::load(&env, &id)?;
+        Ok(resource.state)
     }
 
     /// Read several resources in one invocation, preserving input order.
@@ -1975,6 +2096,43 @@ impl VaultRegistry {
     /// if `set_fee_config` has never been called.
     pub fn get_fee_config(env: Env) -> Option<FeeConfig> {
         env.storage().instance().get(&DataKey::FeeConfig)
+    }
+
+    /// Update only the fee recipient address without changing fee rates.
+    /// Only the admin may call this. Errors `AdminNotSet` if no admin has been
+    /// set yet, or `FeeConfigNotSet` if `set_fee_config` has never been called.
+    ///
+    /// This is a convenience method that allows updating the recipient without
+    /// having to re-specify the existing `platform_fee_bps` and `royalty_bps`.
+    /// Emits a `setfee` event with the old and new complete `FeeConfig`.
+    pub fn set_fee_recipient(env: Env, recipient: Option<Address>) -> Result<(), Error> {
+        let admin = Self::require_admin(&env)?;
+        admin.require_auth();
+        Self::require_not_paused(&env)?;
+
+        // Retrieve existing fee config
+        let mut config = env
+            .storage()
+            .instance()
+            .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
+            .ok_or(Error::FeeConfigNotSet)?;
+
+        let old_config = OptFeeConfig::Some(config.clone());
+        
+        // Update only the recipient
+        config.fee_recipient = recipient;
+        
+        env.storage().instance().set(&DataKey::FeeConfig, &config);
+        Self::bump_instance(&env);
+
+        env.events().publish(
+            (symbol_short!("setfee"),),
+            FeeConfigUpdated {
+                old_config,
+                new_config: config,
+            },
+        );
+        Ok(())
     }
 
     /// Store a hash of creator marketplace terms.
@@ -3071,6 +3229,7 @@ impl VaultRegistry {
             schema_version: RESOURCE_SCHEMA_VERSION,
             version: 1,
             content_hash: content_hash.clone(),
+            royalty_recipient: None,
         };
         env.storage().persistent().set(&key, &resource);
         Self::bump_persistent(&env, &key);

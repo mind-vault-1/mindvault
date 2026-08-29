@@ -24,7 +24,7 @@ import {
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { PROMPT_DEFINITIONS, getPrompt } from "./prompts.js";
-import { createProgressEmitter, type ProgressContext } from "./progress.js";
+import { createProgressEmitter } from "./progress.js";
 import { truncateResponse } from "./truncation.js";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
@@ -43,7 +43,12 @@ import {
   formatMainnetDiagnostics,
   mainnetAllowedFromEnv,
 } from "./mainnetGuardrails.js";
-import { createMetricsRecorder, measureTool, metricsEnabledFromEnv, resolveToolDurationBudget } from "./metrics.js";
+import {
+  createMetricsRecorder,
+  measureTool,
+  metricsEnabledFromEnv,
+  resolveToolDurationBudget,
+} from "./metrics.js";
 import {
   createMockFetch,
   mockEnabledFromEnv,
@@ -57,8 +62,8 @@ import {
 import { purchaseHistoryTool, recordPurchase } from "./purchaseHistory.js";
 import { exportReceiptsTool } from "./receipts.js";
 import { TOOL_DEFINITIONS, type ToolDefinition } from "./tools.js";
-import { dryRunPublish, dryRunBuy, dryRunOnchain } from "./dryRun.js";
-import { initAuditLogging, logToolStart, logToolSuccess, logToolError } from "./auditLog.js";
+import { dryRunPublish, dryRunBuy } from "./dryRun.js";
+import { initAuditLogging } from "./auditLog.js";
 import { REGISTRY_LIST_DEFAULT_LIMIT, REGISTRY_LIST_DEFAULT_START } from "./registryPagination.js";
 import {
   flag,
@@ -87,7 +92,7 @@ import {
   normalizeWaitFlag,
   type PublishStatusFetch,
 } from "./publishStatus.js";
-import { safeErrorMessage, safeLog } from "./redaction.js";
+import { safeErrorMessage } from "./redaction.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import { exportState, restoreState, checkStatePermissions } from "./stateBackup.js";
 import { formatResetPreview, isResetConfirmed, type ResetScope } from "./resetGuard.js";
@@ -170,7 +175,7 @@ const NETWORK: X402Network = normalizeX402Network(
 // there is zero bookkeeping unless an operator turns it on.
 const metrics = createMetricsRecorder(
   metricsEnabledFromEnv(process.env),
-  resolveToolDurationBudget(process.env)
+  resolveToolDurationBudget(process.env),
 );
 
 // Opt-in audit logging (set MINDVAULT_AUDIT_LOG=1). Logs tool calls, network
@@ -2052,7 +2057,9 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
   );
 }
 
-export async function registryLookup(resourceId: string): Promise<string> {
+export async function registryLookup(
+  resourceId: string,
+): Promise<string> {
   if (_isMock()) return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
   const client = createRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
@@ -2134,7 +2141,10 @@ export async function registryLookup(resourceId: string): Promise<string> {
  * Paginated list of resources from the on-chain vault registry (contract `list`).
  * Data comes from Soroban, not the MindVault API catalog.
  */
-export async function registryList(start: number, limit: number): Promise<string> {
+export async function registryList(
+  start: number,
+  limit: number,
+): Promise<string> {
   if (_isMock()) return mockRegistryList(start, limit, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
 
   const client = createRegistryClient({
@@ -2428,50 +2438,47 @@ export function networkProfile(): string {
     warnings,
   };
 
-  return JSON.stringify(profile, null, 2);
+const STATE_DIR = join(homedir(), ".mindvault");
+const STATE_FILE = join(STATE_DIR, "state.json");
+configureStatePaths(STATE_DIR, STATE_FILE);
+loadState();
+
+export {
+  browse,
+  search,
+  preview,
+  txStatus,
+  walletInfo,
+  useProfile,
+  listProfiles,
+  publishStatus,
+  buy,
+  registerOnchain,
+  updateMetadata,
+  setPrice,
+  transferOwnership,
+  setListed,
+  registryLookup,
+  registryList,
+  checkConsistency,
+  networkProfile,
+  backupState,
+  restoreStateTool,
+  resetState,
+  usdcToStroops,
+  type SearchFilters,
+  _setAgentWallet,
+  _setAgentApiKey,
+  _resetProfiles,
+  _setMockMode,
+};
+
+if (!process.env.VITEST && !mockEnabledFromEnv(process.env)) {
+  const diagnostics = collectStartupDiagnostics(process.env);
+  if (diagnostics.length > 0) console.error(formatDiagnostics(diagnostics));
+  if (hasBlockingDiagnostics(diagnostics)) process.exit(1);
 }
 
-/**
- * Verify the installed registry-client bindings match the deployed contract's
- * interface. Returns the check's deterministic, agent-safe message (a match
- * summary, a mismatch warning with a recommended fix, or a "could not verify"
- * note when the contract/RPC is unreachable).
- */
-async function checkBindings(): Promise<string> {
-  if (_isMock()) return "Mock mode: contract binding check skipped (no live RPC).";
-  const result = await checkContractBindings({
-    contractId: REGISTRY_CONTRACT_ID,
-    rpcUrl: SOROBAN_RPC_URL,
-    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
-    network: STELLAR_NETWORK,
-  });
-  return result.message;
-}
-
-/**
- * Return opt-in tool-level metrics as JSON. Only counts, durations, and tool
- * names are included — never arguments, wallets, or API keys. When metrics are
- * disabled, returns an actionable note instead of counters. Pass reset=true to
- * clear counters after reading.
- */
-function toolMetrics(reset: boolean): string {
-  const snapshot = metrics.snapshot();
-  if (reset) metrics.reset();
-  if (!snapshot.enabled) {
-    return JSON.stringify(
-      {
-        enabled: false,
-        message:
-          "Metrics are disabled. Set MINDVAULT_METRICS=1 (or true/yes/on) and restart the server to collect tool-level metrics.",
-      },
-      null,
-      2,
-    );
-  }
-  return JSON.stringify(snapshot, null, 2);
-}
-
-/** Tools in ListTools that validate arguments inside the handler (legacy). */
 const TOOLS_WITHOUT_ARG_VALIDATION = new Set([
   "mindvault_publish_status",
   "mindvault_purchase_history",
@@ -2481,10 +2488,27 @@ function isDispatchableTool(name: string): boolean {
   return name in TOOL_ARGUMENT_SPECS || TOOLS_WITHOUT_ARG_VALIDATION.has(name);
 }
 
-/**
- * Route a validated tool call to its implementation. Used by the MCP CallTool
- * handler and by unit tests.
- */
+const STATE_MUTATING_TOOLS = new Set([
+  "mindvault_setup_wallet",
+  "mindvault_use_profile",
+  "mindvault_register",
+  "mindvault_publish",
+  "mindvault_buy",
+  "mindvault_register_onchain",
+  "mindvault_update_metadata",
+  "mindvault_set_price",
+  "mindvault_transfer_ownership",
+  "mindvault_set_listed",
+  "mindvault_set_tags",
+  "mindvault_reset",
+  "mindvault_restore_state",
+  "mindvault_import_wallet",
+  "mindvault_rotate_publisher_key",
+  "mindvault_metrics",
+]);
+
+const stateMutex = new Mutex();
+
 export async function dispatchTool(
   name: string,
   rawArgs: unknown,
@@ -2499,9 +2523,6 @@ export async function dispatchTool(
       ? (rawArgs as Record<string, unknown>)
       : {};
 
-  // For dry-run calls on publish and buy the user intentionally passes invalid
-  // inputs to inspect structured validation feedback.  Skip the gateway check
-  // and let dryRunPublish / dryRunBuy produce the per-field result instead.
   const isDryRunCall =
     (name === "mindvault_publish" || name === "mindvault_buy") && rawRecord.dryRun === true;
 
@@ -2511,138 +2532,161 @@ export async function dispatchTool(
 
   assertMainnetMutationAllowed(NETWORK, name, rawRecord);
 
-  switch (name) {
-    case "mindvault_setup_wallet":
-      return setupWallet(optionalString(args, "profile"));
-    case "mindvault_wallet_info":
-      return walletInfo();
-    case "mindvault_use_profile":
-      return useProfile(requiredString(args, "name"));
-    case "mindvault_list_profiles":
-      return listProfiles();
-    case "mindvault_browse": {
-      const parsed = parseCatalogFilters(rawRecord);
-      return parsed.ok ? browse(parsed.filters) : parsed.error;
+  const execute = async (): Promise<string> => {
+    switch (name) {
+      case "mindvault_setup_wallet":
+        return setupWallet(optionalString(args, "profile"));
+      case "mindvault_wallet_info":
+        return walletInfo();
+      case "mindvault_use_profile":
+        return useProfile(requiredString(args, "name"));
+      case "mindvault_list_profiles":
+        return listProfiles();
+      case "mindvault_browse": {
+        const parsed = parseCatalogFilters(rawRecord);
+        return parsed.ok ? browse(parsed.filters) : parsed.error;
+      }
+      case "mindvault_search": {
+        const parsed = parseCatalogFilters(rawRecord, { requireCriteria: true });
+        return parsed.ok ? search(parsed.filters) : parsed.error;
+      }
+      case "mindvault_preview":
+        return preview(requiredString(args, "resourceId"));
+      case "mindvault_register":
+        return register(
+          requiredString(args, "name"),
+          requiredString(args, "email"),
+          optionalString(args, "walletAddress"),
+        );
+      case "mindvault_publish":
+        return publish({
+          title: requiredString(dryRunArgs, "title"),
+          description: optionalString(dryRunArgs, "description"),
+          price: requiredString(dryRunArgs, "price"),
+          externalUrl: requiredString(dryRunArgs, "externalUrl"),
+          dryRun: flag(dryRunArgs, "dryRun"),
+        });
+      case "mindvault_publish_status":
+        return publishStatus(rawRecord);
+      case "mindvault_buy":
+        return buy(requiredString(args, "resourceId"), flag(args, "dryRun"), undefined, onProgress);
+      case "mindvault_purchase_history":
+        return purchaseHistoryTool(rawRecord);
+      case "mindvault_export_receipts":
+        return exportReceiptsTool(rawRecord);
+      case "mindvault_register_onchain":
+        return registerOnchain(requiredString(args, "resourceId"), onProgress);
+      case "mindvault_agent_status":
+        return agentStatus();
+      case "mindvault_registry_info":
+        return registryInfo();
+      case "mindvault_network_profile":
+        return networkProfile();
+      case "mindvault_check_bindings":
+        return checkBindings();
+      case "mindvault_check_consistency":
+        return checkConsistency(
+          requiredString(args, "resourceId"),
+          optionalString(args, "expectedMetadataHash"),
+        );
+      case "mindvault_registry_lookup":
+        return registryLookup(requiredString(args, "resourceId"));
+      case "mindvault_registry_list":
+        return registryList(
+          optionalInt(args, "start", REGISTRY_LIST_DEFAULT_START),
+          optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
+        );
+      case "mindvault_update_metadata":
+        return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
+      case "mindvault_set_price":
+        return setPrice(requiredString(args, "resourceId"), requiredString(args, "price"));
+      case "mindvault_transfer_ownership":
+        return transferOwnership(
+          requiredString(args, "resourceId"),
+          requiredString(args, "newCreator"),
+        );
+      case "mindvault_set_listed":
+        return setListed(requiredString(args, "resourceId"), flag(args, "listed"));
+      case "mindvault_tx_status":
+        return txStatus(requiredString(args, "txHash"));
+      case "mindvault_reset":
+        return resetState(flag(args, "all"), rawRecord.confirm);
+      case "mindvault_backup_state":
+        return backupState(requiredString(args, "passphrase"));
+      case "mindvault_restore_state":
+        return restoreStateTool(requiredString(args, "blob"), requiredString(args, "passphrase"));
+      case "mindvault_metrics":
+        return toolMetrics(flag(args, "reset"));
+      case "mindvault_check_state_permissions":
+        return checkStatePermissionsTool();
+      case "mindvault_registry_health":
+        return registryHealth();
+      case "mindvault_import_wallet":
+        return importWallet({
+          secretKey: optionalString(args, "secretKey"),
+          profile: optionalString(args, "profile"),
+          persist: flag(args, "persist"),
+        });
+      case "mindvault_rotate_publisher_key":
+        return rotatePublisherKey(optionalString(args, "profile"));
+      case "mindvault_verify_install":
+        return formatVerifyInstall(verifyInstall(process.env));
+      default:
+        throw new Error(`Unknown tool: ${name}`);
     }
-    case "mindvault_search": {
-      const parsed = parseCatalogFilters(rawRecord, { requireCriteria: true });
-      return parsed.ok ? search(parsed.filters) : parsed.error;
-    }
-    case "mindvault_preview":
-      return preview(requiredString(args, "resourceId"));
-    case "mindvault_register":
-      return register(
-        requiredString(args, "name"),
-        requiredString(args, "email"),
-        optionalString(args, "walletAddress"),
-      );
-    case "mindvault_publish":
-      return publish({
-        title: requiredString(dryRunArgs, "title"),
-        description: optionalString(dryRunArgs, "description"),
-        price: requiredString(dryRunArgs, "price"),
-        externalUrl: requiredString(dryRunArgs, "externalUrl"),
-        dryRun: flag(dryRunArgs, "dryRun"),
-      });
-    case "mindvault_publish_status":
-      return publishStatus(rawRecord);
-    case "mindvault_buy":
-      return buy(requiredString(args, "resourceId"), flag(args, "dryRun"), undefined, onProgress);
-    case "mindvault_purchase_history":
-      return purchaseHistoryTool(rawRecord);
-    case "mindvault_export_receipts":
-      return exportReceiptsTool(rawRecord);
-    case "mindvault_register_onchain":
-      return registerOnchain(requiredString(args, "resourceId"), onProgress);
-    case "mindvault_agent_status":
-      return agentStatus();
-    case "mindvault_registry_info":
-      return registryInfo();
-    case "mindvault_network_profile":
-      return networkProfile();
-    case "mindvault_check_bindings":
-      return checkBindings();
-    case "mindvault_check_consistency":
-      return checkConsistency(
-        requiredString(args, "resourceId"),
-        optionalString(args, "expectedMetadataHash"),
-      );
-    case "mindvault_registry_lookup":
-      return registryLookup(requiredString(args, "resourceId"));
-    case "mindvault_registry_list":
-      return registryList(
-        optionalInt(args, "start", REGISTRY_LIST_DEFAULT_START),
-        optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
-      );
-    case "mindvault_update_metadata":
-      return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
-    case "mindvault_set_price":
-      return setPrice(requiredString(args, "resourceId"), requiredString(args, "price"));
-    case "mindvault_transfer_ownership":
-      return transferOwnership(
-        requiredString(args, "resourceId"),
-        requiredString(args, "newCreator"),
-      );
-    case "mindvault_set_listed":
-      return setListed(requiredString(args, "resourceId"), flag(args, "listed"));
-    case "mindvault_tx_status":
-      return txStatus(requiredString(args, "txHash"));
-    case "mindvault_reset":
-      return resetState(flag(args, "all"), rawRecord.confirm);
-    case "mindvault_backup_state":
-      return backupState(requiredString(args, "passphrase"));
-    case "mindvault_restore_state":
-      return restoreStateTool(requiredString(args, "blob"), requiredString(args, "passphrase"));
-    case "mindvault_metrics":
-      return toolMetrics(flag(args, "reset"));
-    case "mindvault_check_state_permissions":
-      return checkStatePermissionsTool();
-    case "mindvault_registry_health":
-      return registryHealth();
-    case "mindvault_import_wallet":
-      return importWallet({
-        secretKey: optionalString(args, "secretKey"),
-        profile: optionalString(args, "profile"),
-        persist: flag(args, "persist"),
-      });
-    case "mindvault_rotate_publisher_key":
-      return rotatePublisherKey(optionalString(args, "profile"));
-    case "mindvault_verify_install":
-      return formatVerifyInstall(verifyInstall(process.env));
-    default:
-      throw new Error(`Unknown tool: ${name}`);
+  };
+
+  if (STATE_MUTATING_TOOLS.has(name)) {
+    return stateMutex.runExclusive(execute);
   }
+
+  return execute();
 }
 
-/**
- * Look up an advertised tool definition by name.
- *
- * Tool metadata lives in two places today: the literal list below and
- * `TOOL_DEFINITIONS` in tools.ts, which the validation layer and its coverage
- * tests read. Anything defined once — a tool with an `outputSchema`, whose
- * schema the structured result must match — is declared in tools.ts and pulled
- * in here, so the advertised schema, the validation spec, and the result shape
- * cannot drift apart.
- */
 function toolDefinition(name: string): ToolDefinition {
   const definition = TOOL_DEFINITIONS.find((tool) => tool.name === name);
   if (!definition) throw new Error(`No tool definition for ${name} in TOOL_DEFINITIONS.`);
   return definition;
 }
 
-/** Tools that declare an outputSchema, by name, for structured results. */
+const EXTRA_TOOL_ANNOTATIONS: Record<
+  string,
+  { title: string; readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean }
+> = {
+  mindvault_publish_status: {
+    title: "Publish Status",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
+  mindvault_purchase_history: {
+    title: "Purchase History",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
+};
+
+function toolAnnotations(name: string): {
+  title: string;
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+} {
+  if (name in EXTRA_TOOL_ANNOTATIONS) return EXTRA_TOOL_ANNOTATIONS[name];
+  const { annotations } = toolDefinition(name);
+  return {
+    title: annotations.title,
+    readOnlyHint: annotations.readOnlyHint,
+    destructiveHint: annotations.destructiveHint,
+    idempotentHint: annotations.idempotentHint,
+  };
+}
+
 const TOOLS_WITH_OUTPUT_SCHEMA = new Set(
   TOOL_DEFINITIONS.filter((tool) => tool.outputSchema).map((tool) => tool.name),
 );
 
-/**
- * The structured form of a tool result, when the tool advertises one.
- *
- * A tool with an `outputSchema` must return structured content conforming to it
- * (MCP 2025-06-18). Those tools already produce their result as JSON text, so
- * the object is recovered by parsing it — the text block stays exactly as it
- * was, which keeps every existing client and test working.
- */
 function structuredResult(name: string, text: string): Record<string, unknown> | undefined {
   if (!TOOLS_WITH_OUTPUT_SCHEMA.has(name)) return undefined;
   try {
@@ -2653,15 +2697,13 @@ function structuredResult(name: string, text: string): Record<string, unknown> |
   }
 }
 
-// ── MCP Server ────────────────────────────────────────────────────────────────
-
 const server = new Server(
   { name: "mindvault", version: "1.0.0" },
   { capabilities: { tools: {}, prompts: {} } },
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  const advertisedTools = [
     {
       name: "mindvault_setup_wallet",
       description:
@@ -2862,8 +2904,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: [],
       },
     },
-    // Declared in tools.ts: it carries an outputSchema, and the advertised
-    // schema, the validation spec, and the structured result must agree.
     toolDefinition("mindvault_export_receipts"),
     {
       name: "mindvault_register_onchain",
@@ -2921,6 +2961,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           resourceId: {
             type: "string",
             description: "The resource ID to compare between API and on-chain registry.",
+          },
+          expectedMetadataHash: {
+            type: "string",
+            description:
+              "Optional. The canonical SHA-256 digest (sha256:<hex>) of the off-chain content the agent expects to be anchored on-chain. When supplied, it is compared against the contentHash in the on-chain metadata pointer.",
+            examples: ["sha256:1f09d48cb617cd04c123454e2b1b6d51acd66378f2c4b79d5ac09e9d3b123456"],
           },
         },
         required: ["resourceId"],
@@ -3142,8 +3188,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Verify the MindVault MCP server is installed and configured correctly. Checks Node.js version (>=20), network settings, URL variables, vault-registry contract ID, and warns about plaintext secrets in the environment. No network calls are made — all checks are local. Run this first when setting up a new agent or diagnosing a configuration problem.",
       inputSchema: { type: "object", properties: {}, required: [] },
     },
-  ],
-}));
+  ];
+
+  return {
+    tools: advertisedTools.map((tool) => ({
+      ...tool,
+      annotations: toolAnnotations(tool.name),
+    })),
+  };
+});
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const { name, arguments: args = {} } = request.params;
@@ -3153,17 +3206,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       ? createProgressEmitter({ token: progressToken, send: extra.sendNotification })
       : undefined;
   try {
-    // Errors thrown by tools (and by measureTool's re-throw) become a deterministic
-    // MCP error result: `isError: true` and text prefixed with `Error:`, with secrets
-    // stripped via safeErrorMessage. Clients should treat that shape as failure.
     const result = await measureTool(metrics, name, () => dispatchTool(name, args, onProgress));
     return { content: [{ type: "text", text: result }] };
   } catch (err: any) {
     return { content: [{ type: "text", text: `Error: ${safeErrorMessage(err)}` }], isError: true };
   }
 });
-
-// ── MCP Prompts ────────────────────────────────────────────────────────────
 
 server.setRequestHandler(ListPromptsRequestSchema, async () => ({
   prompts: PROMPT_DEFINITIONS.map((p) => ({
@@ -3186,10 +3234,6 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
   };
 });
 
-// Best-effort startup check: warn on stderr (never fatal, never blocks) when the
-// installed bindings drift from the deployed contract. Skipped under tests and
-// mock mode so it never makes a real network call. Errors (e.g. offline) are
-// swallowed — the mindvault_check_bindings tool gives operators a detailed report.
 if (!process.env.VITEST && !MOCK) {
   void checkContractBindings({
     contractId: REGISTRY_CONTRACT_ID,
@@ -3200,19 +3244,10 @@ if (!process.env.VITEST && !MOCK) {
     .then((result: { status: string; message: string }) => {
       if (result.status === "mismatch") console.error(`MindVault MCP: ${result.message}`);
     })
-    .catch(() => {
-      /* offline or unreachable — the mindvault_check_bindings tool can report details */
-    });
+    .catch(() => {});
 }
 
-// Connect stdio when running as a real MCP process. Under Vitest the integration
-// harness (and unit tests) import this module and wire an in-memory transport
-// instead — connecting stdio here would hang the test runner on stdin.
 export { server };
-
-// ── Graceful shutdown (#549) ───────────────────────────────────────────────
-// SIGINT, SIGTERM, and transport close/error close the server cleanly and
-// flush in-flight state writes before exiting with a deterministic code.
 
 let shuttingDown = false;
 
@@ -3221,11 +3256,10 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
 
   try {
-    // Flush any pending state writes before closing
     saveState();
     await server.close();
   } catch {
-    // Best-effort — already shutting down
+    void 0;
   }
 
   const exitCode = signal === "SIGINT" ? 130 : 0;
@@ -3235,19 +3269,13 @@ async function shutdown(signal: string): Promise<void> {
 if (!process.env.VITEST) {
   const transport = new StdioServerTransport();
 
-  // Handle transport errors/close
   transport.onclose = () => shutdown("transport-close");
   transport.onerror = () => shutdown("transport-error");
 
-  // Handle OS signals
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-  // Handle stdin EOF (pipe closed)
   process.stdin.on("end", () => shutdown("stdin-EOF"));
 
-  // Exactly one connect: the stdio transport can only be started once, so a
-  // second call throws "already started" and the process dies before it can
-  // serve a single request.
   await server.connect(transport);
 }
