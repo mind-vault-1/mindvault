@@ -93,6 +93,7 @@ import {
   type PublishStatusFetch,
 } from "./publishStatus.js";
 import { safeErrorMessage } from "./redaction.js";
+import { assertAutoPaymentWithinCeiling } from "./paymentCeiling.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
   exportState,
@@ -1597,6 +1598,7 @@ export async function buy(
   dryRun?: boolean,
   estimatedPrice?: string | null,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
+  maxAutoPayUsdc?: string,
 ): Promise<string> {
   if (dryRun) {
     return JSON.stringify(
@@ -1612,14 +1614,18 @@ export async function buy(
   // shortfall returns an actionable message instead of an opaque payment error.
   await onProgress?.(1, 4, "Validating resource");
   const meta = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
-  if (meta.ok && meta.data?.price != null) {
-    const shortMsg = await insufficientFundsMessage(
-      wallet,
-      meta.data.price,
-      `buy "${meta.data.title ?? resourceId}"`,
+  if (!meta.ok || meta.data?.price == null) {
+    throw new Error(
+      "Automatic payment blocked because the resource price could not be determined; no x402 payment was submitted.",
     );
-    if (shortMsg) return shortMsg;
   }
+  assertAutoPaymentWithinCeiling({ price: meta.data.price, maxAutoPayUsdc });
+  const shortMsg = await insufficientFundsMessage(
+    wallet,
+    meta.data.price,
+    `buy "${meta.data.title ?? resourceId}"`,
+  );
+  if (shortMsg) return shortMsg;
 
   const beforeState = meta.ok
     ? {
@@ -2691,7 +2697,13 @@ export async function dispatchTool(
       case "mindvault_publish_status":
         return publishStatus(rawRecord);
       case "mindvault_buy":
-        return buy(requiredString(args, "resourceId"), flag(args, "dryRun"), undefined, onProgress);
+        return buy(
+          requiredString(args, "resourceId"),
+          flag(args, "dryRun"),
+          undefined,
+          onProgress,
+          optionalString(args, "maxAutoPayUsdc"),
+        );
       case "mindvault_purchase_history":
         return purchaseHistoryTool(rawRecord);
       case "mindvault_export_receipts":
@@ -2775,7 +2787,13 @@ export async function dispatchTool(
     case "mindvault_publish_status":
       return publishStatus(rawRecord);
     case "mindvault_buy":
-      return buy(requiredString(args, "resourceId"), flag(args, "dryRun"), undefined, onProgress);
+      return buy(
+        requiredString(args, "resourceId"),
+        flag(args, "dryRun"),
+        undefined,
+        onProgress,
+        optionalString(args, "maxAutoPayUsdc"),
+      );
     case "mindvault_purchase_history":
       return purchaseHistoryTool(rawRecord);
     case "mindvault_export_receipts":

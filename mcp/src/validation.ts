@@ -216,7 +216,12 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     dryRun: DRY_RUN,
     confirmMainnet: CONFIRM_MAINNET,
   },
-  mindvault_buy: { resourceId: RESOURCE_ID, dryRun: DRY_RUN, confirmMainnet: CONFIRM_MAINNET },
+  mindvault_buy: {
+    resourceId: RESOURCE_ID,
+    dryRun: DRY_RUN,
+    maxAutoPayUsdc: { ...USDC_AMOUNT, required: false },
+    confirmMainnet: CONFIRM_MAINNET,
+  },
   mindvault_export_receipts: {
     format: { kind: "enum", values: ["json", "csv"] },
     resourceId: { ...RESOURCE_ID, required: false },
