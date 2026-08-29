@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_MAX_AUTO_PAY_USDC,
-  assertAutoPaymentWithinCeiling,
-} from "./paymentCeiling.js";
+import { DEFAULT_MAX_AUTO_PAY_USDC, assertAutoPaymentWithinCeiling } from "./paymentCeiling.js";
 
 const env = { MINDVAULT_MAX_AUTO_PAY_USDC: "5" } as NodeJS.ProcessEnv;
 

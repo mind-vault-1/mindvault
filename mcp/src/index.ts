@@ -22,7 +22,10 @@ import {
   ListToolsRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { listCatalogResources, readCatalogResource } from "./catalogResources.js";
 import { PROMPT_DEFINITIONS, getPrompt } from "./prompts.js";
 import { createProgressEmitter } from "./progress.js";
 import { truncateResponse } from "./truncation.js";
@@ -32,7 +35,15 @@ import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import { Mutex } from "./mutex.js";
 import { cacheStalenessNotice } from "./cacheStaleness.js";
+import {
+  catalogCacheLabel,
+  getCatalogSnapshot,
+  getPreviewSnapshot,
+  recordCatalogSnapshot,
+  recordPreviewSnapshot,
+} from "./catalogCache.js";
 import {
   collectStartupDiagnostics,
   formatDiagnostics,
@@ -1216,22 +1227,46 @@ export function listProfiles(): string {
   return [`Profiles (* = active):`, ...lines].join("\n");
 }
 
+interface CatalogLoad {
+  items: any[];
+  /** Notice appended to the output. Fresh reads use the server cache headers; offline reads use the snapshot-age label. */
+  notice: string | null;
+  /** True when the catalog was served from the offline snapshot rather than the live API. */
+  fromCache: boolean;
+}
+
+/**
+ * Fetch the catalog resource array, recording a snapshot on success and falling
+ * back to the last snapshot on transport failure (#556). A reachable-but-error
+ * response is surfaced verbatim — the cache is only for the unreachable case.
+ */
+async function loadCatalog(url: string, operation: string): Promise<CatalogLoad> {
+  let res;
+  try {
+    res = await jsonFetch(url);
+  } catch (err) {
+    const snapshot = getCatalogSnapshot();
+    // No cached snapshot — surface the original deterministic error from jsonFetch.
+    if (!snapshot) throw err;
+    return {
+      items: Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [],
+      notice: catalogCacheLabel(snapshot.savedAtMs),
+      fromCache: true,
+    };
+  }
+  if (!res.ok) {
+    throw mcpError(mapHttpError({ operation, source: "api", status: res.status, data: res.data }));
+  }
+  const items = Array.isArray(res.data) ? res.data : [];
+  recordCatalogSnapshot(items);
+  return { items, notice: cacheStalenessNotice(res.headers), fromCache: false };
+}
+
 export async function browse(filters: CatalogFilters = {}): Promise<string> {
   const qs = buildCatalogQueryString(filters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
-  const res = await jsonFetch(url);
-  if (!res.ok) {
-    throw mcpError(
-      mapHttpError({
-        operation: "Browse failed",
-        source: "api",
-        status: res.status,
-        data: res.data,
-      }),
-    );
-  }
-  let items: any[] = Array.isArray(res.data) ? res.data : [];
-  items = applyCatalogSort(applyClientCatalogFilters(items, filters), filters.sort);
+  const { items: raw, notice } = await loadCatalog(url, "Browse failed");
+  const items = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
   const body =
     items.length === 0
       ? filters.query ||
@@ -1247,7 +1282,6 @@ export async function browse(filters: CatalogFilters = {}): Promise<string> {
       : items.map(formatResource).join("\n\n");
   // Warn when the catalog may be stale relative to the on-chain registry, based
   // on the server's cache headers. Silent when there is no cache metadata.
-  const notice = cacheStalenessNotice(res.headers);
   const full = notice ? `${body}\n\n${notice}` : body;
   return truncateResponse(full);
 }
@@ -1273,50 +1307,52 @@ export async function search(filtersOrQuery: string | CatalogFilters): Promise<s
 
   const qs = buildCatalogQueryString(filters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
-  const res = await jsonFetch(url);
-  if (!res.ok) {
-    throw mcpError(
-      mapHttpError({
-        operation: "Search failed",
+  const { items: raw, notice, fromCache } = await loadCatalog(url, "Search failed");
+  // Client-side keyword / tags / listed / skipped for unit-test compatibility
+  // and parity with fields the public catalog schema does not accept.
+  const items = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
+
+  if (items.length === 0) return `No resources match ${describeCatalogFilters(filters)}.`;
+  const body = items.map(formatResource).join("\n\n");
+  // Search never appended a server cache-staleness notice; only the explicit
+  // offline-snapshot label is added here, so fresh-search output is unchanged.
+  const full = fromCache && notice ? `${body}\n\n${notice}` : body;
+  return truncateResponse(full);
+}
+
+async function previewData(resourceId: string): Promise<{ r: any; label: string | null }> {
+  try {
+    const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
+    if (!res.ok)
+      throwHttpError({
+        operation: "Preview failed",
         source: "api",
         status: res.status,
         data: res.data,
-      }),
-    );
+      });
+    recordPreviewSnapshot(resourceId, res.data);
+    return { r: res.data, label: null };
+  } catch (err) {
+    const snap = getPreviewSnapshot(resourceId);
+    // No cached snapshot for this resource — surface the original error.
+    if (!snap) throw err;
+    return { r: snap.meta as any, label: catalogCacheLabel(snap.savedAtMs) };
   }
-  let items: any[] = Array.isArray(res.data) ? res.data : [];
-
-  // Client-side keyword / tags / listed / skipped for unit-test compatibility
-  // and parity with fields the public catalog schema does not accept.
-  items = applyCatalogSort(applyClientCatalogFilters(items, filters), filters.sort);
-
-  if (items.length === 0) return `No resources match ${describeCatalogFilters(filters)}.`;
-  return truncateResponse(items.map(formatResource).join("\n\n"));
 }
 
 export async function preview(resourceId: string): Promise<string> {
-  const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
-  if (!res.ok)
-    throwHttpError({
-      operation: "Preview failed",
-      source: "api",
-      status: res.status,
-      data: res.data,
-    });
-  const r = res.data;
-  return JSON.stringify(
-    {
-      id: r.id,
-      title: r.title,
-      description: r.description,
-      price: `$${r.price} USDC`,
-      type: r.resourceType,
-      verificationStatus: r.verificationStatus,
-      accessUrl: r.accessUrl,
-    },
-    null,
-    2,
-  );
+  const { r, label } = await previewData(resourceId);
+  const out: Record<string, unknown> = {
+    id: r.id,
+    title: r.title,
+    description: r.description,
+    price: `$${r.price} USDC`,
+    type: r.resourceType,
+    verificationStatus: r.verificationStatus,
+    accessUrl: r.accessUrl,
+  };
+  if (label) out.offlineCache = label;
+  return JSON.stringify(out, null, 2);
 }
 
 /**
@@ -2146,10 +2182,9 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
   );
 }
 
-export async function registryLookup(
-  resourceId: string,
-): Promise<string> {
-  if (_isMock()) return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
+export async function registryLookup(resourceId: string): Promise<string> {
+  if (_isMock())
+    return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
   const client = createRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
@@ -2230,11 +2265,9 @@ export async function registryLookup(
  * Paginated list of resources from the on-chain vault registry (contract `list`).
  * Data comes from Soroban, not the MindVault API catalog.
  */
-export async function registryList(
-  start: number,
-  limit: number,
-): Promise<string> {
-  if (_isMock()) return mockRegistryList(start, limit, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
+export async function registryList(start: number, limit: number): Promise<string> {
+  if (_isMock())
+    return mockRegistryList(start, limit, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
 
   const client = createRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
@@ -2316,7 +2349,11 @@ export async function registryList(
 export async function recoverCatalogCache(): Promise<string> {
   if (_isMock()) {
     return JSON.stringify(
-      { source: "mcp", action: "recover_catalog_cache", message: "Mock: catalog cache recovery triggered (no-op in mock)." },
+      {
+        source: "mcp",
+        action: "recover_catalog_cache",
+        message: "Mock: catalog cache recovery triggered (no-op in mock).",
+      },
       null,
       2,
     );
@@ -2556,40 +2593,48 @@ export function networkProfile(): string {
     warnings,
   };
 
-const STATE_DIR = join(homedir(), ".mindvault");
-const STATE_FILE = join(STATE_DIR, "state.json");
-configureStatePaths(STATE_DIR, STATE_FILE);
-loadState();
+  return JSON.stringify(profile, null, 2);
+}
 
-export {
-  browse,
-  search,
-  preview,
-  txStatus,
-  walletInfo,
-  useProfile,
-  listProfiles,
-  publishStatus,
-  buy,
-  registerOnchain,
-  updateMetadata,
-  setPrice,
-  transferOwnership,
-  setListed,
-  registryLookup,
-  registryList,
-  checkConsistency,
-  networkProfile,
-  backupState,
-  restoreStateTool,
-  resetState,
-  usdcToStroops,
-  type SearchFilters,
-  _setAgentWallet,
-  _setAgentApiKey,
-  _resetProfiles,
-  _setMockMode,
-};
+/**
+ * Verify the installed registry-client bindings match the deployed contract's
+ * interface. Returns the check's deterministic, agent-safe message (a match
+ * summary, a mismatch warning with a recommended fix, or a "could not verify"
+ * note when the contract/RPC is unreachable).
+ */
+async function checkBindings(): Promise<string> {
+  if (_isMock()) return "Mock mode: contract binding check skipped (no live RPC).";
+  const result = await checkContractBindings({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    network: STELLAR_NETWORK,
+  });
+  return result.message;
+}
+
+/**
+ * Return opt-in tool-level metrics as JSON. Only counts, durations, and tool
+ * names are included — never arguments, wallets, or API keys. When metrics are
+ * disabled, returns an actionable note instead of counters. Pass reset=true to
+ * clear counters after reading.
+ */
+function toolMetrics(reset: boolean): string {
+  const snapshot = metrics.snapshot();
+  if (reset) metrics.reset();
+  if (!snapshot.enabled) {
+    return JSON.stringify(
+      {
+        enabled: false,
+        message:
+          "Metrics are disabled. Set MINDVAULT_METRICS=1 (or true/yes/on) and restart the server to collect tool-level metrics.",
+      },
+      null,
+      2,
+    );
+  }
+  return JSON.stringify(snapshot, null, 2);
+}
 
 if (!process.env.VITEST && !mockEnabledFromEnv(process.env)) {
   const diagnostics = collectStartupDiagnostics(process.env);
@@ -2650,6 +2695,10 @@ export async function dispatchTool(
 
   assertMainnetMutationAllowed(NETWORK, name, rawRecord);
 
+  if (API_MUTATION_TOOLS.has(name) && !isDryRunCall) {
+    await assertApiReachableFor(name);
+  }
+
   const execute = async (): Promise<string> => {
     switch (name) {
       case "mindvault_setup_wallet":
@@ -2688,11 +2737,11 @@ export async function dispatchTool(
         return publishStatus(rawRecord, onProgress);
       case "mindvault_buy":
         return buy(
-          requiredString(args, "resourceId"),
-          flag(args, "dryRun"),
+          requiredString(dryRunArgs, "resourceId"),
+          flag(dryRunArgs, "dryRun"),
           undefined,
           onProgress,
-          optionalString(args, "maxAutoPayUsdc"),
+          optionalString(dryRunArgs, "maxAutoPayUsdc"),
         );
       case "mindvault_purchase_history":
         return purchaseHistoryTool(rawRecord);
@@ -2755,100 +2804,11 @@ export async function dispatchTool(
         return rotatePublisherKey(optionalString(args, "profile"));
       case "mindvault_verify_install":
         return formatVerifyInstall(verifyInstall(process.env));
+      case "mindvault_recover_catalog_cache":
+        return recoverCatalogCache();
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
-    case "mindvault_preview":
-      return preview(requiredString(args, "resourceId"));
-    case "mindvault_register":
-      return register(
-        requiredString(args, "name"),
-        requiredString(args, "email"),
-        optionalString(args, "walletAddress"),
-      );
-    case "mindvault_publish":
-      return publish({
-        title: requiredString(dryRunArgs, "title"),
-        description: optionalString(dryRunArgs, "description"),
-        price: requiredString(dryRunArgs, "price"),
-        externalUrl: requiredString(dryRunArgs, "externalUrl"),
-        dryRun: flag(dryRunArgs, "dryRun"),
-      });
-    case "mindvault_publish_status":
-      return publishStatus(rawRecord);
-    case "mindvault_buy":
-      return buy(
-        requiredString(args, "resourceId"),
-        flag(args, "dryRun"),
-        undefined,
-        onProgress,
-        optionalString(args, "maxAutoPayUsdc"),
-      );
-    case "mindvault_purchase_history":
-      return purchaseHistoryTool(rawRecord);
-    case "mindvault_export_receipts":
-      return exportReceiptsTool(rawRecord);
-    case "mindvault_register_onchain":
-      return registerOnchain(requiredString(args, "resourceId"), onProgress);
-    case "mindvault_agent_status":
-      return agentStatus();
-    case "mindvault_registry_info":
-      return registryInfo();
-    case "mindvault_network_profile":
-      return networkProfile();
-    case "mindvault_check_bindings":
-      return checkBindings();
-    case "mindvault_check_consistency":
-      return checkConsistency(
-        requiredString(args, "resourceId"),
-        optionalString(args, "expectedMetadataHash"),
-      );
-    case "mindvault_registry_lookup":
-      return registryLookup(requiredString(args, "resourceId"));
-    case "mindvault_registry_list":
-      return registryList(
-        optionalInt(args, "start", REGISTRY_LIST_DEFAULT_START),
-        optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
-      );
-    case "mindvault_update_metadata":
-      return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
-    case "mindvault_set_price":
-      return setPrice(requiredString(args, "resourceId"), requiredString(args, "price"));
-    case "mindvault_transfer_ownership":
-      return transferOwnership(
-        requiredString(args, "resourceId"),
-        requiredString(args, "newCreator"),
-      );
-    case "mindvault_set_listed":
-      return setListed(requiredString(args, "resourceId"), flag(args, "listed"));
-    case "mindvault_tx_status":
-      return txStatus(requiredString(args, "txHash"));
-    case "mindvault_reset":
-      return resetState(flag(args, "all"), rawRecord.confirm);
-    case "mindvault_backup_state":
-      return backupState(requiredString(args, "passphrase"));
-    case "mindvault_restore_state":
-      return restoreStateTool(requiredString(args, "blob"), requiredString(args, "passphrase"));
-    case "mindvault_metrics":
-      return toolMetrics(flag(args, "reset"));
-    case "mindvault_check_state_permissions":
-      return checkStatePermissionsTool();
-    case "mindvault_registry_health":
-      return registryHealth();
-    case "mindvault_import_wallet":
-      return importWallet({
-        secretKey: optionalString(args, "secretKey"),
-        profile: optionalString(args, "profile"),
-        persist: flag(args, "persist"),
-      });
-    case "mindvault_rotate_publisher_key":
-      return rotatePublisherKey(optionalString(args, "profile"));
-    case "mindvault_verify_install":
-      return formatVerifyInstall(verifyInstall(process.env));
-    case "mindvault_recover_catalog_cache":
-      return recoverCatalogCache();
-    default:
-      throw new Error(`Unknown tool: ${name}`);
   };
 
   if (STATE_MUTATING_TOOLS.has(name)) {
@@ -2914,8 +2874,22 @@ function structuredResult(name: string, text: string): Record<string, unknown> |
 
 const server = new Server(
   { name: "mindvault", version: "1.0.0" },
-  { capabilities: { tools: {}, prompts: {} } },
+  { capabilities: { tools: {}, prompts: {}, resources: {} } },
 );
+
+// ── MCP resources (#545) ─────────────────────────────────────────────────────
+// The vault catalog is exposed as resources so agents can discover entries
+// (resources/list) and read their public metadata (resources/read) without
+// invoking a tool. URIs are stable: mindvault://resource/<id>. Reads never
+// return gated content — only the public meta endpoint is consulted.
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  resources: await listCatalogResources(),
+}));
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => ({
+  contents: [await readCatalogResource(request.params.uri)],
+}));
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   const advertisedTools = [
@@ -3422,7 +3396,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       : undefined;
   try {
     const result = await measureTool(metrics, name, () => dispatchTool(name, args, onProgress));
-    return { content: [{ type: "text", text: result }] };
+    const structured = structuredResult(name, result);
+    return {
+      content: [{ type: "text", text: result }],
+      ...(structured ? { structuredContent: structured } : {}),
+    };
   } catch (err: any) {
     const mapped = mappedErrorOf(err);
     return {

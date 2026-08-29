@@ -177,6 +177,15 @@ Search the catalog by keyword plus filters. Server-supported filters are forward
   https://mindvault-hyr3.onrender.com/r/abc123
 ```
 
+### 8b. Catalog resources (`resources/list` and `resources/read`) _(optional)_
+
+The MCP server also advertises the `resources` capability, so clients can discover catalog entries without invoking a tool. `resources/list` returns every catalog entry with a stable URI, and `resources/read` returns its **public metadata only** — never gated content.
+
+- URI scheme: `mindvault://resource/<id>` (e.g. `mindvault://resource/abc123`)
+- `resources/list` → entries with `name` (the title), `description`, and `mimeType: application/json`
+- `resources/read` on a known URI → `{ id, title, description, price, resourceType, verificationStatus, accessUrl }`
+- Unknown URIs and unknown resource ids return deterministic errors, so agents can correct the URI or fall back to `mindvault_browse` / `mindvault_search`
+
 If no resource matches, the error message includes the applied filters, for example:
 
 ```

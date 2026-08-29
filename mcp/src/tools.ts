@@ -925,5 +925,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     description:
       "Attempt a catalog stale-cache recovery: requests the MCP to refresh or re-fetch catalog index data and provides recovery guidance. Useful when browse results appear stale.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Recover Catalog Cache",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
 ];
