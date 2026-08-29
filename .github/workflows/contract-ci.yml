@@ -12,7 +12,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -20,7 +20,7 @@ jobs:
           components: rustfmt
 
       - name: Cache Cargo registry
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -41,7 +41,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -50,7 +50,7 @@ jobs:
           components: rust-src
 
       - name: Cache Cargo registry
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -97,7 +97,7 @@ jobs:
       # jump so growth trends are visible before they ever approach the cap.
       - name: Restore WASM size baseline
         id: wasm-size-baseline
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@v4
         with:
           path: contract/.wasm-size-baseline
           key: wasm-size-baseline-main-${{ github.sha }}
@@ -147,13 +147,13 @@ jobs:
 
       - name: Persist WASM size baseline
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@v4
         with:
           path: contract/.wasm-size-baseline
           key: wasm-size-baseline-main-${{ github.sha }}
 
       - name: Upload wasm artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: vault-registry-wasm
           path: contract/target/wasm32v1-none/release/*.wasm
@@ -169,7 +169,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -177,7 +177,7 @@ jobs:
           targets: wasm32-unknown-unknown,wasm32v1-none
 
       - name: Cache Cargo registry
-        uses: actions/cache@v6
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
