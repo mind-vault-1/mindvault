@@ -90,6 +90,45 @@ per-call override; it does not change the configured default.
 MINDVAULT_MAX_AUTO_PAY_USDC=5
 ```
 
+### MCP catalog preview size limits
+
+Titles and descriptions are publisher-supplied and unbounded at the source, so a
+single listing could otherwise fill an agent's context window. `mindvault_preview`
+caps them before the response is serialized:
+
+- Each free-text field (`title`, `description`) is clipped to
+  `MINDVAULT_PREVIEW_FIELD_MAX_CHARS` characters (default `1000`).
+- If the serialized response is still larger than `MINDVAULT_PREVIEW_MAX_BYTES`
+  (default `8192`), the description and then the title are shrunk further until
+  it fits. A non-zero budget below `1024` is raised to `1024`, the room the
+  identity fields and the truncation notice need.
+
+Set either variable to `0` to disable that limit.
+
+Identity fields — `id`, `price`, `accessUrl`, `type`, `verificationStatus` — are
+never shortened, and the limit is applied per field rather than to the encoded
+JSON, so the response is always parseable. When anything was clipped, the
+response carries a `truncated` block:
+
+```json
+{
+  "id": "cm7x8y9z",
+  "title": "Stellar Payments Dataset",
+  "description": "Ledger-level payment records… [truncated: 1000 of 54321 characters]",
+  "price": "$1.5 USDC",
+  "accessUrl": "https://example.com/cm7x8y9z",
+  "truncated": {
+    "fields": ["description"],
+    "notice": "Preview shortened to fit the response size limit. Buy the resource for the full content, or raise MINDVAULT_PREVIEW_MAX_BYTES / MINDVAULT_PREVIEW_FIELD_MAX_CHARS."
+  }
+}
+```
+
+```bash
+MINDVAULT_PREVIEW_MAX_BYTES=16384
+MINDVAULT_PREVIEW_FIELD_MAX_CHARS=2000
+```
+
 ---
 
 ## Diagnosing Missing Variables
@@ -124,17 +163,19 @@ All other variables are either public addresses or non-sensitive configuration. 
 
 ## MCP
 
-| Variable                        | Required | Default   | Description                                                                                             |
-| ------------------------------- | -------- | --------- | ------------------------------------------------------------------------------------------------------- |
-| `STELLAR_NETWORK`               | no       | `testnet` | MCP deployment target (`testnet` or `mainnet` / `pubnet` / `public`).                                   |
-| `MINDVAULT_ALLOW_MAINNET`       | no       | unset     | Set to `1` / `true` to allow gated MCP mutations and buys on mainnet without per-call `confirmMainnet`. |
-| `MINDVAULT_HTTP_TIMEOUT_MS`     | no       | `15000`   | Request deadline for the MindVault API and sponsored-account service. `0` disables.                     |
-| `MINDVAULT_HORIZON_TIMEOUT_MS`  | no       | `15000`   | Request deadline for Horizon balance/account reads. `0` disables.                                       |
-| `MINDVAULT_SOROBAN_TIMEOUT_MS`  | no       | `20000`   | Request deadline for Soroban RPC calls. `0` disables.                                                   |
-| `MINDVAULT_PAYMENT_TIMEOUT_MS`  | no       | `45000`   | Request deadline for x402 paid fetches, which include on-chain settlement. `0` disables.                |
-| `MINDVAULT_RETRY_ATTEMPTS`      | no       | `3`       | Total attempts (including the first) for idempotent MCP calls. `1` disables retrying.                   |
-| `MINDVAULT_RETRY_BASE_DELAY_MS` | no       | `250`     | Backoff delay before the first retry; doubles each attempt.                                             |
-| `MINDVAULT_RETRY_MAX_DELAY_MS`  | no       | `4000`    | Ceiling on the backoff delay before jitter is applied.                                                  |
+| Variable                            | Required | Default   | Description                                                                                             |
+| ----------------------------------- | -------- | --------- | ------------------------------------------------------------------------------------------------------- |
+| `STELLAR_NETWORK`                   | no       | `testnet` | MCP deployment target (`testnet` or `mainnet` / `pubnet` / `public`).                                   |
+| `MINDVAULT_ALLOW_MAINNET`           | no       | unset     | Set to `1` / `true` to allow gated MCP mutations and buys on mainnet without per-call `confirmMainnet`. |
+| `MINDVAULT_HTTP_TIMEOUT_MS`         | no       | `15000`   | Request deadline for the MindVault API and sponsored-account service. `0` disables.                     |
+| `MINDVAULT_HORIZON_TIMEOUT_MS`      | no       | `15000`   | Request deadline for Horizon balance/account reads. `0` disables.                                       |
+| `MINDVAULT_SOROBAN_TIMEOUT_MS`      | no       | `20000`   | Request deadline for Soroban RPC calls. `0` disables.                                                   |
+| `MINDVAULT_PAYMENT_TIMEOUT_MS`      | no       | `45000`   | Request deadline for x402 paid fetches, which include on-chain settlement. `0` disables.                |
+| `MINDVAULT_RETRY_ATTEMPTS`          | no       | `3`       | Total attempts (including the first) for idempotent MCP calls. `1` disables retrying.                   |
+| `MINDVAULT_RETRY_BASE_DELAY_MS`     | no       | `250`     | Backoff delay before the first retry; doubles each attempt.                                             |
+| `MINDVAULT_RETRY_MAX_DELAY_MS`      | no       | `4000`    | Ceiling on the backoff delay before jitter is applied.                                                  |
+| `MINDVAULT_PREVIEW_MAX_BYTES`       | no       | `8192`    | Byte ceiling for a `mindvault_preview` response. `0` disables; values below `1024` are raised to it.    |
+| `MINDVAULT_PREVIEW_FIELD_MAX_CHARS` | no       | `1000`    | Character ceiling for each free-text preview field (`title`, `description`). `0` disables.              |
 
 Timeouts are enforced with `AbortController`. Retries apply to idempotent calls only — catalog `GET`s, Horizon reads, and Soroban `getTransaction` — and never to x402 payments, which could settle twice. See [`mcp-timeouts-retries.md`](./mcp-timeouts-retries.md) for budgets, policy, and tuning guidance.
 
