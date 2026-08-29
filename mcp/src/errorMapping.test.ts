@@ -16,6 +16,7 @@ import {
   mapRegistryError,
   mapTransportError,
   mcpError,
+  troubleshootingHint,
   throwHttpError,
   type ErrorCategory,
 } from "./errorMapping.js";
@@ -248,6 +249,37 @@ describe("formatMappedError", () => {
       expect(categories).toContain(mapped.category);
       expect(mapped.action.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("troubleshootingHint", () => {
+  it("returns a stable machine-readable payload without requiring text parsing", () => {
+    expect(
+      troubleshootingHint(
+        mapHttpError({
+          operation: "Browse failed",
+          source: "api",
+          status: 429,
+          data: { error: "too many requests" },
+        }),
+      ),
+    ).toEqual({
+      schema: "mindvault.troubleshooting/v1",
+      source: "api",
+      category: "rate_limit",
+      status: 429,
+      summary: "Browse failed: too many requests",
+      detail: "too many requests",
+      action: "Rate limited. Wait for the window to pass before retrying.",
+    });
+  });
+
+  it("uses null for fields that do not apply to transport errors", () => {
+    const hint = troubleshootingHint(
+      mapTransportError({ operation: "Browse failed", source: "api", error: new Error("offline") }),
+    );
+    expect(hint.status).toBeNull();
+    expect(hint.detail).toBe("offline");
   });
 });
 

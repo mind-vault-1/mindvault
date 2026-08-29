@@ -127,6 +127,7 @@ import {
   mapTransportError,
   mappedErrorOf,
   mcpError,
+  troubleshootingHint,
   throwHttpError,
   isTimeoutError,
   type CredentialContext,
@@ -3416,7 +3417,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const result = await measureTool(metrics, name, () => dispatchTool(name, args, onProgress));
     return { content: [{ type: "text", text: result }] };
   } catch (err: any) {
-    return { content: [{ type: "text", text: `Error: ${safeErrorMessage(err)}` }], isError: true };
+    const mapped = mappedErrorOf(err);
+    return {
+      content: [{ type: "text", text: `Error: ${safeErrorMessage(err)}` }],
+      isError: true,
+      ...(mapped ? { structuredContent: { troubleshooting: troubleshootingHint(mapped) } } : {}),
+    };
   }
 });
 
