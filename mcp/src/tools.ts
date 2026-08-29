@@ -18,6 +18,22 @@ export interface ToolInputSchema {
   required: string[];
 }
 
+/**
+ * MCP tool annotations (2025-06-18). These are advisory **hints** only — clients
+ * never gate tool use on them, but they let agents know which calls are safe to
+ * repeat and which can destroy local state.
+ */
+export interface ToolAnnotations {
+  /** Human-readable title shown next to the tool in client UIs. */
+  title: string;
+  /** The tool performs no state changes or side effects. */
+  readOnlyHint: boolean;
+  /** The tool can irreversibly destroy local state. */
+  destructiveHint: boolean;
+  /** Repeating the tool with identical arguments is safe and yields the same result. */
+  idempotentHint: boolean;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -28,6 +44,8 @@ export interface ToolDefinition {
    * conform to it (MCP 2025-06-18, "Structured Content").
    */
   outputSchema?: Record<string, unknown>;
+  /** MCP tool annotations advertised in ListTools (title + read/destructive/idempotent hints). */
+  annotations: ToolAnnotations;
 }
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -52,12 +70,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    annotations: {
+      title: "Set Up Wallet",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
   {
     name: "mindvault_wallet_info",
     description:
       "Check the active profile name, its agent wallet address, USDC balance, and whether it is registered as a publisher.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Wallet Info",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_use_profile",
@@ -75,12 +105,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["name"],
     },
+    annotations: {
+      title: "Use Profile",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_list_profiles",
     description:
       "List all named wallet profiles, marking the active one and showing each profile's wallet address and whether it is registered as a publisher. Secret keys are never shown.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "List Profiles",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_browse",
@@ -91,6 +133,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: { ...catalogFilterInputProperties },
       required: [],
     },
+    annotations: {
+      title: "Browse Catalog",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_search",
@@ -100,6 +148,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       type: "object",
       properties: { ...catalogFilterInputProperties },
       required: [],
+    },
+    annotations: {
+      title: "Search Catalog",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -117,6 +171,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["resourceId"],
+    },
+    annotations: {
+      title: "Preview Resource",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -150,6 +210,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["name", "email"],
+    },
+    annotations: {
+      title: "Register Publisher",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
     },
   },
   {
@@ -197,6 +263,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["title", "price", "externalUrl"],
     },
+    annotations: {
+      title: "Publish Resource",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
   {
     name: "mindvault_buy",
@@ -223,6 +295,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["resourceId"],
+    },
+    annotations: {
+      title: "Buy Resource",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
     },
   },
   {
@@ -272,6 +350,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: [],
     },
     outputSchema: RECEIPT_EXPORT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Export Receipts",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_register_onchain",
@@ -294,30 +378,60 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId"],
     },
+    annotations: {
+      title: "Register On-Chain",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
   {
     name: "mindvault_agent_status",
     description:
       "Check the verification agent's earnings and activity. Returns total verifications, pass/fail counts, total USDC earned, average confidence score, and recent verification history with resource titles.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Agent Status",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_registry_info",
     description:
       "Return the on-chain vault-registry contract ID, network passphrase, RPC URL, and the resource fields available for direct Soroban queries. Use this to verify ownership, price, and listing state directly from Stellar without trusting the MindVault API.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Registry Info",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_network_profile",
     description:
       "Report current Stellar/x402 network configuration (testnet/mainnet), RPC URLs, registry contract ID, and warnings for custom overrides. Use this to verify which network the MCP is connected to and diagnose configuration issues.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Network Profile",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_check_bindings",
     description:
       "Verify the installed registry-client bindings match the deployed vault-registry contract interface. Reports a match, or a warning listing the drifting methods with the contract ID, network, client version, and a recommended fix (redeploy the contract or regenerate bindings). Useful after a contract redeploy or client upgrade.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Check Bindings",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_check_consistency",
@@ -342,6 +456,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId"],
     },
+    annotations: {
+      title: "Check Consistency",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_registry_lookup",
@@ -358,6 +478,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["resourceId"],
+    },
+    annotations: {
+      title: "Registry Lookup",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -385,6 +511,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    annotations: {
+      title: "Registry List",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_tx_status",
@@ -404,6 +536,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["txHash"],
+    },
+    annotations: {
+      title: "Transaction Status",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -427,6 +565,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    annotations: {
+      title: "Reset State",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_backup_state",
@@ -441,6 +585,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["passphrase"],
+    },
+    annotations: {
+      title: "Back Up State",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -461,6 +611,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["blob", "passphrase"],
     },
+    annotations: {
+      title: "Restore State",
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+    },
   },
   {
     name: "mindvault_metrics",
@@ -477,6 +633,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: [],
+    },
+    annotations: {
+      title: "Tool Metrics",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -506,6 +668,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["resourceId", "tags"],
+    },
+    annotations: {
+      title: "Set Tags",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -538,6 +706,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId", "metadata"],
     },
+    annotations: {
+      title: "Update Metadata",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_set_price",
@@ -565,6 +739,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId", "price"],
     },
+    annotations: {
+      title: "Set Price",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_transfer_ownership",
@@ -590,6 +770,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ["resourceId", "newCreator"],
+    },
+    annotations: {
+      title: "Transfer Ownership",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
     },
   },
   {
@@ -618,18 +804,36 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: ["resourceId", "listed"],
     },
+    annotations: {
+      title: "Set Listed",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_check_state_permissions",
     description:
       "Verify the state file (~/.mindvault/state.json) has safe permissions (mode 0600). Warns when the file is world-readable or group-readable, which would expose wallet secret keys and API keys to other system users. Safe by default; run after any manual file operations or environment migration.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Check State Permissions",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_registry_health",
     description:
       "Check the health of every dependency the MCP server relies on: MindVault API, Horizon, Soroban RPC, vault-registry contract, and x402 network alignment. Returns per-dependency status (ok/error) with actionable failure messages. Does not leak secrets or environment variables.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Registry Health",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_import_wallet",
@@ -663,6 +867,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    annotations: {
+      title: "Import Wallet",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
   {
     name: "mindvault_rotate_publisher_key",
@@ -685,12 +895,24 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
       required: [],
     },
+    annotations: {
+      title: "Rotate Publisher Key",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
   {
     name: "mindvault_verify_install",
     description:
       "Verify the MindVault MCP server is installed and configured correctly. Checks Node.js version (>=20), network settings, URL variables, vault-registry contract ID, and warns about plaintext secrets in the environment. No network calls are made — all checks are local. Run this first when setting up a new agent or diagnosing a configuration problem.",
     inputSchema: { type: "object", properties: {}, required: [] },
+    annotations: {
+      title: "Verify Install",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   {
     name: "mindvault_recover_catalog_cache",

@@ -64,6 +64,28 @@ describe("MCP integration harness", () => {
     }
   });
 
+  it("advertises MCP annotations for every tool (#552)", async () => {
+    const { tools } = await harness.listTools();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      const annotations = (tool as { annotations?: Record<string, unknown> }).annotations;
+      expect(annotations, `tool ${tool.name} advertises annotations`).toBeDefined();
+      expect(typeof annotations?.title, `tool ${tool.name} has an annotations title`).toBe(
+        "string",
+      );
+      expect(typeof annotations?.readOnlyHint).toBe("boolean");
+      expect(typeof annotations?.destructiveHint).toBe("boolean");
+      expect(typeof annotations?.idempotentHint).toBe("boolean");
+    }
+    const readOnly = (tools as Array<{ annotations: { readOnlyHint: boolean } }>).filter(
+      (t) => t.annotations.readOnlyHint === true,
+    );
+    expect(readOnly.length).toBeGreaterThan(0);
+    for (const tool of readOnly) {
+      expect(tool.annotations.destructiveHint).toBe(false);
+    }
+  });
+
   it("calls mindvault_browse with mocked catalog fixtures", async () => {
     const result = await harness.callTool("mindvault_browse");
     expect(harnessIsToolError(result)).toBe(false);
