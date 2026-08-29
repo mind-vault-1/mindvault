@@ -42,6 +42,34 @@ export class StateBackupError extends Error {
   }
 }
 
+export interface PersistedStateSecretMatch {
+  path: string;
+  kind: "wallet-secret-key" | "api-key";
+}
+
+/**
+ * Report secret-bearing fields in an unencrypted persisted-state backup before
+ * it is shared. Encrypted `exportState` output is safe to transport instead.
+ */
+export function scanPersistedStateSecrets(raw: unknown): PersistedStateSecretMatch[] {
+  if (!raw || typeof raw !== "object") return [];
+  const profiles = (raw as { profiles?: unknown }).profiles;
+  if (!profiles || typeof profiles !== "object") return [];
+
+  const matches: PersistedStateSecretMatch[] = [];
+  for (const [profileName, value] of Object.entries(profiles as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const profile = value as { apiKey?: unknown; wallet?: { secretKey?: unknown } };
+    if (typeof profile.wallet?.secretKey === "string" && profile.wallet.secretKey.length > 0) {
+      matches.push({ path: `profiles.${profileName}.wallet.secretKey`, kind: "wallet-secret-key" });
+    }
+    if (typeof profile.apiKey === "string" && profile.apiKey.length > 0) {
+      matches.push({ path: `profiles.${profileName}.apiKey`, kind: "api-key" });
+    }
+  }
+  return matches;
+}
+
 /**
  * Read the current persisted state. Returns a normalized ProfileState.
  * Throws a deterministic error when the state file is missing or unreadable.

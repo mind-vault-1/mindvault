@@ -117,7 +117,7 @@ questions. Read both with one call:
 stellar contract invoke --id $CONTRACT --rpc-url $RPC \
   --network-passphrase "Test SDF Network ; September 2015" \
   -- contract_version
-# { "crate_version": "0.0.0", "resource_schema_version": 5 }
+# { "crate_version": "0.0.0", "resource_schema_version": 6 }
 ```
 
 | Field                     | Source                    | Changes when                                                           |
@@ -135,15 +135,17 @@ the ledger states the shape it was written in without a second call.
 
 ### `Resource` schema history
 
-Only two bumps are recorded in the source: **v2** added `tags`, and **v4** added
-`dispute_flag`. The changes behind v1, v3 and v5 were never written down. Any
-future bump should add a row here, naming the field that changed:
+The recorded schema changes are: **v2** added `tags`, **v4** added
+`dispute_flag`, and **v6** added `metadata_frozen_at`. The changes behind v1,
+v3 and v5 were never written down. Any future bump should add a row here,
+naming the field that changed:
 
 | Schema version | Change                                                    |
 | -------------- | --------------------------------------------------------- |
 | 2              | Added `tags` — discovery labels, normalized to lowercase. |
 | 4              | Added `dispute_flag` — moderator dispute state.           |
-| 5              | Current value of `RESOURCE_SCHEMA_VERSION`.               |
+| 6              | Current value of `RESOURCE_SCHEMA_VERSION`.               |
+| 6              | Added `metadata_frozen_at`; current value of `RESOURCE_SCHEMA_VERSION`.      |
 
 ### What is and is not a breaking change
 

@@ -369,6 +369,30 @@ fn get_missing_fails() {
 }
 
 #[test]
+fn test_get_resource_state() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "stateres");
+    let metadata = String::from_str(&env, "ipfs://meta");
+
+    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+
+    // Default state is Listed
+    let state = client.get_resource_state(&id);
+    assert_eq!(state, ResourceState::Listed);
+
+    // Delist the resource
+    client.delist(&id);
+    assert_eq!(client.get_resource_state(&id), ResourceState::Delisted);
+
+    // Non-existent resource should fail
+    let missing_id = String::from_str(&env, "missing");
+    assert_eq!(
+        client.try_get_resource_state(&missing_id),
+        Err(Ok(Error::NotFound))
+    );
+}
+
+#[test]
 fn get_many_preserves_order_and_missing_slots() {
     let (env, creator, client) = setup();
     let id_a = String::from_str(&env, "batcha");
@@ -3378,6 +3402,19 @@ fn initialize_network_records_and_exposes_current_ledger_id() {
     let expected = env.ledger().network_id();
 
     client.initialize_network(&expected);
+
+    assert_eq!(
+        env.events().all(),
+        soroban_sdk::vec![
+            &env,
+            (
+                client.address.clone(),
+                (symbol_short!("netinit"),).into_val(&env),
+                expected.into_val(&env),
+            ),
+        ]
+    );
+
     assert_eq!(client.network_id(), expected);
 }
 
@@ -3623,6 +3660,10 @@ fn full_workflow_emits_exactly_the_documented_events() {
         }
     }
 
+    let expected = env.ledger().network_id();
+    client.initialize_network(&expected); // -> "netinit"
+    record(&env, &client, &mut observed);
+
     let r0 = String::from_str(&env, "schemar0");
     client.register(
         &alice,
@@ -3798,6 +3839,91 @@ fn full_workflow_emits_exactly_the_documented_events() {
     );
 }
 
+// ── Fee configuration and basis-point calculation ───────────────────────────
+
+fn fee_amount(amount: i128, fee_bps: u32) -> i128 {
+    amount * i128::from(fee_bps) / i128::from(FEE_BPS_DENOM)
+}
+
+#[test]
+fn fee_amount_calculation_handles_zero_and_standard_rates() {
+    assert_eq!(fee_amount(1_000_000, 0), 0);
+    assert_eq!(fee_amount(1_000_000, 250), 25_000);
+    assert_eq!(fee_amount(1_000_000, 1_000), 100_000);
+}
+
+#[test]
+fn fee_amount_calculation_truncates_fractional_stroops() {
+    assert_eq!(fee_amount(101, 100), 1);
+    assert_eq!(fee_amount(99, 100), 0);
+}
+
+#[test]
+fn fee_amount_calculation_handles_maximum_rate_and_large_amount() {
+    assert_eq!(fee_amount(1_000_000, MAX_FEE_BPS), 500_000);
+    assert_eq!(
+        fee_amount(MAX_PRICE, MAX_FEE_BPS),
+        500_000_000_000_000_000
+    );
+}
+
+#[test]
+fn fee_config_accepts_zero_and_exact_combined_limit() {
+    let (env, _creator, admin, client) = setup_with_admin();
+
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 0,
+        royalty_bps: 0,
+        fee_recipient: None,
+    });
+    assert_eq!(client.get_fee_config().unwrap().platform_fee_bps, 0);
+
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: MAX_FEE_BPS / 2,
+        royalty_bps: MAX_FEE_BPS - (MAX_FEE_BPS / 2),
+        fee_recipient: Some(admin),
+    });
+    let config = client.get_fee_config().unwrap();
+    assert_eq!(config.platform_fee_bps + config.royalty_bps, MAX_FEE_BPS);
+    let _ = env;
+}
+
+#[test]
+fn fee_config_rejects_each_rate_above_maximum() {
+    let (_env, _creator, _admin, client) = setup_with_admin();
+
+    assert_eq!(
+        client.try_set_fee_config(&FeeConfig {
+            platform_fee_bps: MAX_FEE_BPS + 1,
+            royalty_bps: 0,
+            fee_recipient: None,
+        }),
+        Err(Ok(Error::FeeBpsTooHigh))
+    );
+    assert_eq!(
+        client.try_set_fee_config(&FeeConfig {
+            platform_fee_bps: 0,
+            royalty_bps: MAX_FEE_BPS + 1,
+            fee_recipient: None,
+        }),
+        Err(Ok(Error::FeeBpsTooHigh))
+    );
+}
+
+#[test]
+fn fee_config_rejects_combined_rates_above_maximum() {
+    let (_env, _creator, _admin, client) = setup_with_admin();
+
+    assert_eq!(
+        client.try_set_fee_config(&FeeConfig {
+            platform_fee_bps: MAX_FEE_BPS / 2 + 1,
+            royalty_bps: MAX_FEE_BPS / 2,
+            fee_recipient: None,
+        }),
+        Err(Ok(Error::TotalFeeTooHigh))
+    );
+}
+
 // ─── Test helpers for the role / verification / freeze / repair suites ────
 
 /// Like `setup`, but also installs `admin` as the contract admin via the
@@ -3934,6 +4060,40 @@ fn admin_can_dispute_resolve_and_tombstone_resource() {
         client.try_tombstone_resource(&id, &admin),
         Err(Ok(Error::InvalidLifecycleTransition))
     );
+}
+
+#[test]
+fn admin_can_emergency_delist_disputed_resource() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "emerdelist");
+
+    client.open_dispute(&id, &admin);
+    client.emergency_delist(&id, &admin);
+
+    let resource = client.get(&id);
+    assert_eq!(resource.state, ResourceState::Delisted);
+    assert!(!resource.listed);
+    assert_eq!(client.listed_count(), 0);
+}
+
+#[test]
+fn emergency_delist_requires_current_admin_and_disputed_state() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "emerdelist2");
+    let stranger = Address::generate(&env);
+
+    assert_eq!(
+        client.try_emergency_delist(&id, &stranger),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_emergency_delist(&id, &admin),
+        Err(Ok(Error::InvalidLifecycleTransition))
+    );
+
+    client.open_dispute(&id, &admin);
+    client.emergency_delist(&id, &admin);
+    assert_eq!(client.get(&id).state, ResourceState::Delisted);
 }
 
 #[test]
@@ -4158,11 +4318,19 @@ fn set_verification_status_emits_old_and_new_status() {
 
     let all = env.events().all();
     let (_contract, _topics, data) = all.get_unchecked(all.len() - 1);
-    let decoded: (VerificationStatus, VerificationStatus) =
-        <(VerificationStatus, VerificationStatus)>::try_from_val(&env, &data)
+    let (_contract, topics, data) = all.get_unchecked(all.len() - 1);
+    assert_eq!(topics.len(), 2);
+    let topic: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+    assert_eq!(topic, symbol_short!("verify"));
+    let topic_id: String = String::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
+    assert_eq!(topic_id, id);
+
+    let decoded: (VerificationStatus, VerificationStatus, Option<String>) =
+        <(VerificationStatus, VerificationStatus, Option<String>)>::try_from_val(&env, &data)
             .expect("failed to decode verification event");
     assert_eq!(decoded.0, VerificationStatus::Pending);
     assert_eq!(decoded.1, VerificationStatus::Verified);
+    assert_eq!(decoded.2, None);
 }
 
 #[test]
@@ -6976,69 +7144,92 @@ fn listed_count_starts_at_zero() {
 #[test]
 fn listed_count_increments_on_register() {
     let (env, creator, client) = setup();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
-    client.register(&creator, &"res2", &200i128, &String::from_str(&env, "ipfs://b"), &empty_tags(&env));
+    client.register(&creator, &String::from_str(&env, "res2"), &200i128, &String::from_str(&env, "ipfs://b"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 2);
 }
 
 #[test]
 fn listed_count_decrements_on_set_listed_false() {
     let (env, creator, client) = setup();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
-    client.set_listed(&"res1", &false);
+    client.set_listed(&String::from_str(&env, "res1"), &false);
     assert_eq!(client.listed_count(), 0);
 }
 
 #[test]
 fn listed_count_increments_when_relisted() {
     let (env, creator, client) = setup();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
-    client.set_listed(&"res1", &false);
+    client.set_listed(&String::from_str(&env, "res1"), &false);
     assert_eq!(client.listed_count(), 0);
-    client.set_listed(&"res1", &true);
+    client.set_listed(&String::from_str(&env, "res1"), &true);
     assert_eq!(client.listed_count(), 1);
 }
 
 #[test]
 fn listed_count_noop_when_already_in_target_state() {
     let (env, creator, client) = setup();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
     // set_listed(true) on an already-listed resource should not change count
-    client.set_listed(&"res1", &true);
+    client.set_listed(&String::from_str(&env, "res1"), &true);
     assert_eq!(client.listed_count(), 1);
 }
 
 #[test]
 fn listed_count_decrements_on_freeze() {
     let (env, creator, client) = setup();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &String::from_str(&env, "res1"),
+        &100i128,
+        &String::from_str(&env, "ipfs://a"),
+        &empty_tags(&env),
+    );
+    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
-    client.freeze_resource(&"res1");
+    client.freeze_resource(&String::from_str(&env, "res1"));
     assert_eq!(client.listed_count(), 0);
 }
 
 #[test]
 fn listed_count_decrements_on_tombstone() {
     let (env, creator, _admin, client) = setup_with_admin();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &String::from_str(&env, "res1"),
+        &100i128,
+        &String::from_str(&env, "ipfs://a"),
+        &empty_tags(&env),
+    );
+    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
-    client.tombstone_resource(&"res1", &_admin);
+    client.tombstone_resource(&String::from_str(&env, "res1"), &_admin);
     assert_eq!(client.listed_count(), 0);
 }
 
 #[test]
 fn listed_count_increments_when_dispute_resolved_to_listed() {
     let (env, creator, _admin, client) = setup_with_admin();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    client.register(
+        &creator,
+        &String::from_str(&env, "res1"),
+        &100i128,
+        &String::from_str(&env, "ipfs://a"),
+        &empty_tags(&env),
+    );
+    client.register(&creator, &String::from_str(&env, "res1"), &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
-    client.open_dispute(&"res1", &_admin);
+    client.open_dispute(&String::from_str(&env, "res1"), &_admin);
     assert_eq!(client.listed_count(), 0);
-    client.resolve_dispute(&"res1", &_admin, &ResourceState::Listed);
+    client.resolve_dispute(&String::from_str(&env, "res1"), &_admin, &ResourceState::Listed);
     assert_eq!(client.listed_count(), 1);
+}
+
 // ── Duplicate receipt buyer normalization (#683) ──────────────────────────────
 //
 // The duplicate-receipt guard is keyed on the exact `(resource_id, buyer)`
@@ -7348,7 +7539,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 18] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 23] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -7368,8 +7559,13 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 18] {
         (DataKey::Verifier(who.clone()), "Verifier", 2),
         (DataKey::NetworkId, "NetworkId", 1),
         (
-            DataKey::PaymentReceipt(id.clone(), who.clone()),
+            DataKey::PaymentReceipt(id.clone()),
             "PaymentReceipt",
+            2,
+        ),
+        (
+            DataKey::PaymentIndex(id.clone(), who.clone()),
+            "PaymentIndex",
             3,
         ),
         (
@@ -7381,7 +7577,11 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 18] {
         (DataKey::FeeConfig, "FeeConfig", 1),
         (DataKey::Moderator(who.clone()), "Moderator", 2),
         (DataKey::DisputeFlag(id.clone()), "DisputeFlag", 2),
+        (DataKey::Paused, "Paused", 1),
+        (DataKey::Settler(who.clone()), "Settler", 2),
+        (DataKey::ListedCount, "ListedCount", 1),
         (DataKey::FlagReasonHash(id.clone()), "FlagReasonHash", 2),
+        (DataKey::AttestationHash(id), "AttestationHash", 2),
     ]
 }
 
@@ -7423,7 +7623,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        18,
+        23,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -7440,13 +7640,18 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::PendingTransfer(_) => "PendingTransfer",
             DataKey::Verifier(_) => "Verifier",
             DataKey::NetworkId => "NetworkId",
-            DataKey::PaymentReceipt(_, _) => "PaymentReceipt",
+            DataKey::PaymentReceipt(_) => "PaymentReceipt",
+            DataKey::PaymentIndex(_, _) => "PaymentIndex",
             DataKey::PurchaseReceipt(_, _) => "PurchaseReceipt",
             DataKey::TagIndex(_) => "TagIndex",
             DataKey::FeeConfig => "FeeConfig",
             DataKey::Moderator(_) => "Moderator",
             DataKey::DisputeFlag(_) => "DisputeFlag",
+            DataKey::Paused => "Paused",
+            DataKey::Settler(_) => "Settler",
+            DataKey::ListedCount => "ListedCount",
             DataKey::FlagReasonHash(_) => "FlagReasonHash",
+            DataKey::AttestationHash(_) => "AttestationHash",
         };
         assert_eq!(
             matched, *name,
@@ -7512,20 +7717,32 @@ fn address_keyed_variants_do_not_collide_for_one_address() {
 }
 
 #[test]
-fn receipt_keys_are_scoped_to_both_resource_and_counterparty() {
+fn receipt_and_payment_index_keys_remain_distinct() {
+fn receipt_and_payment_index_keys_stay_distinct() {
     let (env, _creator, client) = setup();
+    let receipt_a = String::from_str(&env, "receipta");
+    let receipt_b = String::from_str(&env, "receiptb");
     let res_a = String::from_str(&env, "resa");
     let res_b = String::from_str(&env, "resb");
     let party_a = Address::generate(&env);
     let party_b = Address::generate(&env);
 
-    // A two-argument key must vary in *both* arguments; a key that ignored the
-    // payer would let one buyer's receipt overwrite another's.
+    // PaymentReceipt is keyed by receipt id only. PaymentIndex separately
+    // scopes lookup by (resource, payer), and both wire shapes must remain
+    // distinct from purchase receipt anchors.
     env.as_contract(&client.address, || {
         let keys = [
-            DataKey::PaymentReceipt(res_a.clone(), party_a.clone()),
-            DataKey::PaymentReceipt(res_a.clone(), party_b.clone()),
-            DataKey::PaymentReceipt(res_b.clone(), party_a.clone()),
+            DataKey::PaymentReceipt(String::from_str(&env, "receipt-a")),
+            DataKey::PaymentReceipt(String::from_str(&env, "receipt-b")),
+    // PaymentReceipt is keyed by receipt_id alone. PaymentIndex is the
+    // resource/counterparty index and must vary in both of its arguments.
+    env.as_contract(&client.address, || {
+        let keys = [
+            DataKey::PaymentReceipt(receipt_a.clone()),
+            DataKey::PaymentReceipt(receipt_b.clone()),
+            DataKey::PaymentIndex(res_a.clone(), party_a.clone()),
+            DataKey::PaymentIndex(res_a.clone(), party_b.clone()),
+            DataKey::PaymentIndex(res_b.clone(), party_a.clone()),
             DataKey::PurchaseReceipt(res_a.clone(), party_a.clone()),
             DataKey::PurchaseReceipt(res_b.clone(), party_b.clone()),
         ];
@@ -7536,8 +7753,10 @@ fn receipt_keys_are_scoped_to_both_resource_and_counterparty() {
             assert_eq!(
                 env.storage().persistent().get::<DataKey, u32>(key),
                 Some(marker as u32),
-                "receipt key {marker} collided — receipts must be scoped to both \
-                 the resource and the counterparty"
+                "receipt/payment index key {marker} collided — distinct current \
+                 key variants and fields must remain independently addressable"
+                "receipt/payment key {marker} collided — distinct keys must not \
+                 share a storage address"
             );
         }
     });
@@ -7742,6 +7961,9 @@ fn readme_version_compatibility_names_the_breaking_changes() {
     assert!(
         section.contains("crate_version") && section.contains("resource_schema_version"),
         "the compatibility section must distinguish the two reported versions"
+    );
+}
+
 // ── Reporting anchor failures as events ──────────────────────────────────────
 //
 // `anchor_purchase_receipt` reverts on a rejected anchor, and a Soroban error
@@ -8215,78 +8437,48 @@ proptest! {
 // entry class grows past its documented allowance, so growth has to be an
 // explicit decision recorded in the doc rather than a silent regression.
 
-/// Which storage map an entry lives in. Instance entries share the contract's
-/// instance TTL; persistent entries are archived independently.
-#[derive(Copy, Clone, Debug, PartialEq)]
-enum StorageKind {
-    Persistent,
-    Instance,
-}
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(30))]
+    #[test]
+    fn test_duplicate_resource_id_property(
+        ids in prop::collection::vec(r"[a-z0-9]{1,24}", 1..=20),
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(VaultRegistry, ());
+        let client = VaultRegistryClient::new(&env, &contract_id);
+        let creator = Address::generate(&env);
+        let meta = String::from_str(&env, "ipfs://fuzztest");
 
-/// One measured entry: the XDR-encoded size of its key and its value.
-struct FootprintRow {
-    label: &'static str,
-    kind: StorageKind,
-    key_bytes: usize,
-    value_bytes: usize,
-    /// Maximum `key_bytes + value_bytes` this entry class may occupy before
-    /// the report fails. See `docs/contract-storage-footprint.md`.
-    budget: usize,
-}
+        let mut registered = alloc::vec::Vec::new();
+        let mut expected_count = 0;
 
-impl FootprintRow {
-    fn total(&self) -> usize {
-        self.key_bytes + self.value_bytes
+        for id_str in ids {
+            let is_reserved = id_str == "admin"
+                || id_str == "null"
+                || id_str == "registry"
+                || id_str == "api"
+                || id_str == "index"
+                || id_str == "root"
+                || id_str == "system";
+            if is_reserved {
+                continue;
+            }
+
+            let id = String::from_str(&env, &id_str);
+            let already_registered = registered.contains(&id_str);
+
+            let res = client.try_register(&creator, &id, &100i128, &meta, &empty_tags(&env));
+            if already_registered {
+                assert_eq!(res, Err(Ok(Error::AlreadyRegistered)));
+            } else {
+                assert!(res.is_ok());
+                registered.push(id_str);
+                expected_count += 1;
+            }
+            assert_eq!(client.count(), expected_count);
+        }
     }
 }
 
-/// XDR-encoded byte length of any contract value.
-///
-/// This is the `ScVal` payload only — the size the contract itself controls.
-/// A live ledger entry adds host-side envelope and TTL metadata on top, so
-/// treat these numbers as a floor and a comparison baseline across changes,
-/// not as an exact rent quote.
-fn xdr_len<T: IntoVal<Env, soroban_sdk::Val>>(env: &Env, value: T) -> usize {
-    use soroban_sdk::xdr::{Limits, ScVal, WriteXdr};
-    let val: soroban_sdk::Val = value.into_val(env);
-    ScVal::try_from_val(env, &val)
-        .expect("every stored contract value must be ScVal-encodable")
-        .to_xdr(Limits::none())
-        .expect("ScVal encoding must not exceed XDR limits")
-        .len()
-}
-
-/// Measure the entry stored under `key`, or `None` if nothing is stored there.
-fn measure_entry(
-    env: &Env,
-    contract: &Address,
-    label: &'static str,
-    key: DataKey,
-    kind: StorageKind,
-    budget: usize,
-) -> Option<FootprintRow> {
-    let key_bytes = xdr_len(env, key.clone());
-    let stored: Option<soroban_sdk::Val> = env.as_contract(contract, || match kind {
-        StorageKind::Persistent => env.storage().persistent().get(&key),
-        StorageKind::Instance => env.storage().instance().get(&key),
-    });
-    stored.map(|value| FootprintRow {
-        label,
-        kind,
-        key_bytes,
-        value_bytes: xdr_len(env, value),
-        budget,
-    })
-}
-
-include!("test/core_catalog.rs");
-include!("test/metadata_updates.rs");
-include!("test/tags.rs");
-include!("test/schema_registry.rs");
-include!("test/lifecycle_roles.rs");
-include!("test/hardening_preflight.rs");
-include!("test/payments.rs");
-include!("test/moderation_pause.rs");
-include!("test/properties_events.rs");
-include!("test/purchase_receipts.rs");
 include!("test/storage_footprint.rs");

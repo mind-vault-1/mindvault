@@ -695,3 +695,74 @@ fn record_payment_does_not_mutate_resource() {
         "record_payment must not affect catalog order"
     );
 }
+
+/// Payment receipt amount must match the resource's current price.
+/// This test locks down the amount consistency invariant:
+/// - VALID: amount == resource.price → succeeds
+/// - INVALID: amount != resource.price → PaymentAmountMismatch
+#[test]
+fn record_payment_amount_must_match_resource_price() {
+    let (env, creator, _admin, settler, client) = setup_with_settler();
+    
+    // Register a resource with price 1_000_000 stroops (0.10 USDC)
+    let id = String::from_str(&env, "payrecpricematch");
+    client.register(
+        &creator,
+        &id,
+        &1_000_000i128,
+        &String::from_str(&env, "ipfs://test"),
+        &empty_tags(&env),
+    );
+    
+    let resource = client.get(&id);
+    assert_eq!(resource.price, 1_000_000i128);
+
+    // VALID CASE: amount matches resource price
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "rcptvalid"),
+        &id,
+        &creator,
+        &1_000_000i128, // matches resource.price
+        &String::from_str(&env, "txhashvalid"),
+    );
+    
+    let receipt = client.get_payment(&String::from_str(&env, "rcptvalid"));
+    assert_eq!(receipt.amount, 1_000_000i128);
+    assert_eq!(receipt.resource_id, id);
+    assert_eq!(receipt.state, PaymentState::Escrowed);
+
+    // INVALID CASE: amount does NOT match resource price (too low)
+    let res_low = client.try_record_payment(
+        &settler,
+        &String::from_str(&env, "rcptlow"),
+        &id,
+        &creator,
+        &500_000i128, // does not match resource.price
+        &String::from_str(&env, "txhashlow"),
+    );
+    assert_eq!(res_low, Err(Ok(Error::PaymentAmountMismatch)));
+
+    // INVALID CASE: amount does NOT match resource price (too high)
+    let res_high = client.try_record_payment(
+        &settler,
+        &String::from_str(&env, "rcpthigh"),
+        &id,
+        &creator,
+        &2_000_000i128, // does not match resource.price
+        &String::from_str(&env, "txhashhigh"),
+    );
+    assert_eq!(res_high, Err(Ok(Error::PaymentAmountMismatch)));
+    
+    // Verify that failed attempts didn't create receipts
+    assert_eq!(
+        client.try_get_payment(&String::from_str(&env, "rcptlow")),
+        Err(Ok(Error::NotFound)),
+        "rejected payment must not persist a receipt"
+    );
+    assert_eq!(
+        client.try_get_payment(&String::from_str(&env, "rcpthigh")),
+        Err(Ok(Error::NotFound)),
+        "rejected payment must not persist a receipt"
+    );
+}
