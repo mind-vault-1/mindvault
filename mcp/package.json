@@ -31,6 +31,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx src/index.ts",
+    "generate-fixtures": "tsx scripts/generate-fixtures.ts",
+    "generate-tool-docs": "tsx scripts/generate-tool-docs.ts",
     "smoke": "tsx scripts/smoke.ts",
     "smoke:install": "tsx scripts/install-smoke.ts",
     "test": "vitest run",

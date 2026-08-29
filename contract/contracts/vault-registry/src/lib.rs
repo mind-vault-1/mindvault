@@ -45,6 +45,10 @@ pub const MAX_RESOURCE_ID_LEN: u32 = 24;
 /// easy to find, document, and change in a single place instead of
 /// scattered `limit.min(20)` literals.
 pub const LIST_PAGE_CAP: u32 = 20;
+/// Maximum number of resources that can be registered in a single batch
+/// via `register_batch`. Keeps execution bounded and prevents transaction
+/// timeouts.
+pub const MAX_BATCH_REGISTER: u32 = 10;
 
 // ── Fee / royalty configuration ──────────────────────────────────────────────
 /// Fee basis-point ceiling: 50 % (5 000 bp). Neither platform_fee_bps nor
@@ -83,10 +87,12 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Resource lifecycle ────────────────────────────────────────────────
     ("register", "creator"),
     ("register_with_hash", "creator"),
+    ("register_batch", "creator"),
     ("set_price", "creator"),
     ("update_metadata", "creator"),
     ("freeze_metadata", "creator"),
     ("set_tags", "creator"),
+    ("set_royalty_recipient", "creator"),
     ("set_listed", "creator"),
     ("delist", "creator"),
     ("freeze_resource", "creator"),
@@ -94,6 +100,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("resolve_dispute", "admin"),
     ("emergency_delist", "admin"),
     ("tombstone_resource", "admin"),
+    ("reactivate_resource", "creator"),
     // ── Ownership transfer ────────────────────────────────────────────────
     ("transfer_ownership", "creator"),
     ("propose_transfer", "creator"),
@@ -116,8 +123,6 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("list_by_creator", "—"),
     ("list_by_tag", "—"),
     ("list_by_dispute_status", "—"),
-    ("list_by_verification_status", "—"),
-    ("list_payments", "—"),
     // ── Verification ──────────────────────────────────────────────────────
     ("add_verifier", "admin"),
     ("remove_verifier", "admin"),
@@ -157,6 +162,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Fees ──────────────────────────────────────────────────────────────
     ("set_fee_config", "admin"),
     ("get_fee_config", "—"),
+    ("set_fee_recipient", "admin"),
     // ── Index repair ──────────────────────────────────────────────────────
     ("repair_index", "admin"),
     ("repair_tag_index", "admin"),
@@ -226,6 +232,10 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (43, "InvalidPaymentTransition", "The requested payment receipt state transition is not allowed (e.g. settling an already-settled receipt)."),
     (44, "InvalidReceiptId", "`receipt_id` is empty or exceeds `MAX_RECEIPT_ID_LEN` (64 bytes)."),
     (45, "ContentHashTooLong", "`content_hash` exceeds `MAX_CONTENT_HASH_LEN` (128 bytes)."),
+    (46, "AttestationHashTooLong", "`attestation_hash` exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes)."),
+    (47, "PaymentAmountMismatch", "Payment receipt amount does not match the resource's current price."),
+    (48, "DuplicateTxHash", "A payment receipt is already stored for the supplied settlement transaction hash (`tx_hash`)."),
+    (49, "FeeConfigNotSet", "`set_fee_recipient` was called before any fee config was set via `set_fee_config`."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -251,6 +261,7 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
         "settags",
         "(prev_tags: Vec<String>, next_tags: Vec<String>)",
     ),
+    ("setroyal", "(old_recipient: Option<Address>, new_recipient: Option<Address>)"),
     ("transfer", "(previous_owner: Address, new_owner: Address)"),
     ("propose", "(owner: Address, proposed: Address)"),
     ("cancel", "owner: Address"),
@@ -293,6 +304,7 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("unflag", "resource id"),
     ("flagrsn", "(moderator: Address, reason_hash: String)"),
     ("retagidx", "new_count: u32"),
+    ("reactive", "resource id"),
     ("setfee", "FeeConfigUpdated { old_config, new_config }"),
     ("ttlext", "()"),
 ];
@@ -444,6 +456,32 @@ pub struct Resource {
     /// once at registration via `register_with_hash`. `None` for resources
     /// registered through plain `register`.
     pub content_hash: Option<String>,
+    /// Optional per-resource royalty recipient override. When set, royalties
+    /// for this resource go to this address instead of the global fee_recipient.
+    /// Only the resource creator may set this field via `set_royalty_recipient`.
+    pub royalty_recipient: Option<Address>,
+}
+
+/// Input for a single resource in a batch registration.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatchRegisterItem {
+    pub id: String,
+    pub price: i128,
+    pub metadata: String,
+    pub tags: Vec<String>,
+    pub content_hash: Option<String>,
+}
+
+/// Result of a batch registration attempt. Contains successfully registered
+/// resource IDs and any errors encountered (with their indices).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatchRegisterResult {
+    /// Resource IDs that were successfully registered (in order).
+    pub succeeded: Vec<String>,
+    /// Indices (into the input batch) of items that failed, paired with their error codes.
+    pub failed: Vec<(u32, u32)>,
 }
 
 /// Structured payload emitted by `register()`.
@@ -494,6 +532,10 @@ pub enum DataKey {
     /// the most recent payment recorded for that pair, so escrow/lease
     /// contracts can look up a settlement without scanning event history.
     PaymentIndex(String, Address),
+    /// Secondary index mapping a settlement transaction hash to the
+    /// `receipt_id` recorded for it, guaranteeing one payment receipt per
+    /// Stellar tx (`DuplicateTxHash` on reuse).
+    PaymentTxHash(String),
     /// Emergency pause flag. When `true`, every state-changing method
     /// returns `ContractPaused`.
     Paused,
@@ -741,6 +783,11 @@ pub enum Error {
     AttestationHashTooLong = 46,
     /// Payment receipt amount does not match the resource's current price.
     PaymentAmountMismatch = 47,
+    /// A payment receipt is already stored for the supplied settlement
+    /// transaction hash (`tx_hash`); a single Stellar tx must map to one receipt.
+    DuplicateTxHash = 48,
+    /// `set_fee_recipient` was called before any fee config was set via `set_fee_config`.
+    FeeConfigNotSet = 48,
 }
 
 #[contract]
@@ -780,6 +827,63 @@ impl VaultRegistry {
         content_hash: Option<String>,
     ) -> Result<(), Error> {
         Self::register_internal(env, creator, id, price, metadata, tags, content_hash)
+    }
+
+    /// Register multiple resources in a single transaction. The batch is capped
+    /// at [`MAX_BATCH_REGISTER`] (10) to bound execution cost. All resources
+    /// are registered under the same `creator`.
+    ///
+    /// Returns a [`BatchRegisterResult`] containing:
+    /// - `succeeded`: IDs of successfully registered resources
+    /// - `failed`: Indices and error codes of failed registrations
+    ///
+    /// This function continues processing after individual failures, allowing
+    /// partial success. The creator is authorized once at the start, and each
+    /// resource is validated independently. Common failure causes include
+    /// duplicate IDs, invalid prices, or invalid metadata pointers.
+    ///
+    /// Use case: Bulk onboarding of resources by publishers or automated systems.
+    pub fn register_batch(
+        env: Env,
+        creator: Address,
+        items: Vec<BatchRegisterItem>,
+    ) -> Result<BatchRegisterResult, Error> {
+        creator.require_auth();
+        Self::require_not_paused(&env)?;
+
+        if items.len() > MAX_BATCH_REGISTER {
+            return Err(Error::BatchTooLarge);
+        }
+
+        let mut succeeded: Vec<String> = Vec::new(&env);
+        let mut failed: Vec<(u32, u32)> = Vec::new(&env);
+
+        for i in 0..items.len() {
+            let item = items.get(i).unwrap();
+            
+            // Attempt to register this resource
+            let result = Self::register_internal(
+                env.clone(),
+                creator.clone(),
+                item.id.clone(),
+                item.price,
+                item.metadata.clone(),
+                item.tags.clone(),
+                item.content_hash.clone(),
+            );
+
+            match result {
+                Ok(()) => {
+                    succeeded.push_back(item.id.clone());
+                }
+                Err(e) => {
+                    // Record the failure index and error code
+                    failed.push_back((i, e as u32));
+                }
+            }
+        }
+
+        Ok(BatchRegisterResult { succeeded, failed })
     }
 
     /// Update a resource's price. Rejects `new_price <= 0` or `new_price > MAX_PRICE`.
@@ -983,6 +1087,34 @@ impl VaultRegistry {
         Ok(())
     }
 
+    /// Set a per-resource royalty recipient override. Only the creator may call
+    /// this. When set, royalties for this resource will go to this address instead
+    /// of the global `fee_recipient` from `FeeConfig`. Set to `None` to clear the
+    /// override and use the global recipient.
+    ///
+    /// Emits a `setroyal` event with the old and new recipient addresses.
+    pub fn set_royalty_recipient(
+        env: Env,
+        id: String,
+        recipient: Option<Address>,
+    ) -> Result<(), Error> {
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&id)?;
+        let mut resource = Self::load(&env, &id)?;
+        resource.creator.require_auth();
+        Self::ensure_mutable(&resource)?;
+
+        let old_recipient = resource.royalty_recipient.clone();
+        resource.royalty_recipient = recipient.clone();
+        Self::save(&env, &mut resource);
+
+        env.events().publish(
+            (symbol_short!("setroyal"), id),
+            (old_recipient, recipient),
+        );
+        Ok(())
+    }
+
     pub fn transfer_ownership(env: Env, id: String, new_creator: Address) -> Result<(), Error> {
         Self::require_not_paused(&env)?;
         Self::validate_resource_id(&id)?;
@@ -1128,8 +1260,9 @@ impl VaultRegistry {
     }
 
     /// Freeze an otherwise active resource. The creator may freeze a listed or
-    /// delisted resource, but only an admin can restore it through dispute
-    /// resolution. This lifecycle freeze is separate from `freeze_metadata`.
+    /// delisted resource, and may restore it (or a post-dispute `Frozen`
+    /// resolution) through `reactivate_resource`. This lifecycle freeze is
+    /// separate from `freeze_metadata`.
     pub fn freeze_resource(env: Env, id: String) -> Result<(), Error> {
         Self::require_not_paused(&env)?;
         Self::validate_resource_id(&id)?;
@@ -1188,6 +1321,43 @@ impl VaultRegistry {
             return Err(Error::InvalidLifecycleTransition);
         }
         Self::transition_state(&env, &mut resource, ResourceState::Delisted);
+        Ok(())
+    }
+
+    /// Reactivate a resource that was resolved out of a dispute (or otherwise
+    /// left inactive) back to the public `Listed` state. Only the creator may
+    /// call this, and only while the resource is `Frozen` or `Delisted`.
+    ///
+    /// `Disputed` resources have no creator exit: an admin must resolve the
+    /// dispute first, and `Tombstoned` resources are terminal — reactivation
+    /// from either fails with `InvalidLifecycleTransition`.
+    ///
+    /// Mirrors `set_listed(id, true)` for the `Delisted` case but is the only
+    /// creator path out of `Frozen`, and always flips the `listed` projection
+    /// and listed-count index back to active.
+    ///
+    /// Emits a `reactive` event whose topic carries the resource `id`.
+    ///
+    /// Errors deterministically:
+    /// - [`Error::Unauthorized`] — caller is not the resource creator
+    /// - [`Error::InvalidLifecycleTransition`] — resource is not `Frozen` or
+    ///   `Delisted` (e.g. still `Disputed`, already `Listed`, or `Tombstoned`)
+    /// - [`Error::InvalidResourceId`] — `id` fails format validation
+    /// - [`Error::NotFound`] — `id` is not a registered resource
+    /// - [`Error::ContractPaused`] — the registry is paused
+    pub fn reactivate_resource(env: Env, id: String) -> Result<(), Error> {
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&id)?;
+        let mut resource = Self::load(&env, &id)?;
+        resource.creator.require_auth();
+        if !matches!(
+            resource.state,
+            ResourceState::Frozen | ResourceState::Delisted
+        ) {
+            return Err(Error::InvalidLifecycleTransition);
+        }
+        Self::transition_state(&env, &mut resource, ResourceState::Listed);
+        env.events().publish((symbol_short!("reactive"), id), ());
         Ok(())
     }
 
@@ -1550,10 +1720,11 @@ impl VaultRegistry {
         Self::load(&env, &id)
     }
 
-    /// Read the full state of a single resource. Errors with `NotFound` if absent.
-    pub fn get_resource_state(env: Env, id: String) -> Result<Resource, Error> {
+    /// Fetch the current lifecycle state of a resource. Errors with `NotFound` if absent.
+    pub fn get_resource_state(env: Env, id: String) -> Result<ResourceState, Error> {
         Self::validate_resource_id(&id)?;
-        Self::load(&env, &id)
+        let resource = Self::load(&env, &id)?;
+        Ok(resource.state)
     }
 
     /// Read several resources in one invocation, preserving input order.
@@ -1927,6 +2098,43 @@ impl VaultRegistry {
         env.storage().instance().get(&DataKey::FeeConfig)
     }
 
+    /// Update only the fee recipient address without changing fee rates.
+    /// Only the admin may call this. Errors `AdminNotSet` if no admin has been
+    /// set yet, or `FeeConfigNotSet` if `set_fee_config` has never been called.
+    ///
+    /// This is a convenience method that allows updating the recipient without
+    /// having to re-specify the existing `platform_fee_bps` and `royalty_bps`.
+    /// Emits a `setfee` event with the old and new complete `FeeConfig`.
+    pub fn set_fee_recipient(env: Env, recipient: Option<Address>) -> Result<(), Error> {
+        let admin = Self::require_admin(&env)?;
+        admin.require_auth();
+        Self::require_not_paused(&env)?;
+
+        // Retrieve existing fee config
+        let mut config = env
+            .storage()
+            .instance()
+            .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
+            .ok_or(Error::FeeConfigNotSet)?;
+
+        let old_config = OptFeeConfig::Some(config.clone());
+        
+        // Update only the recipient
+        config.fee_recipient = recipient;
+        
+        env.storage().instance().set(&DataKey::FeeConfig, &config);
+        Self::bump_instance(&env);
+
+        env.events().publish(
+            (symbol_short!("setfee"),),
+            FeeConfigUpdated {
+                old_config,
+                new_config: config,
+            },
+        );
+        Ok(())
+    }
+
     /// Store a hash of creator marketplace terms.
     pub fn set_terms_hash(env: Env, creator: Address, terms_hash: String) -> Result<(), Error> {
         creator.require_auth();
@@ -1997,6 +2205,7 @@ impl VaultRegistry {
     /// - `amount` must match the resource's current price
     ///   (`PaymentAmountMismatch` otherwise).
     /// - `tx_hash` must be non-empty and at most 128 bytes (`InvalidTxHash`).
+    /// - `tx_hash` must not already back another receipt (`DuplicateTxHash`).
     ///
     /// Emits a `payment` event whose data is the full [`PaymentReceipt`] so
     /// off-chain indexers can index the receipt without reading contract
@@ -2034,6 +2243,13 @@ impl VaultRegistry {
         if env.storage().persistent().has(&receipt_key) {
             return Err(Error::ReceiptAlreadyExists);
         }
+        // A single Stellar transaction must settle at most one receipt: the
+        // tx hash is the ground truth the facilitator records against, so two
+        // receipts with the same tx_hash would double-count one payment.
+        let tx_hash_key = DataKey::PaymentTxHash(tx_hash.clone());
+        if env.storage().persistent().has(&tx_hash_key) {
+            return Err(Error::DuplicateTxHash);
+        }
         let receipt = PaymentReceipt {
             receipt_id: receipt_id.clone(),
             resource_id: resource_id.clone(),
@@ -2048,12 +2264,15 @@ impl VaultRegistry {
         env.storage().persistent().set(&receipt_key, &receipt);
         Self::bump_persistent(&env, &receipt_key);
 
-        // Secondary index: `(resource_id, payer)` -> most recent receipt id,
-        // so `get_payment_receipt` can resolve a settlement without scanning
-        // event history.
+        // Secondary indexes: `(resource_id, payer)` -> most recent receipt id
+        // (for `get_payment_receipt`), and `tx_hash` -> receipt id (enforces
+        // one receipt per Stellar settlement transaction).
         let index_key = DataKey::PaymentIndex(resource_id, payer);
         env.storage().persistent().set(&index_key, &receipt_id);
         Self::bump_persistent(&env, &index_key);
+
+        env.storage().persistent().set(&tx_hash_key, &receipt_id);
+        Self::bump_persistent(&env, &tx_hash_key);
 
         env.events()
             .publish((symbol_short!("payment"), receipt_id), receipt);
@@ -3010,6 +3229,7 @@ impl VaultRegistry {
             schema_version: RESOURCE_SCHEMA_VERSION,
             version: 1,
             content_hash: content_hash.clone(),
+            royalty_recipient: None,
         };
         env.storage().persistent().set(&key, &resource);
         Self::bump_persistent(&env, &key);

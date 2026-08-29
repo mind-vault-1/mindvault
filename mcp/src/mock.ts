@@ -24,7 +24,7 @@ export function mockEnabledFromEnv(env: NodeJS.ProcessEnv): boolean {
   return typeof raw === "string" && TRUTHY.has(raw.trim().toLowerCase());
 }
 
-interface MockResource {
+export interface MockResource {
   id: string;
   title: string;
   description: string;
@@ -34,30 +34,45 @@ interface MockResource {
   accessUrl: string;
 }
 
+export interface MockRegistryResource {
+  id: string;
+  creator: string;
+  price: string;
+  metadata: string;
+  listed: boolean;
+  tags: string[];
+}
+
+/**
+ * Catalog resources seeded into the in-memory mock. Exported so the fixture
+ * generation script (`scripts/generate-fixtures.ts`) can serialise them to
+ * `fixtures/` without duplicating the source data.
+ */
+export const MOCK_CATALOG_RESOURCES: MockResource[] = [
+  {
+    id: "mock-1",
+    title: "Intro to Stellar Smart Contracts",
+    description: "A beginner guide to Soroban.",
+    price: "1.5",
+    resourceType: "link",
+    verificationStatus: "verified",
+    accessUrl: "https://example.com/mock-1",
+  },
+  {
+    id: "mock-2",
+    title: "x402 Payments Cheat Sheet",
+    description: "Pay-per-use HTTP flows with USDC.",
+    price: "0.5",
+    resourceType: "link",
+    verificationStatus: "verified",
+    accessUrl: "https://example.com/mock-2",
+  },
+];
+
 /** Two seeded resources so browse/preview/registry return content out of the box. */
 function seedResources(): Map<string, MockResource> {
   const resources = new Map<string, MockResource>();
-  const seed: MockResource[] = [
-    {
-      id: "mock-1",
-      title: "Intro to Stellar Smart Contracts",
-      description: "A beginner guide to Soroban.",
-      price: "1.5",
-      resourceType: "link",
-      verificationStatus: "verified",
-      accessUrl: "https://example.com/mock-1",
-    },
-    {
-      id: "mock-2",
-      title: "x402 Payments Cheat Sheet",
-      description: "Pay-per-use HTTP flows with USDC.",
-      price: "0.5",
-      resourceType: "link",
-      verificationStatus: "verified",
-      accessUrl: "https://example.com/mock-2",
-    },
-  ];
-  for (const r of seed) resources.set(r.id, r);
+  for (const r of MOCK_CATALOG_RESOURCES) resources.set(r.id, r);
   return resources;
 }
 
@@ -110,7 +125,9 @@ async function normalizeRequest(
  * calls. Paid endpoints return 200 directly, so the x402 wrapper passes through
  * without a payment challenge — exactly as scripts/mock-server.ts does.
  */
-export function createMockFetch(getActivePublicKey?: () => string | undefined | null): typeof fetch {
+export function createMockFetch(
+  getActivePublicKey?: () => string | undefined | null,
+): typeof fetch {
   const resources = seedResources();
   let counter = 0;
 
@@ -262,7 +279,11 @@ function isSorobanRpc(body: string): boolean {
   return parsed?.jsonrpc === "2.0" && typeof parsed?.method === "string";
 }
 
-export function mockRegistryLookup(resourceId: string, contractId: string, activePublicKey?: string | null): string {
+export function mockRegistryLookup(
+  resourceId: string,
+  contractId: string,
+  activePublicKey?: string | null,
+): string {
   const seeded: Record<string, { creator: string; price: string; metadata: string }> = {
     "mock-1": { creator: "GMOCKCREATOR1", price: "1.5000000", metadata: "Intro to Stellar" },
     "mock-2": { creator: "GMOCKCREATOR2", price: "0.5000000", metadata: "x402 Cheat Sheet" },
@@ -365,14 +386,18 @@ export function mockSetListed(resourceId: string, listed: boolean): string {
   );
 }
 
-const MOCK_REGISTRY_RESOURCES = [
+/**
+ * On-chain registry resources seeded into the mock. Exported so the fixture
+ * generation script can serialise them alongside the catalog fixtures.
+ */
+export const MOCK_REGISTRY_RESOURCES: MockRegistryResource[] = [
   {
     id: "mock-1",
     creator: "GMOCKCREATOR1",
     price: "1.5000000 USDC",
     metadata: "Intro to Stellar",
     listed: true,
-    tags: [] as string[],
+    tags: [],
   },
   {
     id: "mock-2",
@@ -380,14 +405,19 @@ const MOCK_REGISTRY_RESOURCES = [
     price: "0.5000000 USDC",
     metadata: "x402 Cheat Sheet",
     listed: true,
-    tags: [] as string[],
+    tags: [],
   },
 ];
 
 /**
  * Stand-in for on-chain registry list(). Paginates the same seeded rows as lookup.
  */
-export function mockRegistryList(start: number, limit: number, contractId: string, activePublicKey?: string | null): string {
+export function mockRegistryList(
+  start: number,
+  limit: number,
+  contractId: string,
+  activePublicKey?: string | null,
+): string {
   const allResources = [...MOCK_REGISTRY_RESOURCES];
   if (activePublicKey) {
     allResources.push({
