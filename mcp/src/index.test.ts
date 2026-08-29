@@ -69,6 +69,11 @@ import {
   _setAgentApiKey,
   _resetProfiles,
 } from "./index.js";
+import {
+  recordCatalogSnapshot,
+  recordPreviewSnapshot,
+  _clearCatalogCache,
+} from "./catalogCache.js";
 
 function mockResponse(data: unknown, ok = true, status = 200): Response {
   const body = JSON.stringify(data);
@@ -2068,5 +2073,85 @@ describe("state-mutating calls are serialized (#550)", () => {
     const list = listProfiles();
     expect(list).toContain("buyer");
     expect(list).toContain("bob — GPTESTBOB");
+  });
+});
+
+// ── offline catalog cache fallback (#556) ────────────────────────────────────
+
+describe("offline catalog cache fallback (#556)", () => {
+  beforeEach(() => {
+    _clearCatalogCache();
+    _resetProfiles();
+  });
+
+  afterEach(() => {
+    _clearCatalogCache();
+    _resetProfiles();
+    vi.restoreAllMocks();
+  });
+
+  const catalogItem = {
+    id: "c1",
+    title: "Cached One",
+    price: "3",
+    description: "A cached resource",
+    accessUrl: "https://example.com/c1",
+  };
+
+  it("browse serves the cached snapshot with an age label when the API is unreachable", async () => {
+    recordCatalogSnapshot([catalogItem]);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED: Connection refused"));
+
+    const out = await browse();
+    expect(out).toContain("[c1] Cached One");
+    expect(out).toContain("Offline catalog snapshot served");
+    expect(out).toContain("cached");
+  });
+
+  it("search applies filters to the cached snapshot and labels it when offline", async () => {
+    recordCatalogSnapshot([catalogItem]);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const out = await search("Cached");
+    expect(out).toContain("[c1] Cached One");
+    expect(out).toContain("Offline catalog snapshot served");
+
+    const empty = await search("no-match-whatsoever");
+    expect(empty).toContain("No resources match");
+  });
+
+  it("preview serves the cached meta with an age label when unreachable", async () => {
+    recordPreviewSnapshot("res-9", {
+      id: "res-9",
+      title: "Cached Preview",
+      price: "4",
+      description: "D",
+      resourceType: "article",
+      verificationStatus: "verified",
+      accessUrl: "https://example.com/9",
+    });
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const parsed = JSON.parse(await preview("res-9"));
+    expect(parsed.title).toBe("Cached Preview");
+    expect(parsed.offlineCache).toContain("Offline catalog snapshot served");
+  });
+
+  it("rethrows the deterministic reachability error when there is no cache", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED: Connection refused"));
+    await expect(browse()).rejects.toThrow();
+    await expect(preview("res-9")).rejects.toThrow();
+  });
+
+  it("a mutating tool never falls back to the cached catalog", async () => {
+    // Prime the cache as if a successful read had happened earlier.
+    recordCatalogSnapshot([catalogItem]);
+    _setAgentWallet(testWallet);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
+
+    // register must surface the network failure — not silently serve stale data.
+    await expect(
+      dispatchTool("mindvault_register", { name: "N", email: "e@example.com" }),
+    ).rejects.toThrow();
   });
 });

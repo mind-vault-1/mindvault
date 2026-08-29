@@ -27,6 +27,13 @@ import { PROMPT_DEFINITIONS, getPrompt } from "./prompts.js";
 import { createProgressEmitter, type ProgressContext } from "./progress.js";
 import { truncateResponse } from "./truncation.js";
 import { Mutex } from "./mutex.js";
+import {
+  catalogCacheLabel,
+  getCatalogSnapshot,
+  getPreviewSnapshot,
+  recordCatalogSnapshot,
+  recordPreviewSnapshot,
+} from "./catalogCache.js";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
@@ -1121,22 +1128,46 @@ export function listProfiles(): string {
   return [`Profiles (* = active):`, ...lines].join("\n");
 }
 
+interface CatalogLoad {
+  items: any[];
+  /** Notice appended to the output. Fresh reads use the server cache headers; offline reads use the snapshot-age label. */
+  notice: string | null;
+  /** True when the catalog was served from the offline snapshot rather than the live API. */
+  fromCache: boolean;
+}
+
+/**
+ * Fetch the catalog resource array, recording a snapshot on success and falling
+ * back to the last snapshot on transport failure (#556). A reachable-but-error
+ * response is surfaced verbatim — the cache is only for the unreachable case.
+ */
+async function loadCatalog(url: string, operation: string): Promise<CatalogLoad> {
+  let res;
+  try {
+    res = await jsonFetch(url);
+  } catch (err) {
+    const snapshot = getCatalogSnapshot();
+    // No cached snapshot — surface the original deterministic error from jsonFetch.
+    if (!snapshot) throw err;
+    return {
+      items: Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [],
+      notice: catalogCacheLabel(snapshot.savedAtMs),
+      fromCache: true,
+    };
+  }
+  if (!res.ok) {
+    throw mcpError(mapHttpError({ operation, source: "api", status: res.status, data: res.data }));
+  }
+  const items = Array.isArray(res.data) ? res.data : [];
+  recordCatalogSnapshot(items);
+  return { items, notice: cacheStalenessNotice(res.headers), fromCache: false };
+}
+
 export async function browse(filters: CatalogFilters = {}): Promise<string> {
   const qs = buildCatalogQueryString(filters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
-  const res = await jsonFetch(url);
-  if (!res.ok) {
-    throw mcpError(
-      mapHttpError({
-        operation: "Browse failed",
-        source: "api",
-        status: res.status,
-        data: res.data,
-      }),
-    );
-  }
-  let items: any[] = Array.isArray(res.data) ? res.data : [];
-  items = applyCatalogSort(applyClientCatalogFilters(items, filters), filters.sort);
+  const { items: raw, notice } = await loadCatalog(url, "Browse failed");
+  const items = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
   const body =
     items.length === 0
       ? filters.query ||
@@ -1152,7 +1183,6 @@ export async function browse(filters: CatalogFilters = {}): Promise<string> {
       : items.map(formatResource).join("\n\n");
   // Warn when the catalog may be stale relative to the on-chain registry, based
   // on the server's cache headers. Silent when there is no cache metadata.
-  const notice = cacheStalenessNotice(res.headers);
   const full = notice ? `${body}\n\n${notice}` : body;
   return truncateResponse(full);
 }
@@ -1178,50 +1208,52 @@ export async function search(filtersOrQuery: string | CatalogFilters): Promise<s
 
   const qs = buildCatalogQueryString(filters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
-  const res = await jsonFetch(url);
-  if (!res.ok) {
-    throw mcpError(
-      mapHttpError({
-        operation: "Search failed",
+  const { items: raw, notice, fromCache } = await loadCatalog(url, "Search failed");
+  // Client-side keyword / tags / listed / skipped for unit-test compatibility
+  // and parity with fields the public catalog schema does not accept.
+  const items = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
+
+  if (items.length === 0) return `No resources match ${describeCatalogFilters(filters)}.`;
+  const body = items.map(formatResource).join("\n\n");
+  // Search never appended a server cache-staleness notice; only the explicit
+  // offline-snapshot label is added here, so fresh-search output is unchanged.
+  const full = fromCache && notice ? `${body}\n\n${notice}` : body;
+  return truncateResponse(full);
+}
+
+async function previewData(resourceId: string): Promise<{ r: any; label: string | null }> {
+  try {
+    const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
+    if (!res.ok)
+      throwHttpError({
+        operation: "Preview failed",
         source: "api",
         status: res.status,
         data: res.data,
-      }),
-    );
+      });
+    recordPreviewSnapshot(resourceId, res.data);
+    return { r: res.data, label: null };
+  } catch (err) {
+    const snap = getPreviewSnapshot(resourceId);
+    // No cached snapshot for this resource — surface the original error.
+    if (!snap) throw err;
+    return { r: snap.meta as any, label: catalogCacheLabel(snap.savedAtMs) };
   }
-  let items: any[] = Array.isArray(res.data) ? res.data : [];
-
-  // Client-side keyword / tags / listed / skipped for unit-test compatibility
-  // and parity with fields the public catalog schema does not accept.
-  items = applyCatalogSort(applyClientCatalogFilters(items, filters), filters.sort);
-
-  if (items.length === 0) return `No resources match ${describeCatalogFilters(filters)}.`;
-  return truncateResponse(items.map(formatResource).join("\n\n"));
 }
 
 export async function preview(resourceId: string): Promise<string> {
-  const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
-  if (!res.ok)
-    throwHttpError({
-      operation: "Preview failed",
-      source: "api",
-      status: res.status,
-      data: res.data,
-    });
-  const r = res.data;
-  return JSON.stringify(
-    {
-      id: r.id,
-      title: r.title,
-      description: r.description,
-      price: `$${r.price} USDC`,
-      type: r.resourceType,
-      verificationStatus: r.verificationStatus,
-      accessUrl: r.accessUrl,
-    },
-    null,
-    2,
-  );
+  const { r, label } = await previewData(resourceId);
+  const out: Record<string, unknown> = {
+    id: r.id,
+    title: r.title,
+    description: r.description,
+    price: `$${r.price} USDC`,
+    type: r.resourceType,
+    verificationStatus: r.verificationStatus,
+    accessUrl: r.accessUrl,
+  };
+  if (label) out.offlineCache = label;
+  return JSON.stringify(out, null, 2);
 }
 
 /**
