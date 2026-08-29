@@ -110,7 +110,9 @@ async function normalizeRequest(
  * calls. Paid endpoints return 200 directly, so the x402 wrapper passes through
  * without a payment challenge — exactly as scripts/mock-server.ts does.
  */
-export function createMockFetch(getActivePublicKey?: () => string | undefined | null): typeof fetch {
+export function createMockFetch(
+  getActivePublicKey?: () => string | undefined | null,
+): typeof fetch {
   const resources = seedResources();
   let counter = 0;
 
@@ -262,7 +264,11 @@ function isSorobanRpc(body: string): boolean {
   return parsed?.jsonrpc === "2.0" && typeof parsed?.method === "string";
 }
 
-export function mockRegistryLookup(resourceId: string, contractId: string, activePublicKey?: string | null): string {
+export function mockRegistryLookup(
+  resourceId: string,
+  contractId: string,
+  activePublicKey?: string | null,
+): string {
   const seeded: Record<string, { creator: string; price: string; metadata: string }> = {
     "mock-1": { creator: "GMOCKCREATOR1", price: "1.5000000", metadata: "Intro to Stellar" },
     "mock-2": { creator: "GMOCKCREATOR2", price: "0.5000000", metadata: "x402 Cheat Sheet" },
@@ -387,7 +393,12 @@ const MOCK_REGISTRY_RESOURCES = [
 /**
  * Stand-in for on-chain registry list(). Paginates the same seeded rows as lookup.
  */
-export function mockRegistryList(start: number, limit: number, contractId: string, activePublicKey?: string | null): string {
+export function mockRegistryList(
+  start: number,
+  limit: number,
+  contractId: string,
+  activePublicKey?: string | null,
+): string {
   const allResources = [...MOCK_REGISTRY_RESOURCES];
   if (activePublicKey) {
     allResources.push({
