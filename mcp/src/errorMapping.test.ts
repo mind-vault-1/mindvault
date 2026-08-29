@@ -353,3 +353,66 @@ describe("publisher API key rejection", () => {
     ).toThrow(/Source: MindVault API · Category: auth · HTTP 401/);
   });
 });
+
+describe("request signature clock-skew rejection (#602)", () => {
+  const credential = { kind: "publisher_api_key", profile: "publisher" } as const;
+  const skewBody = { error: "Request timestamp outside allowed window" };
+
+  it("is diagnosed as clock skew rather than a revoked key", () => {
+    const mapped = mapHttpError({
+      operation: "Publish failed",
+      source: "api",
+      status: 401,
+      data: skewBody,
+      credential,
+    });
+
+    expect(mapped.category).toBe("auth");
+    expect(mapped.status).toBe(401);
+    expect(mapped.summary).toContain("Request timestamp outside allowed window");
+    expect(mapped.summary).toContain("outside the allowed window");
+    expect(mapped.summary).not.toContain("was rejected as unknown");
+    expect(mapped.action).toContain("clock");
+  });
+
+  it("tells the agent to sync the system clock within the documented window", () => {
+    const mapped = mapHttpError({
+      operation: "Publish failed",
+      source: "api",
+      status: 401,
+      data: skewBody,
+      credential,
+    });
+
+    expect(mapped.action).toContain("5-minute");
+    expect(mapped.action).toContain("Sync the system clock");
+    expect(mapped.action).toContain("NTP");
+    expect(mapped.action).not.toContain("revoked");
+    expect(mapped.action).not.toContain("mindvault_register");
+  });
+
+  it("does not misdiagnose a plain invalid-key 401 as skew", () => {
+    const mapped = mapHttpError({
+      operation: "Publish failed",
+      source: "api",
+      status: 401,
+      data: { error: "Invalid API key" },
+      credential,
+    });
+
+    expect(mapped.summary).toContain("was rejected as unknown");
+    expect(mapped.action).not.toContain("NTP");
+  });
+
+  it("keeps the skew classification even when no credential was sent", () => {
+    const mapped = mapHttpError({
+      operation: "Publish failed",
+      source: "api",
+      status: 401,
+      data: skewBody,
+    });
+
+    expect(mapped.summary).toContain("outside the allowed window");
+    expect(mapped.action).toContain("NTP");
+  });
+});

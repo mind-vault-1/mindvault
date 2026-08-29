@@ -43,7 +43,12 @@ import {
   formatMainnetDiagnostics,
   mainnetAllowedFromEnv,
 } from "./mainnetGuardrails.js";
-import { createMetricsRecorder, measureTool, metricsEnabledFromEnv, resolveToolDurationBudget } from "./metrics.js";
+import {
+  createMetricsRecorder,
+  measureTool,
+  metricsEnabledFromEnv,
+  resolveToolDurationBudget,
+} from "./metrics.js";
 import {
   createMockFetch,
   mockEnabledFromEnv,
@@ -89,7 +94,13 @@ import {
 } from "./publishStatus.js";
 import { safeErrorMessage, safeLog } from "./redaction.js";
 import { signMutatingHeaders } from "./requestSignature.js";
-import { exportState, restoreState, checkStatePermissions } from "./stateBackup.js";
+import {
+  exportState,
+  restoreState,
+  checkStatePermissions,
+  preserveLegacyState,
+  quarantineStateFile,
+} from "./stateBackup.js";
 import { formatResetPreview, isResetConfirmed, type ResetScope } from "./resetGuard.js";
 import { verifyInstall, formatVerifyInstall } from "./verifyInstall.js";
 import {
@@ -170,7 +181,7 @@ const NETWORK: X402Network = normalizeX402Network(
 // there is zero bookkeeping unless an operator turns it on.
 const metrics = createMetricsRecorder(
   metricsEnabledFromEnv(process.env),
-  resolveToolDurationBudget(process.env)
+  resolveToolDurationBudget(process.env),
 );
 
 // Opt-in audit logging (set MINDVAULT_AUDIT_LOG=1). Logs tool calls, network
@@ -312,16 +323,69 @@ export function restoreStateTool(blob: string, passphrase: string): string {
   return restoreState(blob, passphrase, applyRestoredState);
 }
 
+/**
+ * A state file that could not be loaded is preserved instead of abandoned:
+ * the corrupt file is moved to `<state>.corrupt-<ts>` so the only copy is never
+ * silently overwritten by a later saveState(), and a diagnostic (no secrets)
+ * tells the operator what happened and where the evidence went.
+ */
+function quarantineCorruptState(reason: string, detail: string): void {
+  try {
+    const quarantined = quarantineStateFile(STATE_FILE);
+    console.error(
+      `MindVault MCP: state file ${STATE_FILE} ${reason} and was quarantined to ${quarantined}; ` +
+        `starting fresh.${detail ? ` ${detail}` : ""}`,
+    );
+  } catch (err) {
+    console.error(
+      `MindVault MCP: state file ${STATE_FILE} ${reason}; starting fresh ` +
+        `(could not quarantine the file: ${safeErrorMessage(err)}).`,
+    );
+  }
+}
+
 function loadState(): void {
   if (!existsSync(STATE_FILE)) return;
+
+  let raw: string;
   try {
-    const raw = readFileSync(STATE_FILE, "utf-8");
-    const { state, migrated } = migrateState(JSON.parse(raw));
-    profiles = state.profiles;
-    activeProfileName = state.activeProfile;
-    if (migrated) saveState(); // re-persist legacy state in the current format
-  } catch {
-    // Corrupted state — ignore and start fresh
+    raw = readFileSync(STATE_FILE, "utf-8");
+  } catch (err) {
+    quarantineCorruptState("could not be read", safeErrorMessage(err));
+    return;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    quarantineCorruptState("is not valid JSON", safeErrorMessage(err));
+    return;
+  }
+
+  const { state, migrated, legacy } = migrateState(parsed);
+
+  // A non-empty file that migrates to no recognisable profile is as
+  // unrecoverable as a parse error — preserve it before anything can overwrite.
+  if (Object.keys(state.profiles).length === 0) {
+    quarantineCorruptState("did not contain a recognisable profile", "");
+    return;
+  }
+
+  profiles = state.profiles;
+  activeProfileName = state.activeProfile;
+  if (migrated) {
+    // Preserve the un-migrated legacy bytes so the migration can be rolled
+    // back before saveState() replaces them with the current format.
+    try {
+      preserveLegacyState(legacy);
+    } catch (err) {
+      console.error(
+        "MindVault MCP: failed to preserve legacy state before migration:",
+        safeErrorMessage(err),
+      );
+    }
+    saveState(); // re-persist legacy state in the current format
   }
 }
 
@@ -496,6 +560,40 @@ async function registryHealth(): Promise<string> {
   });
   lines.unshift(allOk ? "All dependencies healthy." : "Some dependencies are unhealthy.", "");
   return lines.join("\n");
+}
+
+/**
+ * Mutations that only make sense when the MindVault API is reachable: they
+ * create or change server-side state, so a down API would fail mid-flight with
+ * a protocol error instead of declining the tool call.
+ */
+const API_MUTATION_TOOLS = new Set([
+  "mindvault_register",
+  "mindvault_publish",
+  "mindvault_rotate_publisher_key",
+]);
+
+/**
+ * Preflight reachability probe run before an API-mutating tool dispatches.
+ *
+ * When the API is unreachable the mutation could not succeed anyway; refusing
+ * up front returns a deterministic `network` error ("was not attempted")
+ * instead of a bare transport failure from an unreachable POST, so the agent
+ * can decide whether to retry or defer without ever half-executing a mutation.
+ *
+ * Dry-run and read-only tools are never gated — a dry-run publish intentionally
+ * inspects validation without touching the network.
+ */
+async function assertApiReachableFor(toolName: string): Promise<void> {
+  const dep = await checkDependency("MindVault API", `${BASE_URL}/resources`);
+  if (dep.ok) return;
+  throw mcpError({
+    source: "api",
+    category: "network",
+    summary: `${toolName} was not attempted because the MindVault API is not reachable (${dep.message}).`,
+    action:
+      "Check network connectivity to the MindVault API and retry; if it stays down the mutation cannot succeed, so defer it.",
+  });
 }
 
 // ── #402: Wallet import flow ─────────────────────────────────────────────────
@@ -2053,7 +2151,8 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
 }
 
 export async function registryLookup(resourceId: string): Promise<string> {
-  if (_isMock()) return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
+  if (_isMock())
+    return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
   const client = createRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
@@ -2135,7 +2234,8 @@ export async function registryLookup(resourceId: string): Promise<string> {
  * Data comes from Soroban, not the MindVault API catalog.
  */
 export async function registryList(start: number, limit: number): Promise<string> {
-  if (_isMock()) return mockRegistryList(start, limit, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
+  if (_isMock())
+    return mockRegistryList(start, limit, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
 
   const client = createRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
@@ -2510,6 +2610,10 @@ export async function dispatchTool(
   const dryRunArgs = isDryRunCall ? (rawRecord as ValidatedArgs) : args;
 
   assertMainnetMutationAllowed(NETWORK, name, rawRecord);
+
+  if (API_MUTATION_TOOLS.has(name) && !isDryRunCall) {
+    await assertApiReachableFor(name);
+  }
 
   switch (name) {
     case "mindvault_setup_wallet":

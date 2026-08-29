@@ -133,6 +133,29 @@ No action is required — existing wallets keep working as the `default` profile
 The migration is covered by unit tests in
 [`mcp/src/profiles.test.ts`](../mcp/src/profiles.test.ts).
 
+### Migrations can be rolled back
+
+The migration does not destroy the original. Two safety nets cover it:
+
+- Before re-persisting, the un-migrated legacy object is preserved to
+  `state.json.legacy` (mode `0600`) next to the state file. If a later version
+  of the migration goes wrong, the original `{ wallet, apiKey }` bytes are still
+  there to restore from.
+- `migrateState` returns the raw legacy input as part of its result (`legacy`),
+  so the fold is always reproducible from the exact original and re-running the
+  migration is a stable no-op on already-migrated state.
+
+### Corrupted state files are quarantined, not overwritten
+
+A `state.json` that cannot be read, is not valid JSON, or migrates to no
+recognizable profile was previously ignored silently — and the next
+`saveState()` would overwrite the only copy of whatever was in it. The server
+now moves a corrupt file aside to `state.json.corrupt-<timestamp>` (same mode as
+the original), logs a diagnostic to stderr telling the operator where the
+evidence went, and starts fresh. Nothing is silently discarded and nothing is
+overwritten. The quarantine and preservation helpers live in
+[`mcp/src/stateBackup.ts`](../mcp/src/stateBackup.ts).
+
 ## Mainnet guardrails
 
 When `STELLAR_NETWORK` is `mainnet`, mutation and buy tools require `confirmMainnet: true` (or process env `MINDVAULT_ALLOW_MAINNET=1`). Profile list/switch/info tools are read-only and stay unrestricted. See [mainnet-deployment-checklist.md](./mainnet-deployment-checklist.md#mcp-mainnet-guardrails).
