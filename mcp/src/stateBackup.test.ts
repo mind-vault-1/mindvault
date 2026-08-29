@@ -8,6 +8,7 @@ import {
   StateBackupError,
   readPersistedState,
   checkStatePermissions,
+  scanPersistedStateSecrets,
 } from "./stateBackup.js";
 import { STATE_VERSION, type ProfileState } from "./profiles.js";
 
@@ -66,6 +67,15 @@ describe("stateBackup", () => {
     expect(blob).not.toContain("SBUY");
     expect(blob).not.toContain("api-key-xyz");
     expect(blob).not.toContain("GPUB");
+  });
+
+  it("identifies secrets before an unencrypted persisted-state backup is shared", () => {
+    expect(scanPersistedStateSecrets(sample)).toEqual([
+      { path: "profiles.publisher.wallet.secretKey", kind: "wallet-secret-key" },
+      { path: "profiles.publisher.apiKey", kind: "api-key" },
+      { path: "profiles.buyer.wallet.secretKey", kind: "wallet-secret-key" },
+    ]);
+    expect(scanPersistedStateSecrets({ profiles: { empty: {} } })).toEqual([]);
   });
 
   it("round-trips export → restore with same passphrase", () => {

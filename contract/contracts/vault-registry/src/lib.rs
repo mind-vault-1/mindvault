@@ -92,6 +92,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("freeze_resource", "creator"),
     ("open_dispute", "admin"),
     ("resolve_dispute", "admin"),
+    ("emergency_delist", "admin"),
     ("tombstone_resource", "admin"),
     // ── Ownership transfer ────────────────────────────────────────────────
     ("transfer_ownership", "creator"),
@@ -115,7 +116,6 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("list_by_creator", "—"),
     ("list_by_tag", "—"),
     ("list_by_dispute_status", "—"),
-    ("list_payments", "—"),
     // ── Verification ──────────────────────────────────────────────────────
     ("add_verifier", "admin"),
     ("remove_verifier", "admin"),
@@ -737,6 +737,8 @@ pub enum Error {
     ContentHashTooLong = 45,
     /// `attestation_hash` exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes).
     AttestationHashTooLong = 46,
+    /// Payment receipt amount does not match the resource's current price.
+    PaymentAmountMismatch = 47,
 }
 
 #[contract]
@@ -1173,6 +1175,20 @@ impl VaultRegistry {
         Ok(())
     }
 
+    /// Emergency-delist a disputed resource. Only the current admin may call
+    /// this, and only while the resource is in the `Disputed` state.
+    pub fn emergency_delist(env: Env, id: String, admin: Address) -> Result<(), Error> {
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&id)?;
+        Self::require_current_admin(&env, &admin)?;
+        let mut resource = Self::load(&env, &id)?;
+        if resource.state != ResourceState::Disputed {
+            return Err(Error::InvalidLifecycleTransition);
+        }
+        Self::transition_state(&env, &mut resource, ResourceState::Delisted);
+        Ok(())
+    }
+
     /// Permanently retire a resource. Only an admin may tombstone it; the
     /// tombstoned state has no outgoing transitions.
     ///
@@ -1397,6 +1413,45 @@ impl VaultRegistry {
             i += 1;
         }
         result
+    }
+
+    /// Paginated list of resources filtered by verification status.
+    ///
+    /// Returns resources whose `verified` field matches `status`.
+    /// `cursor` is a global catalog index (same semantics as `list_page`).
+    /// `limit` is capped at 20.
+    /// Returns a `CatalogPage` with `items` (matching resources) and
+    /// `next_cursor` (next catalog position, or `None` at end-of-list).
+    pub fn list_by_verification_status(
+        env: Env,
+        status: VerificationStatus,
+        cursor: u32,
+        limit: u32,
+    ) -> CatalogPage {
+        let total: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
+        let page_size = limit.min(LIST_PAGE_CAP);
+        let mut items: Vec<Resource> = Vec::new(&env);
+        let mut i = cursor;
+        while i < total && items.len() < page_size {
+            let idx_key = DataKey::Index(i);
+            if let Some(id) = env.storage().persistent().get::<DataKey, String>(&idx_key) {
+                Self::bump_persistent(&env, &idx_key);
+                let res_key = DataKey::Resource(id);
+                if let Some(resource) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, Resource>(&res_key)
+                {
+                    Self::bump_persistent(&env, &res_key);
+                    if resource.verified == status {
+                        items.push_back(resource);
+                    }
+                }
+            }
+            i += 1;
+        }
+        let next_cursor = if i < total { Some(i) } else { None };
+        CatalogPage { items, next_cursor }
     }
 
     /// Rebuild the tag index from an authoritative, admin-supplied ordered
@@ -1937,7 +1992,9 @@ impl VaultRegistry {
     ///   error `ReceiptAlreadyExists`.
     /// - `resource_id` must refer to an existing registered resource
     ///   (`NotFound` otherwise).
-    /// - `amount` must be `> 0` (`InvalidPrice` otherwise).
+    /// - `amount` must be `> 0` (`InvalidPaymentAmount` otherwise).
+    /// - `amount` must match the resource's current price
+    ///   (`PaymentAmountMismatch` otherwise).
     /// - `tx_hash` must be non-empty and at most 128 bytes (`InvalidTxHash`).
     ///
     /// Emits a `payment` event whose data is the full [`PaymentReceipt`] so
@@ -1965,12 +2022,11 @@ impl VaultRegistry {
         Self::validate_tx_hash(&tx_hash)?;
 
         // The referenced resource must exist.
-        if !env
-            .storage()
-            .persistent()
-            .has(&DataKey::Resource(resource_id.clone()))
-        {
-            return Err(Error::NotFound);
+        let resource = Self::load(&env, &resource_id)?;
+
+        // Consistency guard: payment amount must match the resource's current price.
+        if amount != resource.price {
+            return Err(Error::PaymentAmountMismatch);
         }
 
         let receipt_key = DataKey::PaymentReceipt(receipt_id.clone());
