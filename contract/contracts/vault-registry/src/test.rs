@@ -3910,6 +3910,162 @@ fn fee_config_rejects_combined_rates_above_maximum() {
     );
 }
 
+// ─── Fee recipient configuration (#617) ───────────────────────────────────
+
+#[test]
+fn set_fee_recipient_updates_only_recipient() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    
+    // Set initial fee config with rates and recipient
+    let initial_recipient = Address::generate(&env);
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 100,
+        royalty_bps: 200,
+        fee_recipient: Some(initial_recipient.clone()),
+    });
+    
+    // Update only the recipient
+    let new_recipient = Address::generate(&env);
+    client.set_fee_recipient(&Some(new_recipient.clone()));
+    
+    // Verify recipient changed but rates stayed the same
+    let config = client.get_fee_config().unwrap();
+    assert_eq!(config.platform_fee_bps, 100);
+    assert_eq!(config.royalty_bps, 200);
+    assert_eq!(config.fee_recipient, Some(new_recipient));
+}
+
+#[test]
+fn set_fee_recipient_can_clear_recipient() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    
+    // Set initial config with recipient
+    let recipient = Address::generate(&env);
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 100,
+        royalty_bps: 50,
+        fee_recipient: Some(recipient),
+    });
+    
+    // Clear the recipient
+    client.set_fee_recipient(&None);
+    
+    // Verify recipient is None but rates preserved
+    let config = client.get_fee_config().unwrap();
+    assert_eq!(config.platform_fee_bps, 100);
+    assert_eq!(config.royalty_bps, 50);
+    assert_eq!(config.fee_recipient, None);
+}
+
+#[test]
+fn set_fee_recipient_can_set_recipient_when_none() {
+    let (_env, _creator, admin, client) = setup_with_admin();
+    
+    // Set initial config without recipient
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 150,
+        royalty_bps: 100,
+        fee_recipient: None,
+    });
+    
+    // Add a recipient
+    client.set_fee_recipient(&Some(admin.clone()));
+    
+    // Verify recipient added
+    let config = client.get_fee_config().unwrap();
+    assert_eq!(config.fee_recipient, Some(admin));
+}
+
+#[test]
+fn set_fee_recipient_fails_before_fee_config_set() {
+    let (_env, _creator, admin, client) = setup_with_admin();
+    
+    // Try to set recipient before any fee config exists
+    let res = client.try_set_fee_recipient(&Some(admin));
+    assert_eq!(res, Err(Ok(Error::FeeConfigNotSet)));
+}
+
+#[test]
+fn set_fee_recipient_requires_admin_auth() {
+    let (env, _creator, _admin, client) = setup_with_admin();
+    
+    // Set initial fee config
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 100,
+        royalty_bps: 100,
+        fee_recipient: None,
+    });
+    
+    // Without admin auth, the call should fail
+    env.mock_auths(&[]);
+    let new_recipient = Address::generate(&env);
+    let res = client.try_set_fee_recipient(&Some(new_recipient));
+    assert!(res.is_err());
+}
+
+#[test]
+fn set_fee_recipient_emits_setfee_event() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    
+    // Set initial config
+    let initial_recipient = Address::generate(&env);
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 100,
+        royalty_bps: 200,
+        fee_recipient: Some(initial_recipient.clone()),
+    });
+    
+    // Update recipient
+    let new_recipient = Address::generate(&env);
+    client.set_fee_recipient(&Some(new_recipient.clone()));
+    
+    // Verify setfee event was emitted
+    let events = env.events().all();
+    let last_event = events.last().unwrap();
+    let (_contract, topics, data): (Address, soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val) = last_event;
+    
+    // Event should have "setfee" topic
+    let topic_symbol: soroban_sdk::Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(topic_symbol, symbol_short!("setfee"));
+    
+    // Data should contain old and new config
+    let event_data: FeeConfigUpdated = data.try_into_val(&env).unwrap();
+    
+    // Old config should have initial recipient
+    match event_data.old_config {
+        OptFeeConfig::Some(old) => {
+            assert_eq!(old.fee_recipient, Some(initial_recipient));
+            assert_eq!(old.platform_fee_bps, 100);
+            assert_eq!(old.royalty_bps, 200);
+        }
+        OptFeeConfig::None => panic!("Expected old config to be Some"),
+    }
+    
+    // New config should have new recipient
+    assert_eq!(event_data.new_config.fee_recipient, Some(new_recipient));
+    assert_eq!(event_data.new_config.platform_fee_bps, 100);
+    assert_eq!(event_data.new_config.royalty_bps, 200);
+}
+
+#[test]
+fn set_fee_recipient_fails_when_paused() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    
+    // Set initial fee config
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 100,
+        royalty_bps: 100,
+        fee_recipient: None,
+    });
+    
+    // Pause the contract
+    client.set_paused(&admin, &true);
+    
+    // Try to set recipient while paused
+    let res = client.try_set_fee_recipient(&Some(admin));
+    assert_eq!(res, Err(Ok(Error::ContractPaused)));
+}
+
 // ─── Test helpers for the role / verification / freeze / repair suites ────
 
 /// Like `setup`, but also installs `admin` as the contract admin via the
