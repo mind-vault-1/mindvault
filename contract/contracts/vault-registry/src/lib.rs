@@ -45,6 +45,10 @@ pub const MAX_RESOURCE_ID_LEN: u32 = 24;
 /// easy to find, document, and change in a single place instead of
 /// scattered `limit.min(20)` literals.
 pub const LIST_PAGE_CAP: u32 = 20;
+/// Maximum number of resources that can be registered in a single batch
+/// via `register_batch`. Keeps execution bounded and prevents transaction
+/// timeouts.
+pub const MAX_BATCH_REGISTER: u32 = 10;
 
 // ── Fee / royalty configuration ──────────────────────────────────────────────
 /// Fee basis-point ceiling: 50 % (5 000 bp). Neither platform_fee_bps nor
@@ -83,6 +87,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Resource lifecycle ────────────────────────────────────────────────
     ("register", "creator"),
     ("register_with_hash", "creator"),
+    ("register_batch", "creator"),
     ("set_price", "creator"),
     ("update_metadata", "creator"),
     ("freeze_metadata", "creator"),
@@ -454,6 +459,28 @@ pub struct Resource {
     pub royalty_recipient: Option<Address>,
 }
 
+/// Input for a single resource in a batch registration.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatchRegisterItem {
+    pub id: String,
+    pub price: i128,
+    pub metadata: String,
+    pub tags: Vec<String>,
+    pub content_hash: Option<String>,
+}
+
+/// Result of a batch registration attempt. Contains successfully registered
+/// resource IDs and any errors encountered (with their indices).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatchRegisterResult {
+    /// Resource IDs that were successfully registered (in order).
+    pub succeeded: Vec<String>,
+    /// Indices (into the input batch) of items that failed, paired with their error codes.
+    pub failed: Vec<(u32, u32)>,
+}
+
 /// Structured payload emitted by `register()`.
 ///
 /// Consumers can reconstruct a full `Resource` from this event without an
@@ -790,6 +817,63 @@ impl VaultRegistry {
         content_hash: Option<String>,
     ) -> Result<(), Error> {
         Self::register_internal(env, creator, id, price, metadata, tags, content_hash)
+    }
+
+    /// Register multiple resources in a single transaction. The batch is capped
+    /// at [`MAX_BATCH_REGISTER`] (10) to bound execution cost. All resources
+    /// are registered under the same `creator`.
+    ///
+    /// Returns a [`BatchRegisterResult`] containing:
+    /// - `succeeded`: IDs of successfully registered resources
+    /// - `failed`: Indices and error codes of failed registrations
+    ///
+    /// This function continues processing after individual failures, allowing
+    /// partial success. The creator is authorized once at the start, and each
+    /// resource is validated independently. Common failure causes include
+    /// duplicate IDs, invalid prices, or invalid metadata pointers.
+    ///
+    /// Use case: Bulk onboarding of resources by publishers or automated systems.
+    pub fn register_batch(
+        env: Env,
+        creator: Address,
+        items: Vec<BatchRegisterItem>,
+    ) -> Result<BatchRegisterResult, Error> {
+        creator.require_auth();
+        Self::require_not_paused(&env)?;
+
+        if items.len() > MAX_BATCH_REGISTER {
+            return Err(Error::BatchTooLarge);
+        }
+
+        let mut succeeded: Vec<String> = Vec::new(&env);
+        let mut failed: Vec<(u32, u32)> = Vec::new(&env);
+
+        for i in 0..items.len() {
+            let item = items.get(i).unwrap();
+            
+            // Attempt to register this resource
+            let result = Self::register_internal(
+                env.clone(),
+                creator.clone(),
+                item.id.clone(),
+                item.price,
+                item.metadata.clone(),
+                item.tags.clone(),
+                item.content_hash.clone(),
+            );
+
+            match result {
+                Ok(()) => {
+                    succeeded.push_back(item.id.clone());
+                }
+                Err(e) => {
+                    // Record the failure index and error code
+                    failed.push_back((i, e as u32));
+                }
+            }
+        }
+
+        Ok(BatchRegisterResult { succeeded, failed })
     }
 
     /// Update a resource's price. Rejects `new_price <= 0` or `new_price > MAX_PRICE`.

@@ -164,6 +164,191 @@ fn duplicate_registration_fails() {
     assert_eq!(client.count(), 1);
 }
 
+// ─── Bounded batch registration (#627) ────────────────────────────────────
+
+#[test]
+fn register_batch_succeeds_for_valid_items() {
+    let (env, creator, client) = setup();
+    
+    let mut items = Vec::new(&env);
+    for i in 0..5 {
+        items.push_back(BatchRegisterItem {
+            id: String::from_str(&env, &format!("batch{}", i)),
+            price: 100i128 + i128::from(i),
+            metadata: String::from_str(&env, "ipfs://QmBatch"),
+            tags: empty_tags(&env),
+            content_hash: None,
+        });
+    }
+    
+    let result = client.register_batch(&creator, &items);
+    assert_eq!(result.succeeded.len(), 5);
+    assert_eq!(result.failed.len(), 0);
+    assert_eq!(client.count(), 5);
+    
+    // Verify all resources were registered
+    for i in 0..5 {
+        let id = String::from_str(&env, &format!("batch{}", i));
+        assert!(client.exists(&id));
+    }
+}
+
+#[test]
+fn register_batch_handles_partial_failures() {
+    let (env, creator, client) = setup();
+    
+    // Pre-register one resource to cause a duplicate
+    let dup_id = String::from_str(&env, "batch1");
+    client.register(&creator, &dup_id, &100i128, &String::from_str(&env, "m"), &empty_tags(&env));
+    
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "batch0"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmBatch"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "batch1"), // Duplicate
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmBatch"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "batch2"),
+        price: 0i128, // Invalid price
+        metadata: String::from_str(&env, "ipfs://QmBatch"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "batch3"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmBatch"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    
+    let result = client.register_batch(&creator, &items);
+    
+    // batch0 and batch3 should succeed
+    assert_eq!(result.succeeded.len(), 2);
+    assert_eq!(result.succeeded.get(0).unwrap(), String::from_str(&env, "batch0"));
+    assert_eq!(result.succeeded.get(1).unwrap(), String::from_str(&env, "batch3"));
+    
+    // batch1 (index 1) and batch2 (index 2) should fail
+    assert_eq!(result.failed.len(), 2);
+    
+    let (idx1, err1) = result.failed.get(0).unwrap();
+    assert_eq!(idx1, 1);
+    assert_eq!(err1, Error::AlreadyRegistered as u32);
+    
+    let (idx2, err2) = result.failed.get(1).unwrap();
+    assert_eq!(idx2, 2);
+    assert_eq!(err2, Error::InvalidPrice as u32);
+}
+
+#[test]
+fn register_batch_rejects_oversized_batch() {
+    let (env, creator, client) = setup();
+    
+    let mut items = Vec::new(&env);
+    for i in 0..15 {
+        items.push_back(BatchRegisterItem {
+            id: String::from_str(&env, &format!("batch{}", i)),
+            price: 100i128,
+            metadata: String::from_str(&env, "ipfs://QmBatch"),
+            tags: empty_tags(&env),
+            content_hash: None,
+        });
+    }
+    
+    let res = client.try_register_batch(&creator, &items);
+    assert_eq!(res, Err(Ok(Error::BatchTooLarge)));
+}
+
+#[test]
+fn register_batch_requires_creator_auth() {
+    let (env, creator, client) = setup();
+    
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "batch0"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmBatch"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    
+    env.mock_auths(&[]);
+    let res = client.try_register_batch(&creator, &items);
+    assert!(res.is_err());
+}
+
+#[test]
+fn register_batch_respects_pause_state() {
+    let (env, creator, admin, client) = setup_with_admin();
+    
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "batch0"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmBatch"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    
+    client.set_paused(&admin, &true);
+    
+    let res = client.try_register_batch(&creator, &items);
+    assert_eq!(res, Err(Ok(Error::ContractPaused)));
+}
+
+#[test]
+fn register_batch_handles_empty_batch() {
+    let (env, creator, client) = setup();
+    
+    let items = Vec::new(&env);
+    let result = client.register_batch(&creator, &items);
+    
+    assert_eq!(result.succeeded.len(), 0);
+    assert_eq!(result.failed.len(), 0);
+}
+
+#[test]
+fn register_batch_with_content_hashes() {
+    let (env, creator, client) = setup();
+    
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "batch0"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmBatch"),
+        tags: empty_tags(&env),
+        content_hash: Some(String::from_str(&env, "sha256:abcd1234")),
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "batch1"),
+        price: 200i128,
+        metadata: String::from_str(&env, "ipfs://QmBatch2"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    
+    let result = client.register_batch(&creator, &items);
+    assert_eq!(result.succeeded.len(), 2);
+    assert_eq!(result.failed.len(), 0);
+    
+    // Verify content hash was set
+    let r0 = client.get(&String::from_str(&env, "batch0"));
+    assert_eq!(r0.content_hash, Some(String::from_str(&env, "sha256:abcd1234")));
+    
+    let r1 = client.get(&String::from_str(&env, "batch1"));
+    assert_eq!(r1.content_hash, None);
+}
+
 #[test]
 fn zero_or_negative_price_rejected() {
     let (env, creator, client) = setup();
