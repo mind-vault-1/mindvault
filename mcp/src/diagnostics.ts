@@ -102,11 +102,15 @@ export function collectStartupDiagnostics(
 
   // Reuse the shared network-consistency checks (NETWORK, RPC, Horizon, USDC,
   // registry cross-network) so the MCP server and other consumers agree.
+  const sorobanRpcUrl = env.SOROBAN_RPC_URL ?? preset.sorobanRpcUrl;
+  const horizonUrl = env.HORIZON_URL ?? preset.horizonUrl;
   const networkIssues = validateNetworkConfig({
     stellarNetwork,
     x402Network: normalizeX402Network(env.NETWORK ?? preset.x402Network),
-    sorobanRpcUrl: env.SOROBAN_RPC_URL ?? preset.sorobanRpcUrl,
-    horizonUrl: env.HORIZON_URL ?? preset.horizonUrl,
+    // Let the URL validation below report malformed overrides directly instead
+    // of also producing a misleading network-mismatch diagnostic.
+    sorobanRpcUrl: isHttpUrl(sorobanRpcUrl) ? sorobanRpcUrl : preset.sorobanRpcUrl,
+    horizonUrl: isHttpUrl(horizonUrl) ? horizonUrl : preset.horizonUrl,
     usdcSacContractId: env.USDC_CONTRACT_ID ?? preset.usdcSacContractId,
     registryContractId:
       env.VAULT_REGISTRY_CONTRACT_ID ?? preset.defaultRegistryContractId ?? undefined,
@@ -141,7 +145,12 @@ export function collectStartupDiagnostics(
   }
 
   // URL-shaped variables must be absolute http(s) URLs when set.
-  for (const variable of ["MINDVAULT_URL", "SPONSORED_ACCOUNT_URL"] as const) {
+  for (const variable of [
+    "MINDVAULT_URL",
+    "SPONSORED_ACCOUNT_URL",
+    "HORIZON_URL",
+    "SOROBAN_RPC_URL",
+  ] as const) {
     const value = env[variable];
     if (typeof value === "string" && value.trim() && !isHttpUrl(value)) {
       diagnostics.push({

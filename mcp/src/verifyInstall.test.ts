@@ -9,6 +9,8 @@
  *   - unrecognised STELLAR_NETWORK           → ok: false
  *   - malformed MINDVAULT_URL                → ok: false
  *   - malformed SPONSORED_ACCOUNT_URL        → ok: false
+ *   - malformed HORIZON_URL                  → ok: false
+ *   - malformed SOROBAN_RPC_URL              → ok: false
  *   - missing contract ID on mainnet         → ok: false
  *   - malformed contract ID                  → ok: false
  *   - plaintext secret in env                → ok: false
@@ -92,6 +94,27 @@ describe("verifyInstall", () => {
     const check = result.checks.find((c) => c.name === "SPONSORED_ACCOUNT_URL")!;
     expect(check.ok).toBe(false);
   });
+
+  it.each(["HORIZON_URL", "SOROBAN_RPC_URL"] as const)(
+    "fails when %s is invalid",
+    (variable) => {
+      const result = verifyInstall({ [variable]: "not-a-url" }, NODE_OK);
+      expect(result.ok).toBe(false);
+      const check = result.checks.find((c) => c.name === variable)!;
+      expect(check.ok).toBe(false);
+      expect(check.detail).toMatch(/not a valid URL/i);
+    },
+  );
+
+  it.each(["HORIZON_URL", "SOROBAN_RPC_URL"] as const)(
+    "rejects non-http schemes for %s",
+    (variable) => {
+      const result = verifyInstall({ [variable]: "ftp://example.com" }, NODE_OK);
+      const check = result.checks.find((c) => c.name === variable)!;
+      expect(check.ok).toBe(false);
+      expect(check.detail).toMatch(/http\(s\)/);
+    },
+  );
 
   it("fails when mainnet is set but VAULT_REGISTRY_CONTRACT_ID is absent", () => {
     const result = verifyInstall({ STELLAR_NETWORK: "mainnet" }, NODE_OK);

@@ -101,3 +101,35 @@ describe("collectStartupDiagnostics — x402 / Stellar network mismatch", () => 
     expect(hasBlockingDiagnostics(diagnostics)).toBe(true);
   });
 });
+
+describe("collectStartupDiagnostics — service URL validation", () => {
+  it.each(
+    ["MINDVAULT_URL", "SPONSORED_ACCOUNT_URL", "HORIZON_URL", "SOROBAN_RPC_URL"] as const,
+  )(
+    "reports a blocking error for an invalid %s",
+    (variable) => {
+      const diagnostics = collectStartupDiagnostics(
+        { STELLAR_NETWORK: "testnet", [variable]: "not-a-url" },
+        true,
+      );
+      const diagnostic = diagnostics.find((item) => item.variable === variable);
+      expect(diagnostic).toBeDefined();
+      expect(diagnostic?.severity).toBe("error");
+      expect(diagnostic?.message).toContain("Not a valid URL");
+    },
+  );
+
+  it("accepts valid HTTP(S) overrides for every service URL", () => {
+    const diagnostics = collectStartupDiagnostics(
+      {
+        STELLAR_NETWORK: "testnet",
+        MINDVAULT_URL: "https://api.example.com",
+        SPONSORED_ACCOUNT_URL: "http://sponsor.example.com",
+        HORIZON_URL: "https://horizon-testnet.example.com",
+        SOROBAN_RPC_URL: "https://rpc-testnet.example.com",
+      },
+      true,
+    );
+    expect(diagnostics.filter((item) => item.variable.endsWith("URL"))).toEqual([]);
+  });
+});
