@@ -18,7 +18,10 @@ import {
   ListToolsRequestSchema,
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { listCatalogResources, readCatalogResource } from "./catalogResources.js";
 import { PROMPT_DEFINITIONS, getPrompt } from "./prompts.js";
 import { createProgressEmitter } from "./progress.js";
 import { truncateResponse } from "./truncation.js";
@@ -29,9 +32,20 @@ import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { Mutex } from "async-mutex";
+import { Mutex } from "./mutex.js";
 import { cacheStalenessNotice } from "./cacheStaleness.js";
-import { buildConfig, resolveConfig } from "./config.js";
+import {
+  catalogCacheLabel,
+  getCatalogSnapshot,
+  getPreviewSnapshot,
+  recordCatalogSnapshot,
+  recordPreviewSnapshot,
+} from "./catalogCache.js";
+import {
+  collectStartupDiagnostics,
+  formatDiagnostics,
+  hasBlockingDiagnostics,
+} from "./diagnostics.js";
 import {
   assertMainnetMutationAllowed,
   formatMainnetDiagnostics,
@@ -1145,37 +1159,46 @@ function listProfilesOutcome(): ToolOutcome {
   return { text: [`Profiles (* = active):`, ...lines].join("\n"), structured };
 }
 
-export function listProfiles(): string {
-  return outcomeText(listProfilesOutcome());
+interface CatalogLoad {
+  items: any[];
+  /** Notice appended to the output. Fresh reads use the server cache headers; offline reads use the snapshot-age label. */
+  notice: string | null;
+  /** True when the catalog was served from the offline snapshot rather than the live API. */
+  fromCache: boolean;
 }
 
-async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome> {
-  const qs = buildCatalogQueryString(filters);
-  const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
-  let raw: any[] = [];
-  let notice: string | null = null;
+/**
+ * Fetch the catalog resource array, recording a snapshot on success and falling
+ * back to the last snapshot on transport failure (#556). A reachable-but-error
+ * response is surfaced verbatim — the cache is only for the unreachable case.
+ */
+async function loadCatalog(url: string, operation: string): Promise<CatalogLoad> {
+  let res;
   try {
-    const res = await jsonFetch(url);
-    if (!res.ok) {
-      throw mcpError(
-        mapHttpError({
-          operation: "Browse failed",
-          source: "api",
-          status: res.status,
-          data: res.data,
-        }),
-      );
-    }
-    raw = Array.isArray(res.data) ? res.data : [];
-    recordCatalogSnapshot(raw);
-    notice = cacheStalenessNotice(res.headers);
+    res = await jsonFetch(url);
   } catch (err) {
     const snapshot = getCatalogSnapshot();
+    // No cached snapshot — surface the original deterministic error from jsonFetch.
     if (!snapshot) throw err;
-    raw = Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [];
-    notice = catalogCacheLabel(snapshot.savedAtMs);
+    return {
+      items: Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [],
+      notice: catalogCacheLabel(snapshot.savedAtMs),
+      fromCache: true,
+    };
   }
-  const items: any[] = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
+  if (!res.ok) {
+    throw mcpError(mapHttpError({ operation, source: "api", status: res.status, data: res.data }));
+  }
+  const items = Array.isArray(res.data) ? res.data : [];
+  recordCatalogSnapshot(items);
+  return { items, notice: cacheStalenessNotice(res.headers), fromCache: false };
+}
+
+export async function browse(filters: CatalogFilters = {}): Promise<string> {
+  const qs = buildCatalogQueryString(filters);
+  const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
+  const { items: raw, notice } = await loadCatalog(url, "Browse failed");
+  const items = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
   const body =
     items.length === 0
       ? filters.query ||
@@ -1189,7 +1212,10 @@ async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome>
         ? `No resources match ${describeCatalogFilters(filters)}.`
         : "No resources listed yet."
       : items.map(formatResource).join("\n\n");
-  return catalogOutcome(items, body, notice);
+  // Warn when the catalog may be stale relative to the on-chain registry, based
+  // on the server's cache headers. Silent when there is no cache metadata.
+  const full = notice ? `${body}\n\n${notice}` : body;
+  return truncateResponse(full);
 }
 
 export async function browse(filters: CatalogFilters = {}): Promise<string> {
@@ -1219,67 +1245,52 @@ async function searchOutcome(filtersOrQuery: string | CatalogFilters): Promise<T
 
   const qs = buildCatalogQueryString(filters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
-  let raw: any[] = [];
-  let notice: string | null = null;
-  try {
-    const res = await jsonFetch(url);
-    if (!res.ok) {
-      throw mcpError(
-        mapHttpError({
-          operation: "Search failed",
-          source: "api",
-          status: res.status,
-          data: res.data,
-        }),
-      );
-    }
-    raw = Array.isArray(res.data) ? res.data : [];
-    recordCatalogSnapshot(raw);
-    notice = cacheStalenessNotice(res.headers);
-  } catch (err) {
-    const snapshot = getCatalogSnapshot();
-    if (!snapshot) throw err;
-    raw = Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [];
-    notice = catalogCacheLabel(snapshot.savedAtMs);
-  }
-
+  const { items: raw, notice, fromCache } = await loadCatalog(url, "Search failed");
   // Client-side keyword / tags / listed / skipped for unit-test compatibility
   // and parity with fields the public catalog schema does not accept.
   const items = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
 
-  if (items.length === 0) {
-    return catalogOutcome([], `No resources match ${describeCatalogFilters(filters)}.`, notice);
-  }
-  return catalogOutcome(items, items.map(formatResource).join("\n\n"), notice);
+  if (items.length === 0) return `No resources match ${describeCatalogFilters(filters)}.`;
+  const body = items.map(formatResource).join("\n\n");
+  // Search never appended a server cache-staleness notice; only the explicit
+  // offline-snapshot label is added here, so fresh-search output is unchanged.
+  const full = fromCache && notice ? `${body}\n\n${notice}` : body;
+  return truncateResponse(full);
 }
 
-export async function search(filtersOrQuery: string | CatalogFilters): Promise<string> {
-  return outcomeText(await searchOutcome(filtersOrQuery));
+async function previewData(resourceId: string): Promise<{ r: any; label: string | null }> {
+  try {
+    const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
+    if (!res.ok)
+      throwHttpError({
+        operation: "Preview failed",
+        source: "api",
+        status: res.status,
+        data: res.data,
+      });
+    recordPreviewSnapshot(resourceId, res.data);
+    return { r: res.data, label: null };
+  } catch (err) {
+    const snap = getPreviewSnapshot(resourceId);
+    // No cached snapshot for this resource — surface the original error.
+    if (!snap) throw err;
+    return { r: snap.meta as any, label: catalogCacheLabel(snap.savedAtMs) };
+  }
 }
 
 export async function preview(resourceId: string): Promise<string> {
-  const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
-  if (!res.ok)
-    throwHttpError({
-      operation: "Preview failed",
-      source: "api",
-      status: res.status,
-      data: res.data,
-    });
-  const r = res.data;
-  // Publisher-supplied title/description are unbounded at the source, so cap
-  // them before serializing rather than truncating the JSON afterwards (#582).
-  return serializePreview(
-    applyPreviewLimits({
-      id: r.id,
-      title: r.title,
-      description: r.description,
-      price: `$${r.price} USDC`,
-      type: r.resourceType,
-      verificationStatus: r.verificationStatus,
-      accessUrl: r.accessUrl,
-    }),
-  );
+  const { r, label } = await previewData(resourceId);
+  const out: Record<string, unknown> = {
+    id: r.id,
+    title: r.title,
+    description: r.description,
+    price: `$${r.price} USDC`,
+    type: r.resourceType,
+    verificationStatus: r.verificationStatus,
+    accessUrl: r.accessUrl,
+  };
+  if (label) out.offlineCache = label;
+  return JSON.stringify(out, null, 2);
 }
 
 async function fetchPublishStatusData(resourceId: string): Promise<PublishStatusFetch> {
@@ -2444,7 +2455,9 @@ export function networkProfile(): string {
 
 /**
  * Verify the installed registry-client bindings match the deployed contract's
- * interface. Returns the check's deterministic, agent-safe message.
+ * interface. Returns the check's deterministic, agent-safe message (a match
+ * summary, a mismatch warning with a recommended fix, or a "could not verify"
+ * note when the contract/RPC is unreachable).
  */
 async function checkBindings(): Promise<string> {
   if (_isMock()) return "Mock mode: contract binding check skipped (no live RPC).";
@@ -2455,6 +2468,29 @@ async function checkBindings(): Promise<string> {
     network: STELLAR_NETWORK,
   });
   return result.message;
+}
+
+/**
+ * Return opt-in tool-level metrics as JSON. Only counts, durations, and tool
+ * names are included — never arguments, wallets, or API keys. When metrics are
+ * disabled, returns an actionable note instead of counters. Pass reset=true to
+ * clear counters after reading.
+ */
+function toolMetrics(reset: boolean): string {
+  const snapshot = metrics.snapshot();
+  if (reset) metrics.reset();
+  if (!snapshot.enabled) {
+    return JSON.stringify(
+      {
+        enabled: false,
+        message:
+          "Metrics are disabled. Set MINDVAULT_METRICS=1 (or true/yes/on) and restart the server to collect tool-level metrics.",
+      },
+      null,
+      2,
+    );
+  }
+  return JSON.stringify(snapshot, null, 2);
 }
 
 /**
@@ -2535,7 +2571,7 @@ async function dispatchToolOutcome(
     await assertApiReachableFor(name);
   }
 
-  const execute = async (): Promise<ToolOutcome> => {
+  const execute = async (): Promise<string> => {
     switch (name) {
       case "mindvault_setup_wallet":
         return setupWallet(optionalString(args, "profile"));
@@ -2718,8 +2754,22 @@ export function normalizeToolResultForTest(name: string, outcome: ToolOutcome) {
 
 const server = new Server(
   { name: "mindvault", version: "1.0.0" },
-  { capabilities: { tools: {}, prompts: {} } },
+  { capabilities: { tools: {}, prompts: {}, resources: {} } },
 );
+
+// ── MCP resources (#545) ─────────────────────────────────────────────────────
+// The vault catalog is exposed as resources so agents can discover entries
+// (resources/list) and read their public metadata (resources/read) without
+// invoking a tool. URIs are stable: mindvault://resource/<id>. Reads never
+// return gated content — only the public meta endpoint is consulted.
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  resources: await listCatalogResources(),
+}));
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => ({
+  contents: [await readCatalogResource(request.params.uri)],
+}));
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   const advertisedTools = [
@@ -3226,10 +3276,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       ? createProgressEmitter({ token: progressToken, send: extra.sendNotification })
       : undefined;
   try {
-    const result = await measureTool(metrics, name, () =>
-      dispatchToolOutcome(name, args, onProgress),
-    );
-    return normalizeToolResult(name, result, hasOutputSchema);
+    const result = await measureTool(metrics, name, () => dispatchTool(name, args, onProgress));
+    const structured = structuredResult(name, result);
+    return {
+      content: [{ type: "text", text: result }],
+      ...(structured ? { structuredContent: structured } : {}),
+    };
   } catch (err: any) {
     const mapped = mappedErrorOf(err);
     return {

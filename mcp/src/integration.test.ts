@@ -87,6 +87,44 @@ describe("MCP integration harness", () => {
     }
   });
 
+  it("advertises the resources capability and lists catalog entries with stable URIs (#545)", async () => {
+    const capabilities = harness.client.getServerCapabilities();
+    expect(capabilities?.resources).toBeDefined();
+
+    const { resources } = await harness.listResources();
+    const uris = resources.map((r) => r.uri);
+    expect(uris).toContain("mindvault://resource/mock-1");
+    expect(uris).toContain("mindvault://resource/mock-2");
+
+    const mock1 = resources.find((r) => r.uri === "mindvault://resource/mock-1");
+    expect(mock1?.name).toContain("Stellar");
+    expect(mock1?.mimeType).toBe("application/json");
+  });
+
+  it("reads public metadata for a known resource URI (#545)", async () => {
+    const { contents } = await harness.readResource("mindvault://resource/mock-1");
+    expect(contents).toHaveLength(1);
+    const parsed = JSON.parse(contents[0].text ?? "");
+    expect(parsed.id).toBe("mock-1");
+    expect(parsed.title).toContain("Stellar");
+    expect(parsed.price).toMatch(/USDC/);
+    // Only public metadata — on-chain sync fields from the meta endpoint are
+    // never exposed through resources/read.
+    expect(contents[0].text).not.toContain("onchainStatus");
+    expect(contents[0].text).not.toContain("contentHash");
+  });
+
+  it("returns deterministic errors for unknown resource URIs (#545)", async () => {
+    // Wrong scheme/host is rejected before any network call.
+    await expect(harness.readResource("https://example.com/not-a-resource")).rejects.toThrow(
+      /resource URI/i,
+    );
+    // A well-formed URI for an id the catalog does not know is a not-found error.
+    await expect(harness.readResource("mindvault://resource/does-not-exist")).rejects.toThrow(
+      /not found/i,
+    );
+  });
+
   it("calls mindvault_browse with mocked catalog fixtures", async () => {
     const result = await harness.callTool("mindvault_browse");
     expect(harnessIsToolError(result)).toBe(false);
