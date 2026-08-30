@@ -8,6 +8,7 @@
 
 import { redactSecrets, redactObject } from "./redaction.js";
 import { createRotatingWriter, type RotatingJsonlWriter } from "./auditLogRotation.js";
+import { currentCorrelationId } from "./correlation.js";
 
 export interface AuditLogEntry {
   timestamp: string;
@@ -85,18 +86,6 @@ export function setAuditFileWriter(writer: RotatingJsonlWriter | null): void {
 }
 
 /**
- * Emit one entry to every configured sink.
- *
- * stderr keeps the indented form it has always had — it is read by humans
- * watching a session — while the file gets one compact line per entry, which
- * is what makes the file greppable and shippable.
- */
-function emit(entry: AuditLogEntry | NetworkAuditLog): void {
-  console.error(JSON.stringify(entry, null, 2));
-  auditFileWriter?.write(entry);
-}
-
-/**
  * Check if audit logging is enabled.
  */
 export function isAuditLogEnabled(): boolean {
@@ -128,9 +117,18 @@ function withCorrelation<T extends AuditLogEntry | NetworkAuditLog>(entry: T): T
   return correlationId ? { ...entry, correlationId } : entry;
 }
 
-/** Single exit point for every audit entry, so correlation is never skipped. */
+/**
+ * Single exit point for every audit entry, so correlation is never skipped and
+ * every configured sink sees the same entry.
+ *
+ * stderr keeps the indented form it has always had — it is read by humans
+ * watching a session — while the file gets one compact line per entry, which
+ * is what makes the file greppable and shippable.
+ */
 function emit(entry: AuditLogEntry | NetworkAuditLog): void {
-  console.error(JSON.stringify(withCorrelation(entry), null, 2));
+  const correlated = withCorrelation(entry);
+  console.error(JSON.stringify(correlated, null, 2));
+  auditFileWriter?.write(correlated);
 }
 
 /**

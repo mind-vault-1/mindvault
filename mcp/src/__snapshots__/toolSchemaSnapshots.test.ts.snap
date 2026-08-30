@@ -17,7 +17,12 @@ exports[`tool schema snapshots > mindvault_agent_status > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_agent_status > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_agent_status > output schema 1`] = `
+{
+  "additionalProperties": true,
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_backup_state > annotations 1`] = `
 {
@@ -174,7 +179,73 @@ exports[`tool schema snapshots > mindvault_browse > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_browse > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_browse > output schema 1`] = `
+{
+  "properties": {
+    "items": {
+      "items": {
+        "properties": {
+          "accessUrl": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "description": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "id": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "price": {
+            "type": [
+              "string",
+              "number",
+              "null",
+            ],
+          },
+          "title": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+        },
+        "required": [
+          "id",
+          "title",
+          "price",
+          "description",
+          "accessUrl",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+    "notice": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "truncated": {
+      "type": "boolean",
+    },
+  },
+  "required": [
+    "items",
+    "notice",
+    "truncated",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_buy > annotations 1`] = `
 {
@@ -219,7 +290,91 @@ exports[`tool schema snapshots > mindvault_buy > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_buy > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_buy > output schema 1`] = `
+{
+  "oneOf": [
+    {
+      "properties": {
+        "after": {},
+        "before": {},
+        "changedFields": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "failureGuidance": {
+          "type": [
+            "array",
+            "null",
+          ],
+        },
+        "txHash": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+      },
+      "required": [
+        "before",
+        "after",
+        "changedFields",
+        "txHash",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "intentions": {
+          "type": "object",
+        },
+        "mode": {
+          "const": "dry-run",
+          "type": "string",
+        },
+        "operation": {
+          "type": "string",
+        },
+        "steps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "validation": {
+          "type": "object",
+        },
+      },
+      "required": [
+        "mode",
+        "operation",
+        "validation",
+        "intentions",
+        "steps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "string",
+        },
+        "status": {
+          "const": "text",
+          "type": "string",
+        },
+      },
+      "required": [
+        "status",
+        "message",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_check_bindings > annotations 1`] = `
 {
@@ -272,7 +427,54 @@ exports[`tool schema snapshots > mindvault_check_consistency > input schema 1`] 
 }
 `;
 
-exports[`tool schema snapshots > mindvault_check_consistency > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_check_consistency > output schema 1`] = `
+{
+  "properties": {
+    "apiFound": {
+      "type": "boolean",
+    },
+    "matches": {
+      "type": "object",
+    },
+    "mismatches": {
+      "type": "object",
+    },
+    "missingInApi": {
+      "type": "array",
+    },
+    "missingInOnchain": {
+      "type": "array",
+    },
+    "onchainError": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "onchainFound": {
+      "type": "boolean",
+    },
+    "resourceId": {
+      "type": "string",
+    },
+    "summary": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "resourceId",
+    "apiFound",
+    "onchainFound",
+    "onchainError",
+    "matches",
+    "mismatches",
+    "missingInApi",
+    "missingInOnchain",
+    "summary",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_check_state_permissions > annotations 1`] = `
 {
@@ -561,7 +763,27 @@ exports[`tool schema snapshots > mindvault_import_wallet > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_import_wallet > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_import_wallet > output schema 1`] = `
+{
+  "properties": {
+    "address": {
+      "type": "string",
+    },
+    "persisted": {
+      "type": "boolean",
+    },
+    "profile": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "profile",
+    "address",
+    "persisted",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_list_profiles > annotations 1`] = `
 {
@@ -580,7 +802,49 @@ exports[`tool schema snapshots > mindvault_list_profiles > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_list_profiles > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_list_profiles > output schema 1`] = `
+{
+  "properties": {
+    "active": {
+      "type": "string",
+    },
+    "profiles": {
+      "items": {
+        "properties": {
+          "active": {
+            "type": "boolean",
+          },
+          "address": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "name": {
+            "type": "string",
+          },
+          "publisherRegistered": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "name",
+          "address",
+          "publisherRegistered",
+          "active",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+  },
+  "required": [
+    "active",
+    "profiles",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_metrics > annotations 1`] = `
 {
@@ -608,7 +872,43 @@ exports[`tool schema snapshots > mindvault_metrics > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_metrics > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_metrics > output schema 1`] = `
+{
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+    },
+    "message": {
+      "type": "string",
+    },
+    "payments": {
+      "type": "object",
+    },
+    "since": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "toolDurationBudgetMs": {
+      "type": [
+        "integer",
+        "null",
+      ],
+    },
+    "tools": {
+      "type": "object",
+    },
+    "totals": {
+      "type": "object",
+    },
+  },
+  "required": [
+    "enabled",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_network_profile > annotations 1`] = `
 {
@@ -627,7 +927,46 @@ exports[`tool schema snapshots > mindvault_network_profile > input schema 1`] = 
 }
 `;
 
-exports[`tool schema snapshots > mindvault_network_profile > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_network_profile > output schema 1`] = `
+{
+  "properties": {
+    "horizonUrl": {
+      "type": "string",
+    },
+    "registryContractId": {
+      "type": "string",
+    },
+    "retries": {},
+    "sorobanRpcUrl": {
+      "type": "string",
+    },
+    "stellarNetwork": {
+      "type": "string",
+    },
+    "timeouts": {},
+    "usdcContractId": {},
+    "warnings": {
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
+    "x402Network": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "stellarNetwork",
+    "x402Network",
+    "sorobanRpcUrl",
+    "horizonUrl",
+    "registryContractId",
+    "usdcContractId",
+    "warnings",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_preview > annotations 1`] = `
 {
@@ -658,7 +997,32 @@ exports[`tool schema snapshots > mindvault_preview > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_preview > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_preview > output schema 1`] = `
+{
+  "properties": {
+    "accessUrl": {},
+    "description": {},
+    "id": {},
+    "offlineCache": {
+      "type": "string",
+    },
+    "price": {},
+    "title": {},
+    "type": {},
+    "verificationStatus": {},
+  },
+  "required": [
+    "id",
+    "title",
+    "description",
+    "price",
+    "type",
+    "verificationStatus",
+    "accessUrl",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_publish > annotations 1`] = `
 {
@@ -722,9 +1086,100 @@ exports[`tool schema snapshots > mindvault_publish > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_publish > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_publish > output schema 1`] = `
+{
+  "oneOf": [
+    {
+      "properties": {
+        "after": {},
+        "before": {},
+        "changedFields": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "failureGuidance": {
+          "type": [
+            "array",
+            "null",
+          ],
+        },
+        "txHash": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+      },
+      "required": [
+        "before",
+        "after",
+        "changedFields",
+        "txHash",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "intentions": {
+          "type": "object",
+        },
+        "mode": {
+          "const": "dry-run",
+          "type": "string",
+        },
+        "operation": {
+          "type": "string",
+        },
+        "steps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "validation": {
+          "type": "object",
+        },
+      },
+      "required": [
+        "mode",
+        "operation",
+        "validation",
+        "intentions",
+        "steps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "string",
+        },
+        "status": {
+          "const": "text",
+          "type": "string",
+        },
+      },
+      "required": [
+        "status",
+        "message",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
 
-exports[`tool schema snapshots > mindvault_recover_catalog_cache > annotations 1`] = `undefined`;
+exports[`tool schema snapshots > mindvault_recover_catalog_cache > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": false,
+  "title": "Recover Catalog Cache",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_recover_catalog_cache > input schema 1`] = `
 {
@@ -734,7 +1189,27 @@ exports[`tool schema snapshots > mindvault_recover_catalog_cache > input schema 
 }
 `;
 
-exports[`tool schema snapshots > mindvault_recover_catalog_cache > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_recover_catalog_cache > output schema 1`] = `
+{
+  "properties": {
+    "action": {
+      "type": "string",
+    },
+    "message": {
+      "type": "string",
+    },
+    "source": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "source",
+    "action",
+    "message",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_register > annotations 1`] = `
 {
@@ -818,7 +1293,91 @@ exports[`tool schema snapshots > mindvault_register_onchain > input schema 1`] =
 }
 `;
 
-exports[`tool schema snapshots > mindvault_register_onchain > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_register_onchain > output schema 1`] = `
+{
+  "oneOf": [
+    {
+      "properties": {
+        "after": {},
+        "before": {},
+        "changedFields": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "failureGuidance": {
+          "type": [
+            "array",
+            "null",
+          ],
+        },
+        "txHash": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+      },
+      "required": [
+        "before",
+        "after",
+        "changedFields",
+        "txHash",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "intentions": {
+          "type": "object",
+        },
+        "mode": {
+          "const": "dry-run",
+          "type": "string",
+        },
+        "operation": {
+          "type": "string",
+        },
+        "steps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "validation": {
+          "type": "object",
+        },
+      },
+      "required": [
+        "mode",
+        "operation",
+        "validation",
+        "intentions",
+        "steps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "string",
+        },
+        "status": {
+          "const": "text",
+          "type": "string",
+        },
+      },
+      "required": [
+        "status",
+        "message",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_registry_health > annotations 1`] = `
 {
@@ -856,7 +1415,46 @@ exports[`tool schema snapshots > mindvault_registry_info > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_registry_info > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_registry_info > output schema 1`] = `
+{
+  "properties": {
+    "contractId": {
+      "type": "string",
+    },
+    "mainnetDiagnostics": {
+      "type": "string",
+    },
+    "network": {
+      "type": "string",
+    },
+    "networkPassphrase": {
+      "type": "string",
+    },
+    "resourceFields": {
+      "items": {
+        "type": "string",
+      },
+      "type": "array",
+    },
+    "rpcUrl": {
+      "type": "string",
+    },
+    "x402Network": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "contractId",
+    "networkPassphrase",
+    "rpcUrl",
+    "network",
+    "x402Network",
+    "resourceFields",
+    "mainnetDiagnostics",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_registry_list > annotations 1`] = `
 {
@@ -895,7 +1493,42 @@ exports[`tool schema snapshots > mindvault_registry_list > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_registry_list > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_registry_list > output schema 1`] = `
+{
+  "properties": {
+    "contract": {},
+    "count": {
+      "type": "integer",
+    },
+    "limit": {
+      "type": "integer",
+    },
+    "message": {
+      "type": "string",
+    },
+    "network": {},
+    "resources": {
+      "type": "array",
+    },
+    "rpc": {},
+    "source": {
+      "type": "string",
+    },
+    "start": {
+      "type": "integer",
+    },
+  },
+  "required": [
+    "source",
+    "start",
+    "limit",
+    "count",
+    "resources",
+    "contract",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_registry_lookup > annotations 1`] = `
 {
@@ -926,7 +1559,42 @@ exports[`tool schema snapshots > mindvault_registry_lookup > input schema 1`] = 
 }
 `;
 
-exports[`tool schema snapshots > mindvault_registry_lookup > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_registry_lookup > output schema 1`] = `
+{
+  "properties": {
+    "contract": {},
+    "creator": {},
+    "found": {
+      "type": "boolean",
+    },
+    "id": {},
+    "listed": {},
+    "message": {
+      "type": "string",
+    },
+    "metadata": {},
+    "network": {},
+    "next": {
+      "type": "string",
+    },
+    "price": {},
+    "resourceId": {
+      "type": "string",
+    },
+    "rpc": {},
+    "source": {
+      "type": "string",
+    },
+    "tags": {},
+  },
+  "required": [
+    "source",
+    "found",
+    "contract",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_reset > annotations 1`] = `
 {
@@ -1152,7 +1820,73 @@ exports[`tool schema snapshots > mindvault_search > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_search > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_search > output schema 1`] = `
+{
+  "properties": {
+    "items": {
+      "items": {
+        "properties": {
+          "accessUrl": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "description": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "id": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+          "price": {
+            "type": [
+              "string",
+              "number",
+              "null",
+            ],
+          },
+          "title": {
+            "type": [
+              "string",
+              "null",
+            ],
+          },
+        },
+        "required": [
+          "id",
+          "title",
+          "price",
+          "description",
+          "accessUrl",
+        ],
+        "type": "object",
+      },
+      "type": "array",
+    },
+    "notice": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "truncated": {
+      "type": "boolean",
+    },
+  },
+  "required": [
+    "items",
+    "notice",
+    "truncated",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_set_listed > annotations 1`] = `
 {
@@ -1195,7 +1929,94 @@ exports[`tool schema snapshots > mindvault_set_listed > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_set_listed > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_set_listed > output schema 1`] = `
+{
+  "oneOf": [
+    {
+      "properties": {
+        "listed": {
+          "type": "boolean",
+        },
+        "metadata": {
+          "type": "string",
+        },
+        "newCreator": {
+          "type": "string",
+        },
+        "price": {
+          "type": "string",
+        },
+        "resourceId": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+        "txHash": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+      },
+      "required": [
+        "status",
+        "resourceId",
+        "txHash",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "intentions": {
+          "type": "object",
+        },
+        "mode": {
+          "const": "dry-run",
+          "type": "string",
+        },
+        "operation": {
+          "type": "string",
+        },
+        "steps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "validation": {
+          "type": "object",
+        },
+      },
+      "required": [
+        "mode",
+        "operation",
+        "validation",
+        "intentions",
+        "steps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "string",
+        },
+        "status": {
+          "const": "text",
+          "type": "string",
+        },
+      },
+      "required": [
+        "status",
+        "message",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_set_price > annotations 1`] = `
 {
@@ -1239,7 +2060,94 @@ exports[`tool schema snapshots > mindvault_set_price > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_set_price > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_set_price > output schema 1`] = `
+{
+  "oneOf": [
+    {
+      "properties": {
+        "listed": {
+          "type": "boolean",
+        },
+        "metadata": {
+          "type": "string",
+        },
+        "newCreator": {
+          "type": "string",
+        },
+        "price": {
+          "type": "string",
+        },
+        "resourceId": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+        "txHash": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+      },
+      "required": [
+        "status",
+        "resourceId",
+        "txHash",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "intentions": {
+          "type": "object",
+        },
+        "mode": {
+          "const": "dry-run",
+          "type": "string",
+        },
+        "operation": {
+          "type": "string",
+        },
+        "steps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "validation": {
+          "type": "object",
+        },
+      },
+      "required": [
+        "mode",
+        "operation",
+        "validation",
+        "intentions",
+        "steps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "string",
+        },
+        "status": {
+          "const": "text",
+          "type": "string",
+        },
+      },
+      "required": [
+        "status",
+        "message",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_set_tags > annotations 1`] = `
 {
@@ -1325,7 +2233,27 @@ exports[`tool schema snapshots > mindvault_setup_wallet > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_setup_wallet > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_setup_wallet > output schema 1`] = `
+{
+  "properties": {
+    "address": {
+      "type": "string",
+    },
+    "persisted": {
+      "type": "boolean",
+    },
+    "profile": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "profile",
+    "address",
+    "persisted",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_transfer_ownership > annotations 1`] = `
 {
@@ -1367,7 +2295,94 @@ exports[`tool schema snapshots > mindvault_transfer_ownership > input schema 1`]
 }
 `;
 
-exports[`tool schema snapshots > mindvault_transfer_ownership > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_transfer_ownership > output schema 1`] = `
+{
+  "oneOf": [
+    {
+      "properties": {
+        "listed": {
+          "type": "boolean",
+        },
+        "metadata": {
+          "type": "string",
+        },
+        "newCreator": {
+          "type": "string",
+        },
+        "price": {
+          "type": "string",
+        },
+        "resourceId": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+        "txHash": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+      },
+      "required": [
+        "status",
+        "resourceId",
+        "txHash",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "intentions": {
+          "type": "object",
+        },
+        "mode": {
+          "const": "dry-run",
+          "type": "string",
+        },
+        "operation": {
+          "type": "string",
+        },
+        "steps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "validation": {
+          "type": "object",
+        },
+      },
+      "required": [
+        "mode",
+        "operation",
+        "validation",
+        "intentions",
+        "steps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "string",
+        },
+        "status": {
+          "const": "text",
+          "type": "string",
+        },
+      },
+      "required": [
+        "status",
+        "message",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_tx_status > annotations 1`] = `
 {
@@ -1397,7 +2412,61 @@ exports[`tool schema snapshots > mindvault_tx_status > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_tx_status > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_tx_status > output schema 1`] = `
+{
+  "oneOf": [
+    {
+      "properties": {
+        "applicationOrder": {},
+        "envelopeXdr": {},
+        "feeBump": {},
+        "hash": {
+          "type": "string",
+        },
+        "latestLedger": {},
+        "ledger": {},
+        "ledgerCloseTime": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "message": {
+          "type": "string",
+        },
+        "oldestLedger": {},
+        "resultMetaXdr": {},
+        "resultXdr": {},
+        "status": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "status",
+        "hash",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "string",
+        },
+        "status": {
+          "const": "text",
+          "type": "string",
+        },
+      },
+      "required": [
+        "status",
+        "message",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_update_metadata > annotations 1`] = `
 {
@@ -1440,7 +2509,94 @@ exports[`tool schema snapshots > mindvault_update_metadata > input schema 1`] = 
 }
 `;
 
-exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] = `
+{
+  "oneOf": [
+    {
+      "properties": {
+        "listed": {
+          "type": "boolean",
+        },
+        "metadata": {
+          "type": "string",
+        },
+        "newCreator": {
+          "type": "string",
+        },
+        "price": {
+          "type": "string",
+        },
+        "resourceId": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+        "txHash": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+      },
+      "required": [
+        "status",
+        "resourceId",
+        "txHash",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "intentions": {
+          "type": "object",
+        },
+        "mode": {
+          "const": "dry-run",
+          "type": "string",
+        },
+        "operation": {
+          "type": "string",
+        },
+        "steps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "validation": {
+          "type": "object",
+        },
+      },
+      "required": [
+        "mode",
+        "operation",
+        "validation",
+        "intentions",
+        "steps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "message": {
+          "type": "string",
+        },
+        "status": {
+          "const": "text",
+          "type": "string",
+        },
+      },
+      "required": [
+        "status",
+        "message",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_use_profile > annotations 1`] = `
 {
@@ -1471,7 +2627,33 @@ exports[`tool schema snapshots > mindvault_use_profile > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_use_profile > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_use_profile > output schema 1`] = `
+{
+  "properties": {
+    "address": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "profile": {
+      "type": "string",
+    },
+    "publisherRegistered": {
+      "type": [
+        "boolean",
+        "null",
+      ],
+    },
+  },
+  "required": [
+    "profile",
+    "address",
+    "publisherRegistered",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_verify_install > annotations 1`] = `
 {
@@ -1509,7 +2691,54 @@ exports[`tool schema snapshots > mindvault_wallet_info > input schema 1`] = `
 }
 `;
 
-exports[`tool schema snapshots > mindvault_wallet_info > output schema 1`] = `null`;
+exports[`tool schema snapshots > mindvault_wallet_info > output schema 1`] = `
+{
+  "properties": {
+    "address": {
+      "type": "string",
+    },
+    "note": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "profile": {
+      "type": "string",
+    },
+    "publisherRegistered": {
+      "type": "boolean",
+    },
+    "usdcBalance": {
+      "type": "string",
+    },
+    "usdcStatus": {
+      "type": "string",
+    },
+    "xlmAvailable": {
+      "type": "string",
+    },
+    "xlmBalance": {
+      "type": "string",
+    },
+    "xlmReserve": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "profile",
+    "address",
+    "xlmBalance",
+    "xlmReserve",
+    "xlmAvailable",
+    "usdcBalance",
+    "usdcStatus",
+    "publisherRegistered",
+    "note",
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
 [
