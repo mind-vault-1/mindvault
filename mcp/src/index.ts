@@ -9,10 +9,6 @@ import {
   createRegistryClient,
   Errors as RegistryErrors,
   listResources,
-  networks as registryNetworks,
-  normalizeX402Network,
-  resolveStellarNetwork,
-  X402_NETWORK_IDS,
   type Resource,
 } from "@mindvault/registry-client";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -26,6 +22,7 @@ import {
 import { PROMPT_DEFINITIONS, getPrompt } from "./prompts.js";
 import { createProgressEmitter } from "./progress.js";
 import { truncateResponse } from "./truncation.js";
+import { applyPreviewLimits, serializePreview } from "./previewLimits.js";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
@@ -33,11 +30,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { homedir } from "os";
 import { join } from "path";
 import { cacheStalenessNotice } from "./cacheStaleness.js";
-import {
-  collectStartupDiagnostics,
-  formatDiagnostics,
-  hasBlockingDiagnostics,
-} from "./diagnostics.js";
+import { buildConfig, resolveConfig } from "./config.js";
 import {
   assertMainnetMutationAllowed,
   formatMainnetDiagnostics,
@@ -96,6 +89,8 @@ import {
   type PublishProgressReporter,
   type PublishStatusFetch,
 } from "./publishStatus.js";
+import { type ApiResponse } from "./apiResponse.js";
+import { safeErrorMessage, safeLog } from "./redaction.js";
 import { safeErrorMessage } from "./redaction.js";
 import { assertAutoPaymentWithinCeiling } from "./paymentCeiling.js";
 import { signMutatingHeaders } from "./requestSignature.js";
@@ -163,32 +158,33 @@ import {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const STELLAR_NETWORK = resolveStellarNetwork(process.env.STELLAR_NETWORK);
-const networkPreset = registryNetworks[STELLAR_NETWORK];
+// Network, URL, and contract-id resolution lives in ./config.ts as a pure,
+// unit-tested function so the config path no longer runs as an untestable
+// top-level side effect. The named aliases below keep the rest of this file
+// unchanged.
+const {
+  stellarNetwork: STELLAR_NETWORK,
+  networkPreset,
+  x402Network: NETWORK,
+  baseUrl: BASE_URL,
+  registryContractId: REGISTRY_CONTRACT_ID,
+  registryNetworkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  sponsoredAccountUrl: SPONSORED_ACCOUNT_URL,
+  horizonUrl: HORIZON_URL,
+  sorobanRpcUrl: SOROBAN_RPC_URL,
+} = buildConfig(process.env);
 
 // Startup diagnostics: collect every configuration problem in one pass so the
 // operator sees the full list (with exact variable names and expected values)
-// instead of fixing them one failed launch at a time. Warnings are printed but
-// non-fatal; any error stops the server. Skipped under tests and in mock mode
-// so unit runs and offline local development never exit the process.
+// instead of fixing them one failed launch at a time. `resolveConfig` returns
+// the validation result rather than exiting; the fail-fast decision stays here.
+// Warnings are printed but non-fatal; any error stops the server. Skipped under
+// tests and in mock mode so unit runs and offline local development never exit.
 if (!process.env.VITEST && !mockEnabledFromEnv(process.env)) {
-  const diagnostics = collectStartupDiagnostics(process.env);
-  if (diagnostics.length > 0) console.error(formatDiagnostics(diagnostics));
-  if (hasBlockingDiagnostics(diagnostics)) process.exit(1);
+  const startup = resolveConfig(process.env);
+  if (startup.report) console.error(startup.report);
+  if (!startup.ok) process.exit(1);
 }
-
-const BASE_URL = process.env.MINDVAULT_URL ?? "https://mindvault-hyr3.onrender.com";
-const REGISTRY_CONTRACT_ID =
-  process.env.VAULT_REGISTRY_CONTRACT_ID ?? networkPreset.defaultRegistryContractId ?? "";
-const REGISTRY_NETWORK_PASSPHRASE = networkPreset.networkPassphrase;
-const SPONSORED_ACCOUNT_URL =
-  process.env.SPONSORED_ACCOUNT_URL ?? "https://stellar-sponsored-agent-account.onrender.com";
-const HORIZON_URL = process.env.HORIZON_URL ?? networkPreset.horizonUrl;
-const SOROBAN_RPC_URL = process.env.SOROBAN_RPC_URL ?? networkPreset.sorobanRpcUrl;
-type X402Network = (typeof X402_NETWORK_IDS)[keyof typeof X402_NETWORK_IDS];
-const NETWORK: X402Network = normalizeX402Network(
-  process.env.NETWORK ?? networkPreset.x402Network,
-) as X402Network;
 
 // Opt-in tool-level metrics (set MINDVAULT_METRICS=1). Disabled by default so
 // there is zero bookkeeping unless an operator turns it on.
@@ -767,10 +763,7 @@ const SERVICE_OPERATION: Record<ErrorSource, string> = {
   registry: "Registry request failed",
 };
 
-async function jsonFetch(
-  url: string,
-  init?: RequestInit,
-): Promise<{ ok: boolean; status: number; data: any; headers: Record<string, string> }> {
+async function jsonFetch(url: string, init?: RequestInit): Promise<ApiResponse<any>> {
   const method = (init?.method ?? "GET").toUpperCase();
   const body =
     typeof init?.body === "string" ? init.body : init?.body ? JSON.stringify(init.body) : undefined;
@@ -1422,36 +1415,28 @@ export async function search(filtersOrQuery: string | CatalogFilters): Promise<s
 }
 
 export async function preview(resourceId: string): Promise<string> {
-  let r: any;
-  let label: string | null = null;
-  try {
-    const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
-    if (!res.ok)
-      throwHttpError({
-        operation: "Preview failed",
-        source: "api",
-        status: res.status,
-        data: res.data,
-      });
-    r = res.data;
-    recordPreviewSnapshot(resourceId, r);
-  } catch (err) {
-    const snap = getPreviewSnapshot(resourceId);
-    if (!snap) throw err;
-    r = snap.meta;
-    label = catalogCacheLabel(snap.savedAtMs);
-  }
-  const payload: Record<string, unknown> = {
-    id: r.id,
-    title: r.title,
-    description: r.description,
-    price: `$${r.price} USDC`,
-    type: r.resourceType,
-    verificationStatus: r.verificationStatus,
-    accessUrl: r.accessUrl,
-  };
-  if (label) payload.offlineCache = label;
-  return JSON.stringify(payload, null, 2);
+  const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
+  if (!res.ok)
+    throwHttpError({
+      operation: "Preview failed",
+      source: "api",
+      status: res.status,
+      data: res.data,
+    });
+  const r = res.data;
+  // Publisher-supplied title/description are unbounded at the source, so cap
+  // them before serializing rather than truncating the JSON afterwards (#582).
+  return serializePreview(
+    applyPreviewLimits({
+      id: r.id,
+      title: r.title,
+      description: r.description,
+      price: `$${r.price} USDC`,
+      type: r.resourceType,
+      verificationStatus: r.verificationStatus,
+      accessUrl: r.accessUrl,
+    }),
+  );
 }
 
 /**
@@ -1666,14 +1651,14 @@ async function publish(args: {
     : "failed";
   const onchainTxHash: string | null = registerRes.ok
     ? (registerRes.data.onchainTxHash ?? null)
-    : ((registerRes.data?.txHash as string | undefined) ?? null);
+    : (((registerRes.data as Record<string, any>)?.txHash as string | undefined) ?? null);
 
   // On failure the server returns actionable guidance (next steps, the retry
   // endpoint, and a tx-status link when a hash exists). Surface it verbatim so
   // the agent knows exactly how to recover instead of getting an opaque error.
   const failureGuidance: string[] = [];
   if (!registerRes.ok) {
-    const data = registerRes.data ?? {};
+    const data = (registerRes.data ?? {}) as Record<string, any>;
     const retryEndpoint =
       typeof data.retryEndpoint === "string"
         ? data.retryEndpoint
@@ -1896,7 +1881,10 @@ export async function registerOnchain(
     body: JSON.stringify({ signedXdr }),
   });
   if (!submit.ok) {
-    const txHash = submit.data && typeof submit.data === "object" ? submit.data.txHash : undefined;
+    const txHash =
+      submit.data && typeof submit.data === "object"
+        ? (submit.data as Record<string, any>).txHash
+        : undefined;
     const mapped = mapHttpError({
       operation: `On-chain registration failed for "${resourceId}" [${submit.status}]`,
       source: "api",

@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_PROFILE,
   STATE_VERSION,
+  exportAllProfiles,
+  exportProfile,
   isValidProfileName,
   isValidWallet,
   migrateState,
@@ -159,5 +161,66 @@ describe("migrateState rollback (#601)", () => {
     expect(again.state).toEqual(first.state);
     // The profiles object is not re-folded into a nested default profile.
     expect(again.state.profiles[DEFAULT_PROFILE]).toEqual(first.state.profiles[DEFAULT_PROFILE]);
+  });
+});
+
+describe("exportProfile", () => {
+  it("exports a profile with secrets redacted", () => {
+    const profile = {
+      wallet: { publicKey: "GABC123", secretKey: "SSECRETKEY123" },
+      apiKey: "sk_live_abc123",
+    };
+    const exported = exportProfile("testnet", profile);
+    expect(exported).toEqual({
+      name: "testnet",
+      address: "GABC123",
+      registered: true,
+    });
+  });
+
+  it("handles a profile with no wallet", () => {
+    const exported = exportProfile("empty", {});
+    expect(exported).toEqual({
+      name: "empty",
+      address: null,
+      registered: false,
+    });
+  });
+
+  it("never exposes secretKey in the exported object", () => {
+    const profile = {
+      wallet: { publicKey: "GABC123", secretKey: "SSECRETKEY123" },
+      apiKey: "sk_live_abc123",
+    };
+    const exported = exportProfile("testnet", profile);
+    const json = JSON.stringify(exported);
+    expect(json).not.toContain("SSECRETKEY123");
+    expect(json).not.toContain("sk_live_abc123");
+  });
+});
+
+describe("exportAllProfiles", () => {
+  it("exports all profiles sorted by name", () => {
+    const state = {
+      version: STATE_VERSION,
+      activeProfile: "beta",
+      profiles: {
+        beta: { wallet: { publicKey: "GBETA", secretKey: "SBETA" }, apiKey: "key-beta" },
+        alpha: { wallet: { publicKey: "GALPHA", secretKey: "SALPHA" } },
+      },
+    };
+    const exported = exportAllProfiles(state);
+    expect(exported.map((p) => p.name)).toEqual(["alpha", "beta"]);
+    expect(exported[0]).toEqual({ name: "alpha", address: "GALPHA", registered: false });
+    expect(exported[1]).toEqual({ name: "beta", address: "GBETA", registered: true });
+  });
+
+  it("returns an empty array for empty profiles", () => {
+    const state = {
+      version: STATE_VERSION,
+      activeProfile: DEFAULT_PROFILE,
+      profiles: {},
+    };
+    expect(exportAllProfiles(state)).toEqual([]);
   });
 });
