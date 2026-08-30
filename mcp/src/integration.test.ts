@@ -15,6 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   harnessIsToolError,
   harnessResultText,
+  harnessStructuredContent,
   startIntegrationHarness,
   type IntegrationHarness,
 } from "./integrationHarness.js";
@@ -211,6 +212,58 @@ describe("MCP integration harness", () => {
     expect(parsed.currency).toBe("USDC");
     expect(typeof parsed.csv).toBe("string");
     expect(parsed.csv.split("\r\n")[0]).toContain("resourceId,title,amount");
+    expect(harnessStructuredContent(result)).toEqual(parsed);
+  });
+
+  it("returns structuredContent alongside preview and registry lookup text (#553)", async () => {
+    const preview = await harness.callTool("mindvault_preview", { resourceId: "mock-1" });
+    expect(harnessIsToolError(preview)).toBe(false);
+    const previewText = harnessResultText(preview);
+    expect(previewText).toContain("mock-1");
+    const previewData = harnessStructuredContent(preview);
+    expect(previewData?.id).toBe("mock-1");
+    expect(previewData).toHaveProperty("price");
+    expect(JSON.parse(previewText)).toEqual(previewData);
+
+    const hit = await harness.callTool("mindvault_registry_lookup", { resourceId: "mock-1" });
+    expect(harnessIsToolError(hit)).toBe(false);
+    const hitData = harnessStructuredContent(hit);
+    expect(hitData?.found).toBe(true);
+    expect(hitData).toHaveProperty("id");
+  });
+
+  it("keeps browse and wallet text unchanged while attaching a sidecar (#553)", async () => {
+    const browse = await harness.callTool("mindvault_browse");
+    expect(harnessIsToolError(browse)).toBe(false);
+    const browseText = harnessResultText(browse);
+    expect(browseText).toContain("mock-1");
+    expect(browseText).toMatch(/\[mock-1]/);
+    const browseData = harnessStructuredContent(browse);
+    expect(Array.isArray(browseData?.items)).toBe(true);
+    const first = (browseData?.items as Array<{ id?: string; price?: unknown }>)[0];
+    expect(first).toHaveProperty("id");
+    expect(first).toHaveProperty("price");
+
+    const setup = await harness.callTool("mindvault_setup_wallet");
+    expect(harnessIsToolError(setup)).toBe(false);
+    const setupText = harnessResultText(setup);
+    expect(setupText).toContain("Address:");
+    expect(setupText).toMatch(/G[A-Z0-9]{55}/);
+    const setupData = harnessStructuredContent(setup);
+    expect(typeof setupData?.address).toBe("string");
+    expect(setupData?.address).toMatch(/G[A-Z0-9]{55}/);
+  });
+
+  it("leaves text-only tools without structuredContent or outputSchema (#553)", async () => {
+    const { tools } = await harness.listTools();
+    const verify = tools.find((t) => t.name === "mindvault_verify_install");
+    expect(verify).toBeDefined();
+    expect((verify as { outputSchema?: unknown }).outputSchema).toBeUndefined();
+
+    const result = await harness.callTool("mindvault_verify_install");
+    expect(harnessIsToolError(result)).toBe(false);
+    expect(harnessStructuredContent(result)).toBeUndefined();
+    expect(harnessResultText(result).length).toBeGreaterThan(0);
   });
 
   it("returns deterministic Error: results for unknown tools and missing wallet", async () => {
@@ -226,6 +279,8 @@ describe("MCP integration harness", () => {
     expect(walletText).toMatch(/^Error:/);
     expect(walletText).toContain("mindvault_setup_wallet");
     expect(walletText).not.toMatch(/S[A-Z0-9]{50,}/); // no secret keys
+    expect(unknown).not.toHaveProperty("structuredContent");
+    expect(walletInfo).not.toHaveProperty("structuredContent");
   });
 
   it("sets up a wallet through callTool using the mock sponsored-account route", async () => {

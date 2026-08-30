@@ -137,7 +137,20 @@ export function verifyInstall(
     },
   );
 
-  // 5. VAULT_REGISTRY_CONTRACT_ID — required on mainnet; optional on testnet
+  // 5. HORIZON_URL and SOROBAN_RPC_URL — optional network-service overrides,
+  // but must be valid HTTP(S) URLs before any request is attempted.
+  for (const variable of ["HORIZON_URL", "SOROBAN_RPC_URL"] as const) {
+    const check = urlIssue(variable, env[variable]);
+    checks.push(
+      check ?? {
+        name: variable,
+        ok: true,
+        detail: `${variable}: unset (network preset in use)`,
+      },
+    );
+  }
+
+  // 6. VAULT_REGISTRY_CONTRACT_ID — required on mainnet; optional on testnet
   const isMainnet = rawNetwork === "mainnet" || rawNetwork === "pubnet" || rawNetwork === "public";
   const contractId = (env.VAULT_REGISTRY_CONTRACT_ID ?? "").trim();
   if (isMainnet && !contractId) {

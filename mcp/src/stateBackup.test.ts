@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import * as fs from "fs";
 import {
   chmodSync,
   mkdirSync,
@@ -19,6 +20,7 @@ import {
   scanPersistedStateSecrets,
   quarantineStateFile,
   preserveLegacyState,
+  writeAtomically,
 } from "./stateBackup.js";
 import { STATE_VERSION, type ProfileState } from "./profiles.js";
 
@@ -136,6 +138,49 @@ describe("stateBackup", () => {
     expect(state.activeProfile).toBe("publisher");
     expect(state.profiles.publisher?.wallet?.secretKey).toBe("SSECRET");
     expect(state.profiles.buyer?.wallet?.publicKey).toBe("GBUY");
+  });
+});
+
+describe("writeAtomically", () => {
+  const STATE_DIR = join(homedir(), ".mindvault");
+  const STATE_FILE = join(STATE_DIR, "state.json");
+
+  beforeEach(() => {
+    mkdirSync(STATE_DIR, { recursive: true });
+    writeFileSync(STATE_FILE, JSON.stringify({ old: true }, null, 2), { mode: 0o600 });
+  });
+
+  afterEach(() => {
+    if (existsSync(STATE_FILE)) rmSync(STATE_FILE);
+    vi.restoreAllMocks();
+  });
+
+  it("writes to a temp file in the same directory and keeps the destination at 0600", () => {
+    writeAtomically(STATE_FILE, JSON.stringify({ ok: true }, null, 2), 0o600);
+    expect(JSON.parse(readFileSync(STATE_FILE, "utf-8"))).toEqual({ ok: true });
+    expect(statSync(STATE_FILE).mode & 0o7777).toBe(0o600);
+    expect(existsSync(`${STATE_FILE}.tmp`)).toBe(false);
+  });
+
+  it("does not leave the destination partially written when rename fails", () => {
+    const failure = new Error("rename failed");
+    expect(() =>
+      writeAtomically(STATE_FILE, '{"new": true}', 0o600, {
+        writeFileSync: fs.writeFileSync,
+        renameSync: () => {
+          throw failure;
+        },
+        chmodSync: fs.chmodSync,
+        existsSync: fs.existsSync,
+        unlinkSync: fs.unlinkSync,
+      }),
+    ).toThrow(/rename failed/);
+
+    expect(readFileSync(STATE_FILE, "utf-8")).toContain("old");
+    const tmpMatches = fs
+      .readdirSync(STATE_DIR)
+      .filter((name) => name.startsWith("state.json.tmp"));
+    expect(tmpMatches).toEqual([]);
   });
 });
 

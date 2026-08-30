@@ -9,10 +9,6 @@ import {
   createRegistryClient,
   Errors as RegistryErrors,
   listResources,
-  networks as registryNetworks,
-  normalizeX402Network,
-  resolveStellarNetwork,
-  X402_NETWORK_IDS,
   type Resource,
 } from "@mindvault/registry-client";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -29,6 +25,7 @@ import { listCatalogResources, readCatalogResource } from "./catalogResources.js
 import { PROMPT_DEFINITIONS, getPrompt } from "./prompts.js";
 import { createProgressEmitter } from "./progress.js";
 import { truncateResponse } from "./truncation.js";
+import { applyPreviewLimits, serializePreview } from "./previewLimits.js";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
@@ -71,7 +68,10 @@ import {
   mockSetListed,
 } from "./mock.js";
 import { purchaseHistoryTool, recordPurchase } from "./purchaseHistory.js";
+import { Mutex } from "./mutex.js";
+import { EXTRA_OUTPUT_SCHEMAS } from "./outputSchemas.js";
 import { exportReceiptsTool } from "./receipts.js";
+import { normalizeToolResult, outcomeText, type ToolOutcome } from "./toolResult.js";
 import { TOOL_DEFINITIONS, type ToolDefinition } from "./tools.js";
 import { dryRunPublish, dryRunBuy } from "./dryRun.js";
 import { initAuditLogging } from "./auditLog.js";
@@ -104,6 +104,8 @@ import {
   type PublishProgressReporter,
   type PublishStatusFetch,
 } from "./publishStatus.js";
+import { type ApiResponse } from "./apiResponse.js";
+import { safeErrorMessage, safeLog } from "./redaction.js";
 import { safeErrorMessage } from "./redaction.js";
 import { assertAutoPaymentWithinCeiling } from "./paymentCeiling.js";
 import { signMutatingHeaders } from "./requestSignature.js";
@@ -113,6 +115,7 @@ import {
   checkStatePermissions,
   preserveLegacyState,
   quarantineStateFile,
+  writeAtomically,
 } from "./stateBackup.js";
 import { formatResetPreview, isResetConfirmed, type ResetScope } from "./resetGuard.js";
 import { verifyInstall, formatVerifyInstall } from "./verifyInstall.js";
@@ -161,89 +164,73 @@ import {
   parseCatalogFilters,
   type CatalogFilters,
 } from "./catalogFilters.js";
+import {
+  catalogCacheLabel,
+  getCatalogSnapshot,
+  getPreviewSnapshot,
+  recordCatalogSnapshot,
+  recordPreviewSnapshot,
+} from "./catalogCache.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const STELLAR_NETWORK = resolveStellarNetwork(process.env.STELLAR_NETWORK);
-const networkPreset = registryNetworks[STELLAR_NETWORK];
+// Network, URL, and contract-id resolution lives in ./config.ts as a pure,
+// unit-tested function so the config path no longer runs as an untestable
+// top-level side effect. The named aliases below keep the rest of this file
+// unchanged.
+const {
+  stellarNetwork: STELLAR_NETWORK,
+  networkPreset,
+  x402Network: NETWORK,
+  baseUrl: BASE_URL,
+  registryContractId: REGISTRY_CONTRACT_ID,
+  registryNetworkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  sponsoredAccountUrl: SPONSORED_ACCOUNT_URL,
+  horizonUrl: HORIZON_URL,
+  sorobanRpcUrl: SOROBAN_RPC_URL,
+} = buildConfig(process.env);
 
 // Startup diagnostics: collect every configuration problem in one pass so the
 // operator sees the full list (with exact variable names and expected values)
-// instead of fixing them one failed launch at a time. Warnings are printed but
-// non-fatal; any error stops the server. Skipped under tests and in mock mode
-// so unit runs and offline local development never exit the process.
+// instead of fixing them one failed launch at a time. `resolveConfig` returns
+// the validation result rather than exiting; the fail-fast decision stays here.
+// Warnings are printed but non-fatal; any error stops the server. Skipped under
+// tests and in mock mode so unit runs and offline local development never exit.
 if (!process.env.VITEST && !mockEnabledFromEnv(process.env)) {
-  const diagnostics = collectStartupDiagnostics(process.env);
-  if (diagnostics.length > 0) console.error(formatDiagnostics(diagnostics));
-  if (hasBlockingDiagnostics(diagnostics)) process.exit(1);
+  const startup = resolveConfig(process.env);
+  if (startup.report) console.error(startup.report);
+  if (!startup.ok) process.exit(1);
 }
 
-const BASE_URL = process.env.MINDVAULT_URL ?? "https://mindvault-hyr3.onrender.com";
-const REGISTRY_CONTRACT_ID =
-  process.env.VAULT_REGISTRY_CONTRACT_ID ?? networkPreset.defaultRegistryContractId ?? "";
-const REGISTRY_NETWORK_PASSPHRASE = networkPreset.networkPassphrase;
-const SPONSORED_ACCOUNT_URL =
-  process.env.SPONSORED_ACCOUNT_URL ?? "https://stellar-sponsored-agent-account.onrender.com";
-const HORIZON_URL = process.env.HORIZON_URL ?? networkPreset.horizonUrl;
-const SOROBAN_RPC_URL = process.env.SOROBAN_RPC_URL ?? networkPreset.sorobanRpcUrl;
-type X402Network = (typeof X402_NETWORK_IDS)[keyof typeof X402_NETWORK_IDS];
-const NETWORK: X402Network = normalizeX402Network(
-  process.env.NETWORK ?? networkPreset.x402Network,
-) as X402Network;
-
-// Opt-in tool-level metrics (set MINDVAULT_METRICS=1). Disabled by default so
-// there is zero bookkeeping unless an operator turns it on.
 const metrics = createMetricsRecorder(
   metricsEnabledFromEnv(process.env),
   resolveToolDurationBudget(process.env),
 );
 
-// Opt-in audit logging (set MINDVAULT_AUDIT_LOG=1). Logs tool calls, network
-// requests, duration, status, and tx hashes with automatic secret redaction.
 initAuditLogging(process.env);
 
-// Contributor-friendly mock mode (set MINDVAULT_MOCK=1). When on, every HTTP
-// call and the on-chain registry lookup are served from deterministic in-memory
-// fixtures — no live backend, funded wallet, or network access required. All
-// outbound requests go through `httpFetch`, which is the mock shim in this mode
-// and the global fetch otherwise.
 const MOCK = mockEnabledFromEnv(process.env);
-/** Live mock-mode check — reads process.env at call time so tests can toggle it. */
 function _isMock(): boolean {
   return mockEnabledFromEnv(process.env);
 }
-/** Test helper: override mock mode without restarting the process. */
 export function _setMockMode(on: boolean): void {
   if (on) process.env.MINDVAULT_MOCK = "1";
   else delete process.env.MINDVAULT_MOCK;
 }
-// In real mode, defer to the global `fetch` at call time (not a captured
-// reference) so a test-stubbed global is still honoured.
 const httpFetch: typeof fetch = MOCK
   ? createMockFetch(() => currentWallet()?.publicKey)
   : (input, init) => fetch(input as RequestInfo | URL, init);
 
-// Per-service request deadlines. Every outbound call runs under an
-// AbortController using one of these budgets; see docs/mcp-timeouts-retries.md.
 const TIMEOUTS = resolveTimeouts(process.env);
 
-// Bounded, jittered retry for idempotent calls only. Payments never use it.
 const RETRY_POLICY = retryPolicyFromEnv(process.env);
 
-// User-Agent sent on every outbound HTTP request. Configurable via
-// MINDVAULT_USER_AGENT; defaults to "mindvault-mcp/1.0.0".
 const USER_AGENT = resolveUserAgent(process.env);
 
-/**
- * Retry chatter goes to stderr so operators can see transient failures being
- * absorbed. Silenced under Vitest to keep suite output readable —
- * `formatRetryLog` is asserted directly in retry.test.ts.
- */
 const logRetry = process.env.VITEST
   ? undefined
   : (info: RetryAttemptInfo) => console.error(`MindVault MCP: ${formatRetryLog(info)}`);
 
-/** Shared retry options for an idempotent HTTP call returning a Response. */
 function httpRetryOptions(label: string) {
   return {
     policy: RETRY_POLICY,
@@ -256,10 +243,6 @@ function httpRetryOptions(label: string) {
   };
 }
 
-/**
- * Soroban RPC call under the soroban budget. `getTransaction` is a read, so it
- * is retried; the JSON-RPC method name is part of the log label.
- */
 function sorobanRpcFetch(init: RequestInit, label: string): Promise<Response> {
   const initWithUA: RequestInit = {
     ...init,
@@ -276,13 +259,9 @@ function sorobanRpcFetch(init: RequestInit, label: string): Promise<Response> {
 const STATE_DIR = join(homedir(), ".mindvault");
 const STATE_FILE = join(STATE_DIR, "state.json");
 
-// Named wallet profiles (testnet/mainnet/publisher/buyer/…) with one active at a
-// time. `agentWallet`/`agentApiKey` from earlier versions map onto the active
-// profile; legacy single-wallet state is migrated on load (see profiles.ts).
 let profiles: Record<string, WalletProfile> = {};
 let activeProfileName: string = DEFAULT_PROFILE;
 
-/** The active profile object, created lazily on first write. */
 function activeProfile(): WalletProfile {
   return (profiles[activeProfileName] ??= {});
 }
@@ -295,10 +274,6 @@ function currentApiKey(): string | null {
   return profiles[activeProfileName]?.apiKey ?? null;
 }
 
-/**
- * Test-only helpers — not part of the public tool surface.
- * Seed/clear the active profile's wallet and API key without touching the filesystem.
- */
 export function _setAgentWallet(w: AgentWallet | null): void {
   if (w) activeProfile().wallet = w;
   else delete activeProfile().wallet;
@@ -307,20 +282,17 @@ export function _setAgentApiKey(k: string | null): void {
   if (k) activeProfile().apiKey = k;
   else delete activeProfile().apiKey;
 }
-/** Test-only: reset the whole profile store to a clean default. */
 export function _resetProfiles(): void {
   profiles = {};
   activeProfileName = DEFAULT_PROFILE;
 }
 
-/** Apply a restored ProfileState into memory and re-persist (mode 0600). */
 function applyRestoredState(state: ProfileState): void {
   profiles = state.profiles;
   activeProfileName = state.activeProfile;
   saveState();
 }
 
-/** Export encrypted state backup (passphrase-gated). No plaintext secrets in output. */
 export function backupState(passphrase: string): string {
   const blob = exportState(passphrase);
   return [
@@ -332,17 +304,10 @@ export function backupState(passphrase: string): string {
   ].join("\n");
 }
 
-/** Restore state from an encrypted backup. Integrity-checked before any write. */
 export function restoreStateTool(blob: string, passphrase: string): string {
   return restoreState(blob, passphrase, applyRestoredState);
 }
 
-/**
- * A state file that could not be loaded is preserved instead of abandoned:
- * the corrupt file is moved to `<state>.corrupt-<ts>` so the only copy is never
- * silently overwritten by a later saveState(), and a diagnostic (no secrets)
- * tells the operator what happened and where the evidence went.
- */
 function quarantineCorruptState(reason: string, detail: string): void {
   try {
     const quarantined = quarantineStateFile(STATE_FILE);
@@ -379,8 +344,6 @@ function loadState(): void {
 
   const { state, migrated, legacy } = migrateState(parsed);
 
-  // A non-empty file that migrates to no recognisable profile is as
-  // unrecoverable as a parse error — preserve it before anything can overwrite.
   if (Object.keys(state.profiles).length === 0) {
     quarantineCorruptState("did not contain a recognisable profile", "");
     return;
@@ -389,8 +352,6 @@ function loadState(): void {
   profiles = state.profiles;
   activeProfileName = state.activeProfile;
   if (migrated) {
-    // Preserve the un-migrated legacy bytes so the migration can be rolled
-    // back before saveState() replaces them with the current format.
     try {
       preserveLegacyState(legacy);
     } catch (err) {
@@ -399,11 +360,10 @@ function loadState(): void {
         safeErrorMessage(err),
       );
     }
-    saveState(); // re-persist legacy state in the current format
+    saveState();
   }
 }
 
-/** Profiles worth persisting: any with credentials, plus the active one. */
 function persistableProfiles(): Record<string, WalletProfile> {
   const out: Record<string, WalletProfile> = {};
   for (const [name, profile] of Object.entries(profiles)) {
@@ -414,19 +374,17 @@ function persistableProfiles(): Record<string, WalletProfile> {
 
 function saveState(): void {
   try {
-    mkdirSync(STATE_DIR, { recursive: true });
     const state: ProfileState = {
       version: STATE_VERSION,
       activeProfile: activeProfileName,
       profiles: persistableProfiles(),
     };
-    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
+    writeAtomically(STATE_FILE, JSON.stringify(state, null, 2), 0o600);
   } catch (err) {
     console.error("MindVault MCP: failed to persist state:", safeErrorMessage(err));
   }
 }
 
-/** Snapshot what a reset would destroy, before anything is mutated. */
 function currentResetScope(all: boolean): ResetScope {
   return {
     all,
@@ -438,14 +396,6 @@ function currentResetScope(all: boolean): ResetScope {
   };
 }
 
-/**
- * Clear credentials. By default only the active profile is cleared; pass
- * `all: true` to wipe every profile and delete the state file.
- *
- * Destructive and irreversible, so it is guarded: without an explicit truthy
- * `confirm` the call is a no-op that returns a warning describing exactly what
- * would be removed. Only a confirmed call clears memory and disk.
- */
 export function resetState(all: boolean, confirm: unknown = false): string {
   if (!isResetConfirmed(confirm)) return formatResetPreview(currentResetScope(all));
 
@@ -470,8 +420,6 @@ export function resetState(all: boolean, confirm: unknown = false): string {
   ].join("\n");
 }
 
-// ── #404: State file permission checks ───────────────────────────────────────
-
 function checkStatePermissionsTool(): string {
   const result = checkStatePermissions();
   const lines = [
@@ -485,8 +433,6 @@ function checkStatePermissionsTool(): string {
   ].filter((l): l is string => l !== null);
   return lines.join("\n");
 }
-
-// ── #401: Registry health check ──────────────────────────────────────────────
 
 interface DependencyStatus {
   name: string;
@@ -520,13 +466,8 @@ async function checkDependency(
 async function registryHealth(): Promise<string> {
   const deps: DependencyStatus[] = [];
 
-  // 1. MindVault API
   deps.push(await checkDependency("MindVault API", `${BASE_URL}/resources`));
-
-  // 2. Horizon
   deps.push(await checkDependency("Horizon", `${HORIZON_URL}`));
-
-  // 3. Soroban RPC — use a lightweight health endpoint or POST
   deps.push(
     await checkDependency("Soroban RPC", SOROBAN_RPC_URL, {
       method: "POST",
@@ -535,7 +476,6 @@ async function registryHealth(): Promise<string> {
     }),
   );
 
-  // 4. Registry contract — verify contract ID is set and non-empty
   if (REGISTRY_CONTRACT_ID) {
     deps.push({
       name: "Registry contract",
@@ -550,7 +490,6 @@ async function registryHealth(): Promise<string> {
     });
   }
 
-  // 5. x402 network alignment
   const expectedNetwork = networkPreset.x402Network;
   const currentNetwork = NETWORK;
   if (currentNetwork === expectedNetwork) {
@@ -576,28 +515,12 @@ async function registryHealth(): Promise<string> {
   return lines.join("\n");
 }
 
-/**
- * Mutations that only make sense when the MindVault API is reachable: they
- * create or change server-side state, so a down API would fail mid-flight with
- * a protocol error instead of declining the tool call.
- */
 const API_MUTATION_TOOLS = new Set([
   "mindvault_register",
   "mindvault_publish",
   "mindvault_rotate_publisher_key",
 ]);
 
-/**
- * Preflight reachability probe run before an API-mutating tool dispatches.
- *
- * When the API is unreachable the mutation could not succeed anyway; refusing
- * up front returns a deterministic `network` error ("was not attempted")
- * instead of a bare transport failure from an unreachable POST, so the agent
- * can decide whether to retry or defer without ever half-executing a mutation.
- *
- * Dry-run and read-only tools are never gated — a dry-run publish intentionally
- * inspects validation without touching the network.
- */
 async function assertApiReachableFor(toolName: string): Promise<void> {
   const dep = await checkDependency("MindVault API", `${BASE_URL}/resources`);
   if (dep.ok) return;
@@ -610,22 +533,14 @@ async function assertApiReachableFor(toolName: string): Promise<void> {
   });
 }
 
-// ── #402: Wallet import flow ─────────────────────────────────────────────────
-
-/**
- * Derive a Stellar public key from a secret key without importing the full SDK.
- * Ed25519 public key = nacl.publicKey.fromSecret(secretKey).
- * We use the Stellar SDK's StrKey for this.
- */
 async function importWallet(args: {
   secretKey?: string;
   profile?: string;
   persist?: boolean;
-}): Promise<string> {
+}): Promise<ToolOutcome> {
   const target = resolveProfileName(args.profile);
   const persist = args.persist !== false;
 
-  // Resolve the secret key: explicit arg > env var
   let secretKey = args.secretKey;
   if (!secretKey) {
     secretKey = process.env.MINDVAULT_AGENT_SECRET;
@@ -636,12 +551,10 @@ async function importWallet(args: {
     );
   }
 
-  // Validate: must be a Stellar secret key (S + 55 base32 chars)
   if (!/^S[A-Z2-7]{55}$/.test(secretKey)) {
     throw new Error("Invalid Stellar secret key. Must be S followed by 55 base32 characters.");
   }
 
-  // Derive the public key using the Stellar SDK
   let publicKey: string;
   try {
     const { Keypair } = await import("@stellar/stellar-sdk");
@@ -655,22 +568,26 @@ async function importWallet(args: {
     activeProfileName = target;
     activeProfile().wallet = { publicKey, secretKey };
     saveState();
-    return [
-      `Wallet imported.`,
-      `Profile: ${target}`,
-      `Address: ${publicKey}`,
-      `Wallet persisted to ${STATE_FILE} (mode 0600).`,
-    ].join("\n");
+    return {
+      text: [
+        `Wallet imported.`,
+        `Profile: ${target}`,
+        `Address: ${publicKey}`,
+        `Wallet persisted to ${STATE_FILE} (mode 0600).`,
+      ].join("\n"),
+      structured: { profile: target, address: publicKey, persisted: true },
+    };
   }
 
-  return [
-    `Wallet validated (not persisted).`,
-    `Address: ${publicKey}`,
-    `Pass persist: true to save to the state file.`,
-  ].join("\n");
+  return {
+    text: [
+      `Wallet validated (not persisted).`,
+      `Address: ${publicKey}`,
+      `Pass persist: true to save to the state file.`,
+    ].join("\n"),
+    structured: { profile: target, address: publicKey, persisted: false },
+  };
 }
-
-// ── #405: Rotate publisher API key ───────────────────────────────────────────
 
 async function rotatePublisherKey(profileArg?: string): Promise<string> {
   const target = resolveProfileName(profileArg);
@@ -700,7 +617,6 @@ async function rotatePublisherKey(profileArg?: string): Promise<string> {
     throw new Error("Server returned an empty API key. Contact support.");
   }
 
-  // Store under the target profile and persist
   if (!profiles[target]) profiles[target] = {};
   profiles[target].apiKey = newApiKey;
   if (target === activeProfileName) {
@@ -719,7 +635,6 @@ async function rotatePublisherKey(profileArg?: string): Promise<string> {
   ].join("\n");
 }
 
-/** Resolve/validate a profile name argument, defaulting to the active profile. */
 function resolveProfileName(name: unknown): string {
   if (name === undefined || name === null || name === "") return activeProfileName;
   if (!isValidProfileName(name)) {
@@ -734,10 +649,6 @@ loadState();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * Which subsystem a URL belongs to, so a transport failure is attributed to the
- * service that actually went down rather than a generic "fetch failed".
- */
 function sourceForUrl(url: string): ErrorSource {
   if (url.startsWith(SPONSORED_ACCOUNT_URL)) return "sponsored";
   if (url.startsWith(HORIZON_URL)) return "horizon";
@@ -745,14 +656,12 @@ function sourceForUrl(url: string): ErrorSource {
   return "api";
 }
 
-/** Timeout budget that applies to a URL, mirroring sourceForUrl. */
 function timeoutServiceForUrl(url: string): TimeoutService {
   if (url.startsWith(HORIZON_URL)) return "horizon";
   if (url.startsWith(SOROBAN_RPC_URL)) return "soroban";
   return "http";
 }
 
-/** Human name for a service, used when a transport error has no operation label. */
 const SERVICE_OPERATION: Record<ErrorSource, string> = {
   api: "MindVault API request failed",
   horizon: "Horizon request failed",
@@ -762,10 +671,7 @@ const SERVICE_OPERATION: Record<ErrorSource, string> = {
   registry: "Registry request failed",
 };
 
-async function jsonFetch(
-  url: string,
-  init?: RequestInit,
-): Promise<{ ok: boolean; status: number; data: any; headers: Record<string, string> }> {
+async function jsonFetch(url: string, init?: RequestInit): Promise<ApiResponse<any>> {
   const method = (init?.method ?? "GET").toUpperCase();
   const body =
     typeof init?.body === "string" ? init.body : init?.body ? JSON.stringify(init.body) : undefined;
@@ -776,9 +682,6 @@ async function jsonFetch(
   };
   const headers = signMutatingHeaders(url, method, baseHeaders, body);
 
-  // Transport failures (DNS, refused connection, abort) never reach the caller
-  // raw — they are classified so the agent knows the service was unreachable
-  // rather than that it sent a bad request.
   let res: Response;
   try {
     const service = timeoutServiceForUrl(url);
@@ -790,8 +693,6 @@ async function jsonFetch(
         service,
         TIMEOUTS[service],
       );
-    // Only replay methods that are safe to replay. A POST here may create a
-    // resource or trigger a payment, so it is issued exactly once.
     res = isIdempotentMethod(method)
       ? await withRetry(call, httpRetryOptions(`${method} ${new URL(url).pathname}`))
       : await call();
@@ -822,13 +723,6 @@ function requireWallet(): AgentWallet {
   return wallet;
 }
 
-/**
- * Identify the publisher credential a request is about to carry.
- *
- * Passed to the error mapper so a 401 on an API-key call reports the stored key
- * as revoked — naming the profile it came from — instead of the generic
- * "credentials are missing" advice that fits an unregistered agent.
- */
 function publisherCredential(profile: string = activeProfileName): CredentialContext {
   return { kind: "publisher_api_key", profile };
 }
@@ -847,36 +741,19 @@ function makePaidFetch(wallet: AgentWallet) {
   const signer = createEd25519Signer(wallet.secretKey, NETWORK);
   const scheme = new ExactStellarScheme(signer);
   const client = new x402Client().register(NETWORK, scheme);
-  // Paid fetches get the longer `payment` budget because the 402 retry includes
-  // on-chain settlement. They are deliberately never retried — see retry.ts.
   return wrapFetchWithPayment(withTimeout(httpFetch, "payment", TIMEOUTS.payment), client);
 }
 
-/**
- * Account/balance states the tool can distinguish for agent-facing output:
- * - missing: account does not exist on Stellar (never funded)
- * - no-trustline: account exists but has no USDC trustline
- * - zero: USDC trustline exists with 0 balance
- * - funded: USDC trustline exists with a positive balance
- */
 interface BalanceDetails {
   status: "missing" | "no-trustline" | "zero" | "funded";
   xlmBalance: string;
   xlmReserve: string;
   xlmAvailable: string;
   usdcBalance: string;
-  /** Human-readable diagnostic when the account/trustline is not usable. */
   message?: string;
 }
 
-/**
- * Query Horizon for the agent wallet's XLM and USDC balances, distinguishing
- * missing account, missing trustline, and zero balance states for deterministic
- * agent-facing output.
- */
 async function getBalanceDetails(publicKey: string): Promise<BalanceDetails> {
-  // Routed through httpFetch (not the bare global) so mock mode, timeouts, and
-  // transport-error classification apply here as they do to every other call.
   let res: Response;
   try {
     res = await withRetry(
@@ -900,7 +777,6 @@ async function getBalanceDetails(publicKey: string): Promise<BalanceDetails> {
     );
   }
 
-  // Account does not exist (never funded with XLM).
   if (res.status === 404) {
     return {
       status: "missing",
@@ -924,19 +800,15 @@ async function getBalanceDetails(publicKey: string): Promise<BalanceDetails> {
   const data: any = await res.json();
   const balances: any[] = data.balances ?? [];
 
-  // Find native XLM balance.
   const xlmBalance = balances.find((b: any) => b.asset_type === "native");
   const xlm = xlmBalance?.balance ?? "0";
 
-  // Stellar reserves 0.5 XLM base + 0.5 XLM per entry (trustlines, offers, signers, data).
-  // Compute available = balance - reserve so agents know how much XLM they can spend.
   const subentryCount = data.subentry_count ?? 0;
-  const baseReserve = 0.5; // Stellar base reserve per account
-  const entryReserve = 0.5; // Reserve per subentry
+  const baseReserve = 0.5;
+  const entryReserve = 0.5;
   const reserve = baseReserve + subentryCount * entryReserve;
   const available = Math.max(0, parseFloat(xlm) - reserve);
 
-  // Find USDC trustline.
   const usdcBalance = balances.find(
     (b: any) => b.asset_type === "credit_alphanum4" && b.asset_code === "USDC",
   );
@@ -975,12 +847,6 @@ async function getBalanceDetails(publicKey: string): Promise<BalanceDetails> {
   };
 }
 
-/**
- * Legacy helper — returns USDC balance as a string, defaulting to "0" for
- * missing account or trustline. Preserved for backward compatibility with
- * insufficientFundsMessage() and other call sites. New code should use
- * getBalanceDetails() for richer diagnostics.
- */
 async function getUsdcBalance(publicKey: string): Promise<string> {
   try {
     const details = await getBalanceDetails(publicKey);
@@ -990,7 +856,6 @@ async function getUsdcBalance(publicKey: string): Promise<string> {
   }
 }
 
-/** Fetch an account's USDC and native (XLM) balances from Horizon. */
 async function getAccountBalances(
   publicKey: string,
 ): Promise<{ usdc: string; native: string; funded: boolean }> {
@@ -1017,14 +882,37 @@ function formatResource(r: any): string {
   return `[${r.id}] ${r.title} — $${r.price} USDC\n  ${r.description ?? ""}\n  ${r.accessUrl}`;
 }
 
+function catalogItemStructured(r: any): {
+  id: string | null;
+  title: string | null;
+  price: string | number | null;
+  description: string | null;
+  accessUrl: string | null;
+} {
+  return {
+    id: r?.id ?? null,
+    title: r?.title ?? null,
+    price: r?.price ?? null,
+    description: r?.description ?? null,
+    accessUrl: r?.accessUrl ?? null,
+  };
+}
+
+function catalogOutcome(items: any[], body: string, notice: string | null): ToolOutcome {
+  const full = notice ? `${body}\n\n${notice}` : body;
+  const text = truncateResponse(full);
+  return {
+    text,
+    structured: {
+      items: items.map(catalogItemStructured),
+      notice,
+      truncated: text !== full,
+    },
+  };
+}
+
 export type SearchFilters = CatalogFilters;
 
-/**
- * Compares the agent wallet's USDC balance against an amount it is about to
- * spend. Returns an actionable insufficient-funds message (balance, amount
- * needed, and the shortfall) when the wallet can't cover the cost, or null
- * when the balance is sufficient.
- */
 async function insufficientFundsMessage(
   wallet: AgentWallet,
   amountNeeded: string | number,
@@ -1128,14 +1016,10 @@ function sponsoredAccountErrorData(status: number, data: unknown): unknown {
   return data;
 }
 
-async function setupWallet(profileArg?: string): Promise<string> {
+async function setupWallet(profileArg?: string): Promise<ToolOutcome> {
   const target = resolveProfileName(profileArg);
   const operation = "mindvault_setup_wallet failed to create wallet";
 
-  // The sponsored-account service is the single dependency of wallet setup, so
-  // both of its failure paths get the same structured diagnostics: a transport
-  // failure (nothing answered) is classified here rather than escaping as the
-  // generic "Sponsored-account request failed" jsonFetch would otherwise throw.
   let res: Awaited<ReturnType<typeof jsonFetch>>;
   try {
     res = await jsonFetch(`${SPONSORED_ACCOUNT_URL}${SPONSORED_CREATE_PATH}`, { method: "POST" });
@@ -1161,17 +1045,22 @@ async function setupWallet(profileArg?: string): Promise<string> {
   activeProfileName = target;
   activeProfile().wallet = { publicKey: res.data.publicKey, secretKey: res.data.secretKey };
   saveState();
-  return [
+  const text = [
     `Wallet created.`,
     `Profile: ${target}`,
     `Address: ${res.data.publicKey}`,
     `Wallet persisted to ${STATE_FILE} (mode 0600).`,
   ].join("\n");
+  return {
+    text,
+    structured: { profile: target, address: res.data.publicKey, persisted: true },
+  };
 }
 
-export async function walletInfo(): Promise<string> {
+async function walletInfoOutcome(): Promise<ToolOutcome> {
   const wallet = requireWallet();
   const details = await getBalanceDetails(wallet.publicKey);
+  const publisherRegistered = !!currentApiKey();
 
   const lines = [
     `Profile: ${activeProfileName}`,
@@ -1181,18 +1070,35 @@ export async function walletInfo(): Promise<string> {
     `XLM Available: ${details.xlmAvailable}`,
     `USDC Balance: ${details.usdcBalance}`,
     `USDC Status: ${details.status}`,
-    `Publisher registered: ${currentApiKey() ? "yes" : "no"}`,
+    `Publisher registered: ${publisherRegistered ? "yes" : "no"}`,
   ];
 
   if (details.message) {
     lines.push(`Note: ${details.message}`);
   }
 
-  return lines.join("\n");
+  return {
+    text: lines.join("\n"),
+    structured: {
+      profile: activeProfileName,
+      address: wallet.publicKey,
+      xlmBalance: details.xlmBalance,
+      xlmReserve: details.xlmReserve,
+      xlmAvailable: details.xlmAvailable,
+      usdcBalance: details.usdcBalance,
+      usdcStatus: details.status,
+      publisherRegistered,
+      note: details.message ?? null,
+    },
+  };
+}
+
+export async function walletInfo(): Promise<string> {
+  return outcomeText(await walletInfoOutcome());
 }
 
 /** Switch the active profile, creating it if new. */
-export function useProfile(nameArg: string): string {
+function useProfileOutcome(nameArg: string): ToolOutcome {
   if (!isValidProfileName(nameArg)) {
     throw new Error(
       `Invalid profile name. Use 1–64 characters from letters, digits, dot, dash, or underscore.`,
@@ -1202,20 +1108,46 @@ export function useProfile(nameArg: string): string {
   const profile = activeProfile();
   saveState();
   if (profile.wallet) {
-    return [
-      `Active profile: ${nameArg}`,
-      `Address: ${profile.wallet.publicKey}`,
-      `Publisher registered: ${profile.apiKey ? "yes" : "no"}`,
-    ].join("\n");
+    return {
+      text: [
+        `Active profile: ${nameArg}`,
+        `Address: ${profile.wallet.publicKey}`,
+        `Publisher registered: ${profile.apiKey ? "yes" : "no"}`,
+      ].join("\n"),
+      structured: {
+        profile: nameArg,
+        address: profile.wallet.publicKey,
+        publisherRegistered: !!profile.apiKey,
+      },
+    };
   }
-  return `Active profile: ${nameArg}\nNo wallet in this profile yet. Run mindvault_setup_wallet to create one.`;
+  return {
+    text: `Active profile: ${nameArg}\nNo wallet in this profile yet. Run mindvault_setup_wallet to create one.`,
+    structured: { profile: nameArg, address: null, publisherRegistered: null },
+  };
+}
+
+export function useProfile(nameArg: string): string {
+  return outcomeText(useProfileOutcome(nameArg));
 }
 
 /** List every named profile, marking the active one. Secrets are never shown. */
-export function listProfiles(): string {
+function listProfilesOutcome(): ToolOutcome {
   const names = Object.keys(profiles).sort();
+  const structured = {
+    active: activeProfileName,
+    profiles: names.map((name) => ({
+      name,
+      address: profiles[name].wallet ? profiles[name].wallet!.publicKey : null,
+      publisherRegistered: !!profiles[name].apiKey,
+      active: name === activeProfileName,
+    })),
+  };
   if (names.length === 0) {
-    return `No profiles yet. Run mindvault_setup_wallet to create one (default profile: "${DEFAULT_PROFILE}").`;
+    return {
+      text: `No profiles yet. Run mindvault_setup_wallet to create one (default profile: "${DEFAULT_PROFILE}").`,
+      structured,
+    };
   }
   const lines = names.map((name) => {
     const profile = profiles[name];
@@ -1224,7 +1156,7 @@ export function listProfiles(): string {
     const registered = profile.apiKey ? ", registered" : "";
     return `${marker} ${name} — ${address}${registered}`;
   });
-  return [`Profiles (* = active):`, ...lines].join("\n");
+  return { text: [`Profiles (* = active):`, ...lines].join("\n"), structured };
 }
 
 interface CatalogLoad {
@@ -1286,7 +1218,11 @@ export async function browse(filters: CatalogFilters = {}): Promise<string> {
   return truncateResponse(full);
 }
 
-export async function search(filtersOrQuery: string | CatalogFilters): Promise<string> {
+export async function browse(filters: CatalogFilters = {}): Promise<string> {
+  return outcomeText(await browseOutcome(filters));
+}
+
+async function searchOutcome(filtersOrQuery: string | CatalogFilters): Promise<ToolOutcome> {
   const filters: CatalogFilters =
     typeof filtersOrQuery === "string" ? { query: filtersOrQuery } : filtersOrQuery;
 
@@ -1303,7 +1239,9 @@ export async function search(filtersOrQuery: string | CatalogFilters): Promise<s
     (filters.tags && filters.tags.length > 0) ||
     filters.listed !== undefined,
   );
-  if (!hasCriteria) return "Provide a search query or at least one catalog filter.";
+  if (!hasCriteria) {
+    return catalogOutcome([], "Provide a search query or at least one catalog filter.", null);
+  }
 
   const qs = buildCatalogQueryString(filters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
@@ -1355,13 +1293,7 @@ export async function preview(resourceId: string): Promise<string> {
   return JSON.stringify(out, null, 2);
 }
 
-/**
- * Fetch one publish-status snapshot from the API (meta + verification endpoints).
- * Deterministic errors: missing id, 404, and non-OK responses.
- */
 async function fetchPublishStatusData(resourceId: string): Promise<PublishStatusFetch> {
-  // Sequential fetches keep meta + verification consistent for a single poll tick
-  // (avoids racing two parallel responses that could disagree mid-transition).
   const metaRes = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
   const verRes = await jsonFetch(`${BASE_URL}/resources/${resourceId}/verification`);
 
@@ -1371,8 +1303,6 @@ async function fetchPublishStatusData(resourceId: string): Promise<PublishStatus
     );
   }
 
-  // Prefer meta for on-chain sync fields; verification endpoint may 404 briefly
-  // for brand-new resources, so allow meta-only when verification is missing.
   if (!metaRes.ok && metaRes.status !== 404) {
     throw new Error(
       `Publish status meta failed [${metaRes.status}]: ${JSON.stringify(metaRes.data)}`,
@@ -1399,17 +1329,6 @@ function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Poll resource verification / on-chain sync status after publish.
- *
- * Reports verificationStatus (pending | verified | rejected | skipped) and
- * on-chain sync fields (onchainStatus, onchainTxHash). Pass wait: true to poll
- * until verification settles or timeoutMs elapses.
- *
- * When the client supplies a progress token, each poll streams a
- * notifications/progress update so a long wait shows movement instead of
- * looking hung.
- */
 export async function publishStatus(
   args: {
     resourceId?: string;
@@ -1484,7 +1403,6 @@ async function publish(args: {
   const wallet = requireWallet();
   const apiKey = requireApiKey();
 
-  // Step 1: Create the resource record
   const createRes = await jsonFetch(`${BASE_URL}/resources`, {
     method: "POST",
     headers: { "x-api-key": apiKey },
@@ -1505,9 +1423,6 @@ async function publish(args: {
     });
   const resource = createRes.data;
 
-  // Step 2: Agent wallet signs the x402 payment for verification. Check funds
-  // first so a shortfall returns an actionable message rather than a created-
-  // but-unverifiable resource with an opaque payment error.
   const statusRes = await jsonFetch(`${BASE_URL}/agent/status`);
   const verificationPrice = statusRes.ok ? statusRes.data?.agent?.pricePerVerification : null;
   if (verificationPrice != null) {
@@ -1556,7 +1471,6 @@ async function publish(args: {
       .join("\n");
   }
 
-  // Step 3: Trigger on-chain registration (best-effort — failure doesn't block listing)
   const registerRes = await jsonFetch(`${BASE_URL}/resources/${resource.id}/register`, {
     method: "POST",
     headers: { "x-api-key": apiKey },
@@ -1567,14 +1481,11 @@ async function publish(args: {
     : "failed";
   const onchainTxHash: string | null = registerRes.ok
     ? (registerRes.data.onchainTxHash ?? null)
-    : ((registerRes.data?.txHash as string | undefined) ?? null);
+    : (((registerRes.data as Record<string, any>)?.txHash as string | undefined) ?? null);
 
-  // On failure the server returns actionable guidance (next steps, the retry
-  // endpoint, and a tx-status link when a hash exists). Surface it verbatim so
-  // the agent knows exactly how to recover instead of getting an opaque error.
   const failureGuidance: string[] = [];
   if (!registerRes.ok) {
-    const data = registerRes.data ?? {};
+    const data = (registerRes.data ?? {}) as Record<string, any>;
     const retryEndpoint =
       typeof data.retryEndpoint === "string"
         ? data.retryEndpoint
@@ -1636,8 +1547,6 @@ export async function buy(
 
   const wallet = requireWallet();
 
-  // Check the wallet can cover the price before attempting payment so a
-  // shortfall returns an actionable message instead of an opaque payment error.
   await onProgress?.(1, 4, "Validating resource");
   const meta = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
   if (!meta.ok || meta.data?.price == null) {
@@ -1674,8 +1583,6 @@ export async function buy(
   }
   metrics.recordPayment(res.ok);
   if (!res.ok) {
-    // A 402 here means the payment itself was refused (typically an underfunded
-    // wallet), which is a different recovery path from a plain API error.
     const text = await res.text();
     throwHttpError({
       operation: `Buy failed [${res.status}]`,
@@ -1696,8 +1603,6 @@ export async function buy(
     (typeof afterData.title === "string" && afterData.title) ||
     (meta.ok && typeof meta.data?.title === "string" ? meta.data.title : undefined);
 
-  // Persist a local receipt so mindvault_purchase_history can list prior buys.
-  // Recording failures must not fail the successful purchase response.
   await onProgress?.(3, 4, "Recording purchase");
   try {
     recordPurchase({
@@ -1727,15 +1632,6 @@ export async function buy(
   return JSON.stringify(summary, null, 2);
 }
 
-/**
- * Register a verified resource on the vault registry contract.
- *
- * mindvault_publish triggers on-chain registration automatically, but the chain
- * call can fail (RPC outage, unfunded fees) while the resource stays listed and
- * purchasable. This tool is the advertised retry path: it prepares the unsigned
- * register transaction (owner-only), signs it with the agent wallet — which is
- * the resource creator for agent-published resources — and submits it.
- */
 export async function registerOnchain(
   resourceId: string,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
@@ -1744,14 +1640,11 @@ export async function registerOnchain(
   const apiKey = requireApiKey();
   if (!resourceId) throw new Error("resourceId is required.");
 
-  // Step 1: prepare the unsigned register transaction (owner-only).
   await onProgress?.(1, 3, "Preparing transaction");
   const prep = await jsonFetch(`${BASE_URL}/resources/${resourceId}/register/prepare`, {
     headers: { "x-api-key": apiKey },
   });
   if (!prep.ok) {
-    // Keep the endpoint-specific guidance (not verified / already registered /
-    // wrong owner) and let the mapper add the classification and next step.
     const mapped = mapHttpError({
       operation: `Could not prepare on-chain registration for "${resourceId}" [${prep.status}]`,
       source: "api",
@@ -1759,9 +1652,6 @@ export async function registerOnchain(
       data: prep.data,
       credential: publisherCredential(),
     });
-    // 401/403 are left to the mapper: it knows whether the stored publisher key
-    // was rejected outright or accepted but unauthorized here, and names the
-    // profile to fix. Repeating a generic ownership line here would bury that.
     const specific = [
       prep.status === 400 ? "The resource must be verified before it can be registered." : null,
       prep.status === 409
@@ -1781,7 +1671,6 @@ export async function registerOnchain(
     );
   }
 
-  // Step 2: sign with the agent wallet (the resource creator).
   await onProgress?.(2, 3, "Signing transaction");
   const { Keypair, Transaction } = await import("@stellar/stellar-sdk");
   const passphrase = networkPassphrase ?? REGISTRY_NETWORK_PASSPHRASE;
@@ -1789,7 +1678,6 @@ export async function registerOnchain(
   tx.sign(Keypair.fromSecret(wallet.secretKey));
   const signedXdr = tx.toXDR();
 
-  // Step 3: submit the signed transaction.
   await onProgress?.(3, 3, "Submitting transaction");
   const submit = await jsonFetch(`${BASE_URL}/resources/${resourceId}/register`, {
     method: "POST",
@@ -1797,7 +1685,10 @@ export async function registerOnchain(
     body: JSON.stringify({ signedXdr }),
   });
   if (!submit.ok) {
-    const txHash = submit.data && typeof submit.data === "object" ? submit.data.txHash : undefined;
+    const txHash =
+      submit.data && typeof submit.data === "object"
+        ? (submit.data as Record<string, any>).txHash
+        : undefined;
     const mapped = mapHttpError({
       operation: `On-chain registration failed for "${resourceId}" [${submit.status}]`,
       source: "api",
@@ -2195,8 +2086,6 @@ export async function registryLookup(resourceId: string): Promise<string> {
   try {
     tx = await client.get({ id: resourceId });
   } catch (err: any) {
-    // The client could not reach the RPC at all — a transport problem, not a
-    // contract-level rejection, so it is classified against the Soroban source.
     throw mcpError(
       mapTransportError({
         operation: `On-chain lookup failed for resource "${resourceId}" (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL})`,
@@ -2210,8 +2099,6 @@ export async function registryLookup(resourceId: string): Promise<string> {
   if (result.isErr()) {
     const err = result.unwrapErr();
     if (err.message === RegistryErrors[2].message) {
-      // A missing registry entry stays a successful tool result (soft miss), but
-      // carries the same recovery action an agent would get from a hard error.
       return JSON.stringify(
         {
           source: "on-chain",
@@ -2338,14 +2225,6 @@ export async function registryList(start: number, limit: number): Promise<string
   );
 }
 
-/**
- * Request a catalog stale-cache recovery.
- *
- * This tool is a light-weight operator-facing recovery helper: in mock mode
- * it returns a predictable message for tests; in real mode it returns an
- * actionable instruction for operators/agents. Implementing an automated
- * server-side invalidation is out of scope for this small change.
- */
 export async function recoverCatalogCache(): Promise<string> {
   if (_isMock()) {
     return JSON.stringify(
@@ -2397,31 +2276,18 @@ function registryInfo(): string {
   return JSON.stringify(info, null, 2);
 }
 
-/**
- * Compare a resource from the API catalog with the same resource in the vault-registry contract.
- * Reports matching fields, mismatches, missing API records, and missing on-chain records.
- *
- * When `expectedMetadataHash` is supplied, the digest the caller computed over
- * the off-chain content is compared against the `contentHash` anchored in the
- * on-chain metadata pointer. Both sides are canonicalized first (see
- * metadataHash.ts), so `sha256:AB…` and `ab…` compare equal.
- */
 export async function checkConsistency(
   resourceId: string,
   expectedMetadataHash?: string,
 ): Promise<string> {
   if (!resourceId) throw new Error("resourceId is required.");
-  // Reject a malformed expectation up front: comparing against a digest that
-  // is not in the fixed format can only produce a misleading "mismatch".
   const expected = expectedMetadataHash
     ? parseMetadataHash(expectedMetadataHash, "expectedMetadataHash").canonical
     : null;
 
-  // Fetch from API
   const apiRes = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
   const apiData = apiRes.ok ? apiRes.data : null;
 
-  // Fetch from on-chain registry
   let onchainData: any = null;
   let onchainError: string | null = null;
   try {
@@ -2440,7 +2306,6 @@ export async function checkConsistency(
     onchainError = err.message;
   }
 
-  // Build comparison report
   const report: {
     resourceId: string;
     apiFound: boolean;
@@ -2496,10 +2361,8 @@ export async function checkConsistency(
     );
   }
 
-  // Compare fields
   const priceUsdc = stroopsToUsdc(BigInt(onchainData.price as unknown as bigint));
 
-  // Compare price (API uses USDC string, on-chain uses stroops)
   const apiPrice = parseFloat(apiData.price || "0");
   const onchainPrice = parseFloat(priceUsdc);
   if (Math.abs(apiPrice - onchainPrice) < 0.0000001) {
@@ -2508,7 +2371,6 @@ export async function checkConsistency(
     report.mismatches.price = { api: apiData.price, onchain: priceUsdc };
   }
 
-  // Compare listed status
   if (apiData.verificationStatus === "verified" && onchainData.listed === true) {
     report.matches.listed = { api: "verified", onchain: true };
   } else if (apiData.verificationStatus !== "verified" && onchainData.listed === false) {
@@ -2517,14 +2379,12 @@ export async function checkConsistency(
     report.mismatches.listed = { api: apiData.verificationStatus, onchain: onchainData.listed };
   }
 
-  // Compare metadata
   if (apiData.accessUrl === onchainData.metadata) {
     report.matches.metadata = { api: apiData.accessUrl, onchain: onchainData.metadata };
   } else {
     report.mismatches.metadata = { api: apiData.accessUrl, onchain: onchainData.metadata };
   }
 
-  // ID should always match
   report.matches.id = { api: apiData.id, onchain: onchainData.id };
 
   const summary =
@@ -2544,7 +2404,6 @@ export async function checkConsistency(
 export function networkProfile(): string {
   const warnings: string[] = [];
 
-  // Detect custom overrides that differ from the preset
   const usdcContractId = process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId;
   if (
     process.env.USDC_CONTRACT_ID &&
@@ -2586,8 +2445,6 @@ export function networkProfile(): string {
     horizonUrl: HORIZON_URL,
     registryContractId: REGISTRY_CONTRACT_ID,
     usdcContractId,
-    // Active request deadlines and retry policy, so an operator diagnosing slow,
-    // hanging, or flaky tools can see them without reading the environment.
     timeouts: describeTimeouts(TIMEOUTS),
     retries: describeRetryPolicy(RETRY_POLICY),
     warnings,
@@ -2636,10 +2493,25 @@ function toolMetrics(reset: boolean): string {
   return JSON.stringify(snapshot, null, 2);
 }
 
-if (!process.env.VITEST && !mockEnabledFromEnv(process.env)) {
-  const diagnostics = collectStartupDiagnostics(process.env);
-  if (diagnostics.length > 0) console.error(formatDiagnostics(diagnostics));
-  if (hasBlockingDiagnostics(diagnostics)) process.exit(1);
+/**
+ * Return opt-in tool-level metrics as JSON. Pass reset=true to clear counters
+ * after reading. Text-only when disabled (still JSON so structuredContent works).
+ */
+function toolMetrics(reset: boolean): string {
+  const snapshot = metrics.snapshot();
+  if (reset) metrics.reset();
+  if (!snapshot.enabled) {
+    return JSON.stringify(
+      {
+        enabled: false,
+        message:
+          "Metrics are disabled. Set MINDVAULT_METRICS=1 (or true/yes/on) and restart the server to collect tool-level metrics.",
+      },
+      null,
+      2,
+    );
+  }
+  return JSON.stringify(snapshot, null, 2);
 }
 
 const TOOLS_WITHOUT_ARG_VALIDATION = new Set([
@@ -2672,11 +2544,11 @@ const STATE_MUTATING_TOOLS = new Set([
 
 const stateMutex = new Mutex();
 
-export async function dispatchTool(
+async function dispatchToolOutcome(
   name: string,
   rawArgs: unknown,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
-): Promise<string> {
+): Promise<ToolOutcome> {
   if (!isDispatchableTool(name)) {
     throw new UnknownToolError(name);
   }
@@ -2704,18 +2576,18 @@ export async function dispatchTool(
       case "mindvault_setup_wallet":
         return setupWallet(optionalString(args, "profile"));
       case "mindvault_wallet_info":
-        return walletInfo();
+        return walletInfoOutcome();
       case "mindvault_use_profile":
-        return useProfile(requiredString(args, "name"));
+        return useProfileOutcome(requiredString(args, "name"));
       case "mindvault_list_profiles":
-        return listProfiles();
+        return listProfilesOutcome();
       case "mindvault_browse": {
         const parsed = parseCatalogFilters(rawRecord);
-        return parsed.ok ? browse(parsed.filters) : parsed.error;
+        return parsed.ok ? browseOutcome(parsed.filters) : parsed.error;
       }
       case "mindvault_search": {
         const parsed = parseCatalogFilters(rawRecord, { requireCriteria: true });
-        return parsed.ok ? search(parsed.filters) : parsed.error;
+        return parsed.ok ? searchOutcome(parsed.filters) : parsed.error;
       }
       case "mindvault_preview":
         return preview(requiredString(args, "resourceId"));
@@ -2814,8 +2686,16 @@ export async function dispatchTool(
   if (STATE_MUTATING_TOOLS.has(name)) {
     return stateMutex.runExclusive(execute);
   }
-
   return execute();
+}
+
+/** Dispatch a tool and return the human-readable text block (unit-test surface). */
+export async function dispatchTool(
+  name: string,
+  rawArgs: unknown,
+  onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
+): Promise<string> {
+  return outcomeText(await dispatchToolOutcome(name, rawArgs, onProgress));
 }
 
 function toolDefinition(name: string): ToolDefinition {
@@ -2858,18 +2738,18 @@ function toolAnnotations(name: string): {
   };
 }
 
-const TOOLS_WITH_OUTPUT_SCHEMA = new Set(
-  TOOL_DEFINITIONS.filter((tool) => tool.outputSchema).map((tool) => tool.name),
-);
+function outputSchemaFor(name: string): Record<string, unknown> | undefined {
+  if (name in EXTRA_OUTPUT_SCHEMAS) return EXTRA_OUTPUT_SCHEMAS[name];
+  return TOOL_DEFINITIONS.find((tool) => tool.name === name)?.outputSchema;
+}
 
-function structuredResult(name: string, text: string): Record<string, unknown> | undefined {
-  if (!TOOLS_WITH_OUTPUT_SCHEMA.has(name)) return undefined;
-  try {
-    const parsed = JSON.parse(text);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
+function hasOutputSchema(name: string): boolean {
+  return outputSchemaFor(name) !== undefined;
+}
+
+/** Test helper: wrap a handler outcome the same way CallTool does. */
+export function normalizeToolResultForTest(name: string, outcome: ToolOutcome) {
+  return normalizeToolResult(name, outcome, hasOutputSchema);
 }
 
 const server = new Server(
@@ -3383,6 +3263,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: advertisedTools.map((tool) => ({
       ...tool,
       annotations: toolAnnotations(tool.name),
+      ...(outputSchemaFor(tool.name) ? { outputSchema: outputSchemaFor(tool.name) } : {}),
     })),
   };
 });
