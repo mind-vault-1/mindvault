@@ -30,6 +30,13 @@ export interface MigrationResult {
   state: ProfileState;
   /** True when the input used the legacy format and the caller should re-persist. */
   migrated: boolean;
+  /**
+   * The un-transformed legacy input, present only when `migrated`. This is the
+   * rollback source: a caller can re-persist it verbatim to undo the migration,
+   * and can hand it back to cover a fresh migration. Deterministic, so tests
+   * can assert it round-trips.
+   */
+  legacy?: unknown;
 }
 
 export const DEFAULT_PROFILE = "default";
@@ -79,7 +86,9 @@ export function normalizeProfiles(raw: unknown): Record<string, WalletProfile> {
  * - Current format (`{ profiles, activeProfile }`) is normalized; an unknown or
  *   missing `activeProfile` falls back to the first profile, then `default`.
  * - Legacy format (`{ wallet?, apiKey? }`) is folded into the `default` profile
- *   and flagged `migrated` so the caller re-persists in the new shape.
+ *   and flagged `migrated` so the caller re-persists in the new shape; the raw
+ *   legacy input is returned in `legacy` so the caller can roll the migration
+ *   back and the fold can be re-run from the original bytes.
  * - Anything unrecognized yields an empty state.
  */
 export function migrateState(raw: unknown): MigrationResult {
@@ -113,6 +122,7 @@ export function migrateState(raw: unknown): MigrationResult {
         profiles: { [DEFAULT_PROFILE]: legacy },
       },
       migrated: true,
+      legacy: raw,
     };
   }
 

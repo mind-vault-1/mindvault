@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { chmodSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "fs";
+import {
+  chmodSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  existsSync,
+  readFileSync,
+  statSync,
+} from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import {
@@ -8,6 +16,9 @@ import {
   StateBackupError,
   readPersistedState,
   checkStatePermissions,
+  scanPersistedStateSecrets,
+  quarantineStateFile,
+  preserveLegacyState,
 } from "./stateBackup.js";
 import { STATE_VERSION, type ProfileState } from "./profiles.js";
 
@@ -66,6 +77,15 @@ describe("stateBackup", () => {
     expect(blob).not.toContain("SBUY");
     expect(blob).not.toContain("api-key-xyz");
     expect(blob).not.toContain("GPUB");
+  });
+
+  it("identifies secrets before an unencrypted persisted-state backup is shared", () => {
+    expect(scanPersistedStateSecrets(sample)).toEqual([
+      { path: "profiles.publisher.wallet.secretKey", kind: "wallet-secret-key" },
+      { path: "profiles.publisher.apiKey", kind: "api-key" },
+      { path: "profiles.buyer.wallet.secretKey", kind: "wallet-secret-key" },
+    ]);
+    expect(scanPersistedStateSecrets({ profiles: { empty: {} } })).toEqual([]);
   });
 
   it("round-trips export → restore with same passphrase", () => {
@@ -173,5 +193,74 @@ describe("checkStatePermissions", () => {
     expect(result.exists).toBe(false);
     expect(result.isSafe).toBe(true);
     expect(result.message).toContain("does not exist");
+  });
+});
+
+describe("corrupted state file quarantine (#600)", () => {
+  const STATE_DIR = join(homedir(), ".mindvault");
+  const STATE_FILE = join(STATE_DIR, "state.json");
+
+  beforeEach(() => {
+    mkdirSync(STATE_DIR, { recursive: true });
+    writeFileSync(STATE_FILE, '{"version": 1, "brok' + "en", { mode: 0o600 });
+  });
+
+  afterEach(() => {
+    if (existsSync(STATE_FILE)) rmSync(STATE_FILE);
+    if (existsSync(`${STATE_FILE}.corrupt-1234567890`)) {
+      rmSync(`${STATE_FILE}.corrupt-1234567890`);
+    }
+  });
+
+  it("moves the corrupt file aside so evidence survives and the live path is clean", () => {
+    const quarantined = quarantineStateFile(STATE_FILE, 1234567890);
+    expect(quarantined).toBe(`${STATE_FILE}.corrupt-1234567890`);
+    expect(existsSync(STATE_FILE)).toBe(false);
+    expect(existsSync(quarantined)).toBe(true);
+    expect(readFileSync(quarantined, "utf-8")).toBe('{"version": 1, "brok' + "en");
+  });
+
+  it("preserves the original permissions (0600) of a secret-bearing file", () => {
+    const quarantined = quarantineStateFile(STATE_FILE, 1234567890);
+    expect(statSync(quarantined).mode & 0o7777).toBe(0o600);
+  });
+
+  it("throws a deterministic error when there is nothing to quarantine", () => {
+    rmSync(STATE_FILE);
+    expect(() => quarantineStateFile(STATE_FILE, 1234567890)).toThrow(StateBackupError);
+  });
+});
+
+describe("legacy state preservation (#601)", () => {
+  const STATE_DIR = join(homedir(), ".mindvault");
+  const STATE_FILE = join(STATE_DIR, "state.json");
+  const LEGACY_FILE = `${STATE_FILE}.legacy`;
+  const legacy = { wallet: { publicKey: "GPUB", secretKey: "SSECRET" }, apiKey: "legacy-key" };
+
+  beforeEach(() => {
+    mkdirSync(STATE_DIR, { recursive: true });
+    writeFileSync(
+      STATE_FILE,
+      JSON.stringify({ version: 1, activeProfile: "default", profiles: {} }),
+      {
+        mode: 0o600,
+      },
+    );
+  });
+
+  afterEach(() => {
+    if (existsSync(STATE_FILE)) rmSync(STATE_FILE);
+    if (existsSync(LEGACY_FILE)) rmSync(LEGACY_FILE);
+  });
+
+  it("snapshots the un-migrated legacy object before the current format replaces it", () => {
+    preserveLegacyState(legacy);
+    expect(existsSync(LEGACY_FILE)).toBe(true);
+    expect(JSON.parse(readFileSync(LEGACY_FILE, "utf-8"))).toEqual(legacy);
+  });
+
+  it("writes the legacy snapshot with mode 0600 like the state file itself", () => {
+    preserveLegacyState(legacy);
+    expect(statSync(LEGACY_FILE).mode & 0o7777).toBe(0o600);
   });
 });

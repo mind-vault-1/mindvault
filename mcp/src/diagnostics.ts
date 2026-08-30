@@ -112,9 +112,17 @@ export function collectStartupDiagnostics(
       env.VAULT_REGISTRY_CONTRACT_ID ?? preset.defaultRegistryContractId ?? undefined,
   });
   for (const issue of networkIssues) {
+    // A mismatch between NETWORK (x402 payment network) and STELLAR_NETWORK
+    // (Soroban/Horizon target) is a warning: the server can still start, but
+    // payments will likely be rejected by the x402 facilitator because the
+    // signed auth entries will reference the wrong network. All other
+    // cross-network issues (wrong RPC endpoint, wrong USDC contract, wrong
+    // registry contract ID) are blocking errors because they will cause
+    // every Soroban call to fail immediately.
+    const severity: DiagnosticSeverity = issue.field === "NETWORK" ? "warning" : "error";
     diagnostics.push({
       variable: issue.field,
-      severity: "error",
+      severity,
       message: redactSecrets(issue.message),
     });
   }
