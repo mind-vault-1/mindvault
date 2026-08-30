@@ -8,6 +8,8 @@
  * mutable in-memory store and disk persistence live in `index.ts`.
  */
 
+import { redactSecrets } from "./redaction.js";
+
 export interface AgentWallet {
   publicKey: string;
   secretKey: string;
@@ -127,4 +129,32 @@ export function migrateState(raw: unknown): MigrationResult {
   }
 
   return { state: empty, migrated: false };
+}
+
+/**
+ * Export a wallet profile with secrets redacted. Safe for agent-facing output
+ * and logging — secret keys and API keys are never exposed.
+ */
+export interface ExportedProfile {
+  name: string;
+  address: string | null;
+  registered: boolean;
+}
+
+export function exportProfile(name: string, profile: WalletProfile): ExportedProfile {
+  return {
+    name,
+    address: profile.wallet?.publicKey ?? null,
+    registered: typeof profile.apiKey === "string" && profile.apiKey.length > 0,
+  };
+}
+
+/**
+ * Export all profiles with secrets redacted. Returns a deterministic,
+ * agent-safe snapshot suitable for debugging and transport.
+ */
+export function exportAllProfiles(state: ProfileState): ExportedProfile[] {
+  return Object.entries(state.profiles)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, profile]) => exportProfile(name, profile));
 }

@@ -20,6 +20,7 @@ use soroban_sdk::{
 // ~5s ledgers → 17,280 per day. Persistent entries are bumped ~30 days on each
 // write so an actively-managed resource is never archived out from under us.
 const DAY_IN_LEDGERS: u32 = 17280;
+const ADMIN_NOMINATION_DURATION: u32 = 7 * DAY_IN_LEDGERS;
 const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 const LIFETIME_THRESHOLD: u32 = BUMP_AMOUNT - DAY_IN_LEDGERS;
 /// Max length for metadata pointers (IPFS URI, content hash, compact JSON anchor).
@@ -137,6 +138,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Admin role ────────────────────────────────────────────────────────
     ("admin", "—"),
     ("pending_admin", "—"),
+    ("pending_admin_expiry", "—"),
     (
         "nominate_new_admin",
         "current admin (or new_admin for bootstrap)",
@@ -236,6 +238,7 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (47, "PaymentAmountMismatch", "Payment receipt amount does not match the resource's current price."),
     (48, "DuplicateTxHash", "A payment receipt is already stored for the supplied settlement transaction hash (`tx_hash`)."),
     (49, "FeeConfigNotSet", "`set_fee_recipient` was called before any fee config was set via `set_fee_config`."),
+    (50, "AdminNominationExpired", "The pending admin nomination is missing or has expired."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -559,6 +562,8 @@ pub enum DataKey {
     /// Hash of a verifier's off-chain attestation document, provided during a
     /// status change via `set_verification_status`.
     AttestationHash(String),
+    /// Ledger sequence at which the pending admin nomination expires.
+    PendingAdminExpiry,
 }
 
 /// Event data emitted when a resource's metadata pointer is updated.
@@ -787,7 +792,9 @@ pub enum Error {
     /// transaction hash (`tx_hash`); a single Stellar tx must map to one receipt.
     DuplicateTxHash = 48,
     /// `set_fee_recipient` was called before any fee config was set via `set_fee_config`.
-    FeeConfigNotSet = 48,
+    FeeConfigNotSet = 49,
+    /// The pending admin nomination is missing or has expired.
+    AdminNominationExpired = 50,
 }
 
 #[contract]
@@ -1876,6 +1883,11 @@ impl VaultRegistry {
         env.storage().instance().get(&DataKey::PendingAdmin)
     }
 
+    /// Return the ledger sequence at which the pending admin nomination expires.
+    pub fn pending_admin_expiry(env: Env) -> Option<u32> {
+        env.storage().instance().get(&DataKey::PendingAdminExpiry)
+    }
+
     /// Nominate a new contract admin. Only the current admin may call this.
     /// Sets `pending_admin`. The nomination does not take effect until
     /// the pending admin calls `accept_admin`.
@@ -1895,6 +1907,16 @@ impl VaultRegistry {
         if new_admin == stored_admin {
             return Err(Error::SameAdmin);
         }
+        if let Some(expiry) = env
+            .storage()
+            .instance()
+            .get::<DataKey, u32>(&DataKey::PendingAdminExpiry)
+        {
+            if env.ledger().sequence() >= expiry {
+                env.storage().instance().remove(&DataKey::PendingAdmin);
+                env.storage().instance().remove(&DataKey::PendingAdminExpiry);
+            }
+        }
         if env.storage().instance().has(&DataKey::PendingAdmin) {
             return Err(Error::PendingAdminAlreadySet);
         }
@@ -1902,6 +1924,13 @@ impl VaultRegistry {
         env.storage()
             .instance()
             .set(&DataKey::PendingAdmin, &new_admin);
+        let expiry = env
+            .ledger()
+            .sequence()
+            .saturating_add(ADMIN_NOMINATION_DURATION);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdminExpiry, &expiry);
         Self::bump_instance(&env);
         env.events()
             .publish((symbol_short!("nomadmin"),), new_admin);
@@ -1915,7 +1944,18 @@ impl VaultRegistry {
             .storage()
             .instance()
             .get::<DataKey, Address>(&DataKey::PendingAdmin)
-            .ok_or(Error::PendingAdminNotSet)?;
+            .ok_or(Error::AdminNominationExpired)?;
+
+        let expiry: u32 = env
+            .storage()
+            .instance()
+            .get::<DataKey, u32>(&DataKey::PendingAdminExpiry)
+            .unwrap_or(0);
+        if env.ledger().sequence() >= expiry {
+            env.storage().instance().remove(&DataKey::PendingAdmin);
+            env.storage().instance().remove(&DataKey::PendingAdminExpiry);
+            return Err(Error::AdminNominationExpired);
+        }
 
         if stored_pending != new_admin {
             return Err(Error::PendingAdminNotSet);
@@ -1923,6 +1963,7 @@ impl VaultRegistry {
 
         new_admin.require_auth();
         env.storage().instance().remove(&DataKey::PendingAdmin);
+        env.storage().instance().remove(&DataKey::PendingAdminExpiry);
         env.storage().instance().set(&DataKey::Admin, &new_admin);
         Self::bump_instance(&env);
         env.events()

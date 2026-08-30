@@ -134,6 +134,8 @@ function generate(): string {
     "",
     "For argument contracts and validation rules see",
     "[mcp-tool-arguments.md](mcp-tool-arguments.md).",
+    "For structured JSON results (`structuredContent` + `outputSchema`) see",
+    "[mcp-structured-output.md](mcp-structured-output.md).",
     "For client installation and configuration see",
     "[mcp-client-configs.md](mcp-client-configs.md).",
     "",
@@ -148,10 +150,11 @@ function generate(): string {
     if (!tools || tools.length === 0) continue;
 
     lines.push(`## ${groupName}`, "");
-    lines.push("| Tool | Description |");
-    lines.push("| --- | --- |");
+    lines.push("| Tool | Description | Structured |");
+    lines.push("| --- | --- | --- |");
     for (const tool of tools) {
-      lines.push(`| \`${tool.name}\` | ${escapeCell(tool.description)} |`);
+      const structured = tool.outputSchema ? "yes" : "text only";
+      lines.push(`| \`${tool.name}\` | ${escapeCell(tool.description)} | ${structured} |`);
     }
     lines.push("");
   }

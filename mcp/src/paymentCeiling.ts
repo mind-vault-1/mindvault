@@ -58,6 +58,6 @@ export function assertAutoPaymentWithinCeiling(input: {
 
   throw new Error(
     `Purchase requires ${requiredAmount} USDC, which exceeds the automatic payment ceiling of ${ceiling.value} USDC. ` +
-      `To authorize this purchase, call mindvault_buy with maxAutoPayUsdc: \"${requiredAmount}\" (or a higher amount).`,
+      `To authorize this purchase, call mindvault_buy with maxAutoPayUsdc: "${requiredAmount}" (or a higher amount).`,
   );
 }

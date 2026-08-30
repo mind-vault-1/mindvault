@@ -11,6 +11,7 @@
 import { describe, it, expect } from "vitest";
 import { TOOL_DEFINITIONS } from "./tools.js";
 import { catalogFilterInputProperties } from "./catalogFilters.js";
+import { TEXT_ONLY_TOOLS } from "./outputSchemas.js";
 
 describe("MCP tool metadata", () => {
   it("all tools have required fields", () => {
@@ -101,6 +102,16 @@ describe("MCP tool metadata", () => {
     };
 
     expect(searchSchema).toMatchSnapshot();
+  });
+
+  it("structured tools declare outputSchema and text-only tools do not (#553)", () => {
+    for (const tool of TOOL_DEFINITIONS) {
+      if ((TEXT_ONLY_TOOLS as readonly string[]).includes(tool.name)) {
+        expect(tool.outputSchema, `${tool.name} should stay text-only`).toBeUndefined();
+      } else {
+        expect(tool.outputSchema, `${tool.name} should advertise outputSchema`).toBeDefined();
+      }
+    }
   });
 
   it("mindvault_publish inputSchema", () => {
