@@ -16,6 +16,7 @@ import {
 import { cacheStalenessNotice } from "../cacheStaleness.js";
 import { mapHttpError, mcpError, throwHttpError } from "../errorMapping.js";
 import { truncateResponse } from "../truncation.js";
+import { applyPreviewLimits, serializePreview } from "../previewLimits.js";
 import { formatResource } from "./registry.js";
 
 interface CatalogLoad {
@@ -128,5 +129,7 @@ export async function preview(resourceId: string): Promise<string> {
     accessUrl: r.accessUrl,
   };
   if (label) out.offlineCache = label;
-  return JSON.stringify(out, null, 2);
+  // Publisher-supplied title/description are unbounded at the source, so cap
+  // them before serializing rather than truncating the JSON afterwards (#582).
+  return serializePreview(applyPreviewLimits(out));
 }

@@ -26,6 +26,7 @@ import {
 import { PROMPT_DEFINITIONS, getPrompt } from "./prompts.js";
 import { createProgressEmitter } from "./progress.js";
 import { truncateResponse } from "./truncation.js";
+import { applyPreviewLimits, serializePreview } from "./previewLimits.js";
 import { createEd25519Signer } from "@x402/stellar";
 import { ExactStellarScheme } from "@x402/stellar/exact/client";
 import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
@@ -1304,8 +1305,10 @@ export async function preview(resourceId: string): Promise<string> {
       data: res.data,
     });
   const r = res.data;
-  return JSON.stringify(
-    {
+  // Publisher-supplied title/description are unbounded at the source, so cap
+  // them before serializing rather than truncating the JSON afterwards (#582).
+  return serializePreview(
+    applyPreviewLimits({
       id: r.id,
       title: r.title,
       description: r.description,
@@ -1313,9 +1316,7 @@ export async function preview(resourceId: string): Promise<string> {
       type: r.resourceType,
       verificationStatus: r.verificationStatus,
       accessUrl: r.accessUrl,
-    },
-    null,
-    2,
+    }),
   );
 }
 
