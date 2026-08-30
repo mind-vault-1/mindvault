@@ -7,6 +7,7 @@
  */
 
 import { redactSecrets, redactObject } from "./redaction.js";
+import { createRotatingWriter, type RotatingJsonlWriter } from "./auditLogRotation.js";
 
 export interface AuditLogEntry {
   timestamp: string;
@@ -38,12 +39,53 @@ export interface NetworkAuditLog {
 let auditLogEnabled = false;
 
 /**
+ * Optional rotating JSONL file sink (#592). Null unless
+ * MINDVAULT_AUDIT_LOG_FILE names a path.
+ */
+let auditFileWriter: RotatingJsonlWriter | null = null;
+
+/**
  * Initialize audit logging from environment.
  * MINDVAULT_AUDIT_LOG=1 enables it.
- * Logs are sent to stderr as JSON for easy parsing.
+ *
+ * Entries always go to stderr. When MINDVAULT_AUDIT_LOG_FILE is also set they
+ * are additionally appended to that file as JSON Lines and rotated by size
+ * (#592) — stderr is for watching, the file is for keeping.
  */
 export function initAuditLogging(env: NodeJS.ProcessEnv): void {
   auditLogEnabled = env.MINDVAULT_AUDIT_LOG === "1";
+  auditFileWriter = auditLogEnabled
+    ? createRotatingWriter(env, (error) => {
+        // stderr, never stdout: stdout is the MCP protocol channel.
+        console.error(
+          `[mindvault] audit log file disabled: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      })
+    : null;
+}
+
+/** The active file sink, or null when only stderr is in use. Exposed for tests. */
+export function getAuditFileWriter(): RotatingJsonlWriter | null {
+  return auditFileWriter;
+}
+
+/** Replace the file sink directly (for testing). */
+export function setAuditFileWriter(writer: RotatingJsonlWriter | null): void {
+  auditFileWriter = writer;
+}
+
+/**
+ * Emit one entry to every configured sink.
+ *
+ * stderr keeps the indented form it has always had — it is read by humans
+ * watching a session — while the file gets one compact line per entry, which
+ * is what makes the file greppable and shippable.
+ */
+function emit(entry: AuditLogEntry | NetworkAuditLog): void {
+  console.error(JSON.stringify(entry, null, 2));
+  auditFileWriter?.write(entry);
 }
 
 /**
@@ -83,7 +125,7 @@ export function logToolStart(toolName: string, args?: Record<string, unknown>): 
     entry.details = redactObject(args);
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -115,7 +157,7 @@ export function logToolSuccess(
     if (data.message) entry.message = data.message;
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -150,7 +192,7 @@ export function logToolError(
     if (context.httpStatus) entry.httpStatus = context.httpStatus;
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -187,7 +229,7 @@ export function logNetworkRequest(
     }
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -209,7 +251,7 @@ export function logPaymentInitiation(
     message: `Initiating payment: ${estimatedAmount} USDC`,
   };
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -236,7 +278,7 @@ export function logPaymentSuccess(
     entry.txHash = txHash;
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -263,7 +305,7 @@ export function logPaymentError(
     message,
   };
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -290,7 +332,7 @@ export function logOnchainTransaction(
     entry.txHash = txHash;
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
 
 /**
@@ -315,5 +357,5 @@ export function logWalletOperation(
     entry.message = redactSecrets(message);
   }
 
-  console.error(JSON.stringify(entry, null, 2));
+  emit(entry);
 }
