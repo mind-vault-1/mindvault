@@ -95,16 +95,13 @@ describe("verifyInstall", () => {
     expect(check.ok).toBe(false);
   });
 
-  it.each(["HORIZON_URL", "SOROBAN_RPC_URL"] as const)(
-    "fails when %s is invalid",
-    (variable) => {
-      const result = verifyInstall({ [variable]: "not-a-url" }, NODE_OK);
-      expect(result.ok).toBe(false);
-      const check = result.checks.find((c) => c.name === variable)!;
-      expect(check.ok).toBe(false);
-      expect(check.detail).toMatch(/not a valid URL/i);
-    },
-  );
+  it.each(["HORIZON_URL", "SOROBAN_RPC_URL"] as const)("fails when %s is invalid", (variable) => {
+    const result = verifyInstall({ [variable]: "not-a-url" }, NODE_OK);
+    expect(result.ok).toBe(false);
+    const check = result.checks.find((c) => c.name === variable)!;
+    expect(check.ok).toBe(false);
+    expect(check.detail).toMatch(/not a valid URL/i);
+  });
 
   it.each(["HORIZON_URL", "SOROBAN_RPC_URL"] as const)(
     "rejects non-http schemes for %s",
