@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import { TOOL_DEFINITIONS } from "./tools.js";
 import {
   TOOL_ARGUMENT_SPECS,
+  TOOLS_WITHOUT_ARG_VALIDATION,
   ToolValidationError,
   UnknownToolError,
   flag,
@@ -21,6 +22,18 @@ import {
 } from "./validation.js";
 
 const VALID_SHA256 = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+
+/**
+ * Advertised tools that go through this layer.
+ *
+ * `mindvault_publish_status` and `mindvault_purchase_history` normalize their
+ * own arguments (see TOOLS_WITHOUT_ARG_VALIDATION) and so have no spec to
+ * compare against. The exemption itself is checked below.
+ */
+function specValidatedTools() {
+  const exempt = new Set(TOOLS_WITHOUT_ARG_VALIDATION);
+  return TOOL_DEFINITIONS.filter((tool) => !exempt.has(tool.name));
+}
 
 /** Minimum arguments that must pass for each tool. */
 const VALID_CALLS: Record<string, Record<string, unknown>> = {
@@ -82,9 +95,19 @@ function expectInvalid(tool: string, args: unknown): ToolValidationError {
 
 describe("spec coverage", () => {
   it("every advertised tool has a validation spec", () => {
-    for (const tool of TOOL_DEFINITIONS) {
+    for (const tool of specValidatedTools()) {
       expect(TOOL_ARGUMENT_SPECS, `${tool.name} has no validation spec`).toHaveProperty(tool.name);
     }
+  });
+
+  it("the self-validating exemption names exactly the tools without a spec", () => {
+    // Keeps TOOLS_WITHOUT_ARG_VALIDATION honest in both directions: a tool that
+    // gains a spec must leave the list, and a tool that loses one must not
+    // silently join it.
+    const withoutSpec = TOOL_DEFINITIONS.filter((tool) => !(tool.name in TOOL_ARGUMENT_SPECS)).map(
+      (tool) => tool.name,
+    );
+    expect(withoutSpec.sort()).toEqual([...TOOLS_WITHOUT_ARG_VALIDATION].sort());
   });
 
   it("every validation spec belongs to an advertised tool", () => {
@@ -95,7 +118,7 @@ describe("spec coverage", () => {
   });
 
   it("spec arguments match the advertised inputSchema properties", () => {
-    for (const tool of TOOL_DEFINITIONS) {
+    for (const tool of specValidatedTools()) {
       const spec = TOOL_ARGUMENT_SPECS[tool.name];
       expect(Object.keys(spec).sort(), `${tool.name} argument names`).toEqual(
         Object.keys(tool.inputSchema.properties).sort(),
@@ -104,7 +127,7 @@ describe("spec coverage", () => {
   });
 
   it("required arguments match the advertised required list", () => {
-    for (const tool of TOOL_DEFINITIONS) {
+    for (const tool of specValidatedTools()) {
       const spec = TOOL_ARGUMENT_SPECS[tool.name];
       const specRequired = Object.entries(spec)
         .filter(([, argSpec]) => argSpec.required)

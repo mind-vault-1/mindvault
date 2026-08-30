@@ -15,38 +15,6 @@ import { TEXT_ONLY_TOOLS } from "./outputSchemas.js";
 
 describe("MCP tool metadata", () => {
   it("all tools have required fields", () => {
-    // Inline expected tool names from index.ts for snapshot validation.
-    // Integration tests assert the live ListTools response via the SDK harness.
-    const expectedToolNames = [
-      "mindvault_setup_wallet",
-      "mindvault_wallet_info",
-      "mindvault_use_profile",
-      "mindvault_list_profiles",
-      "mindvault_browse",
-      "mindvault_search",
-      "mindvault_preview",
-      "mindvault_register",
-      "mindvault_publish",
-      "mindvault_publish_status",
-      "mindvault_buy",
-      "mindvault_purchase_history",
-      "mindvault_register_onchain",
-      "mindvault_agent_status",
-      "mindvault_registry_info",
-      "mindvault_network_profile",
-      "mindvault_check_bindings",
-      "mindvault_check_consistency",
-      "mindvault_registry_lookup",
-      "mindvault_tx_status",
-      "mindvault_reset",
-      "mindvault_backup_state",
-      "mindvault_restore_state",
-      "mindvault_metrics",
-      "mindvault_update_metadata",
-      "mindvault_set_price",
-      "mindvault_transfer_ownership",
-      "mindvault_set_listed",
-    ];
     for (const tool of TOOL_DEFINITIONS) {
       expect(tool.name).toMatch(/^mindvault_/);
       expect(typeof tool.description).toBe("string");

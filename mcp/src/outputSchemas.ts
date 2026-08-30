@@ -385,12 +385,6 @@ export const RECOVER_CACHE_OUTPUT_SCHEMA = {
   required: ["source", "action", "message"],
 } as const;
 
-/** Tools advertised in ListTools but not listed in TOOL_DEFINITIONS. */
-export const EXTRA_OUTPUT_SCHEMAS: Record<string, Record<string, unknown>> = {
-  mindvault_publish_status: PUBLISH_STATUS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
-  mindvault_purchase_history: PURCHASE_HISTORY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
-};
-
 /** Tools that must stay text-only (no schema, no structuredContent). */
 export const TEXT_ONLY_TOOLS = [
   "mindvault_check_bindings",

@@ -263,6 +263,10 @@ exports[`tool schema snapshots > mindvault_buy > input schema 1`] = `
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
       "type": "boolean",
     },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
     "dryRun": {
       "description": "Optional dry-run flag. When true, validates the resource ID and shows intended network, endpoint, and required wallet state without submitting payment.",
       "type": "boolean",
@@ -1040,6 +1044,10 @@ exports[`tool schema snapshots > mindvault_publish > input schema 1`] = `
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
       "type": "boolean",
     },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
     "description": {
       "description": "Optional detailed description of the resource content (max 2048 characters).",
       "examples": [
@@ -1172,6 +1180,199 @@ exports[`tool schema snapshots > mindvault_publish > output schema 1`] = `
 }
 `;
 
+exports[`tool schema snapshots > mindvault_publish_status > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Publish Status",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_publish_status > input schema 1`] = `
+{
+  "properties": {
+    "intervalMs": {
+      "description": "Delay between polls in milliseconds when wait is true (default 2000, min 200).",
+      "examples": [
+        1000,
+        2000,
+        5000,
+      ],
+      "type": "number",
+    },
+    "resourceId": {
+      "description": "The resource ID from mindvault_publish (or browse/search). Example: 'cm7x8y9z'",
+      "examples": [
+        "cm7x8y9z",
+        "res-001",
+        "swcn98besxpp6t1u8e77fqz3",
+      ],
+      "type": "string",
+    },
+    "timeoutMs": {
+      "description": "Max wait time in milliseconds when wait is true (default 60000, max 300000).",
+      "examples": [
+        30000,
+        60000,
+        120000,
+      ],
+      "type": "number",
+    },
+    "wait": {
+      "description": "When true, poll until verificationStatus is verified, rejected, or skipped (or until timeoutMs). Default false (single fetch).",
+      "type": "boolean",
+    },
+  },
+  "required": [
+    "resourceId",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_publish_status > output schema 1`] = `
+{
+  "properties": {
+    "accessUrl": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "attempts": {
+      "type": "integer",
+    },
+    "contentHash": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "listed": {
+      "type": [
+        "boolean",
+        "null",
+      ],
+    },
+    "message": {
+      "type": "string",
+    },
+    "onchainStatus": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "onchainTxHash": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "polled": {
+      "type": "boolean",
+    },
+    "resourceId": {
+      "type": "string",
+    },
+    "settled": {
+      "type": "boolean",
+    },
+    "timedOut": {
+      "type": "boolean",
+    },
+    "title": {
+      "type": [
+        "string",
+        "null",
+      ],
+    },
+    "verification": {
+      "type": [
+        "object",
+        "null",
+      ],
+    },
+    "verificationStatus": {
+      "type": "string",
+    },
+  },
+  "required": [
+    "resourceId",
+    "title",
+    "verificationStatus",
+    "listed",
+    "onchainStatus",
+    "onchainTxHash",
+    "contentHash",
+    "accessUrl",
+    "verification",
+    "polled",
+    "attempts",
+    "settled",
+    "timedOut",
+    "message",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_purchase_history > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Purchase History",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_purchase_history > input schema 1`] = `
+{
+  "properties": {
+    "network": {
+      "description": "Optional. Only return receipts recorded on this x402 network id. Example: 'stellar:testnet'",
+      "examples": [
+        "stellar:testnet",
+        "stellar:pubnet",
+      ],
+      "type": "string",
+    },
+    "resourceId": {
+      "description": "Optional. Only return receipts for this resource id. Example: 'cm7x8y9z'",
+      "examples": [
+        "cm7x8y9z",
+        "res-001",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_purchase_history > output schema 1`] = `
+{
+  "properties": {
+    "count": {
+      "type": "integer",
+    },
+    "message": {
+      "type": "string",
+    },
+    "purchases": {
+      "type": "array",
+    },
+  },
+  "required": [
+    "count",
+    "purchases",
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_recover_catalog_cache > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -1274,6 +1475,10 @@ exports[`tool schema snapshots > mindvault_register_onchain > input schema 1`] =
   "properties": {
     "confirmMainnet": {
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
+      "type": "boolean",
+    },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
       "type": "boolean",
     },
     "resourceId": {
@@ -1616,6 +1821,14 @@ exports[`tool schema snapshots > mindvault_reset > input schema 1`] = `
       ],
       "type": "boolean",
     },
+    "confirm": {
+      "description": "Required to actually clear anything. Omitted or false returns a warning describing what would be removed and performs no deletion. Example: true clears the credentials.",
+      "examples": [
+        true,
+        false,
+      ],
+      "type": "boolean",
+    },
     "confirmMainnet": {
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
       "type": "boolean",
@@ -1904,6 +2117,10 @@ exports[`tool schema snapshots > mindvault_set_listed > input schema 1`] = `
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
       "type": "boolean",
     },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
     "listed": {
       "description": "Set to true to list/relist the resource in the catalog, or false to delist it.",
       "examples": [
@@ -2032,6 +2249,10 @@ exports[`tool schema snapshots > mindvault_set_price > input schema 1`] = `
   "properties": {
     "confirmMainnet": {
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
+      "type": "boolean",
+    },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
       "type": "boolean",
     },
     "price": {
@@ -2271,6 +2492,10 @@ exports[`tool schema snapshots > mindvault_transfer_ownership > input schema 1`]
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
       "type": "boolean",
     },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+      "type": "boolean",
+    },
     "newCreator": {
       "description": "The Stellar public key (G… , 56 chars) of the new resource owner.",
       "examples": [
@@ -2482,6 +2707,10 @@ exports[`tool schema snapshots > mindvault_update_metadata > input schema 1`] = 
   "properties": {
     "confirmMainnet": {
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
+      "type": "boolean",
+    },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
       "type": "boolean",
     },
     "metadata": {
@@ -2756,6 +2985,8 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_network_profile",
   "mindvault_preview",
   "mindvault_publish",
+  "mindvault_publish_status",
+  "mindvault_purchase_history",
   "mindvault_recover_catalog_cache",
   "mindvault_register",
   "mindvault_register_onchain",

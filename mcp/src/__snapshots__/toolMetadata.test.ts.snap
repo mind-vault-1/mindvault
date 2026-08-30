@@ -37,6 +37,8 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_rotate_publisher_key",
   "mindvault_verify_install",
   "mindvault_recover_catalog_cache",
+  "mindvault_publish_status",
+  "mindvault_purchase_history",
 ]
 `;
 
@@ -45,6 +47,10 @@ exports[`MCP tool metadata > mindvault_publish inputSchema 1`] = `
   "properties": {
     "confirmMainnet": {
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
+      "type": "boolean",
+    },
+    "confirmPaid": {
+      "description": "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
       "type": "boolean",
     },
     "description": {
