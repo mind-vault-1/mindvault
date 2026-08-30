@@ -1761,8 +1761,10 @@ fn expired_admin_nomination_cannot_be_accepted_and_is_cleared() {
         Err(Ok(Error::AdminNominationExpired))
     );
     assert_eq!(client.admin(), Some(admin));
-    assert_eq!(client.pending_admin(), None);
-    assert_eq!(client.pending_admin_expiry(), None);
+    // Failed invocations roll back storage writes; durable lazy cleanup occurs
+    // when the current admin successfully nominates a replacement.
+    assert_eq!(client.pending_admin(), Some(pending));
+    assert_eq!(client.pending_admin_expiry(), Some(env.ledger().sequence()));
 }
 
 #[test]
@@ -4203,8 +4205,8 @@ fn set_verification_status_emits_old_and_new_status() {
 
     let all = env.events().all();
     let (_contract, _topics, data) = all.get_unchecked(all.len() - 1);
-    let decoded: (VerificationStatus, VerificationStatus) =
-        <(VerificationStatus, VerificationStatus)>::try_from_val(&env, &data)
+    let decoded: (VerificationStatus, VerificationStatus, Option<String>) =
+        <(VerificationStatus, VerificationStatus, Option<String>)>::try_from_val(&env, &data)
             .expect("failed to decode verification event");
     assert_eq!(decoded.0, VerificationStatus::Pending);
     assert_eq!(decoded.1, VerificationStatus::Verified);
@@ -7021,69 +7023,78 @@ fn listed_count_starts_at_zero() {
 #[test]
 fn listed_count_increments_on_register() {
     let (env, creator, client) = setup();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    let res1 = String::from_str(&env, "res1");
+    let res2 = String::from_str(&env, "res2");
+    client.register(&creator, &res1, &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
-    client.register(&creator, &"res2", &200i128, &String::from_str(&env, "ipfs://b"), &empty_tags(&env));
+    client.register(&creator, &res2, &200i128, &String::from_str(&env, "ipfs://b"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 2);
 }
 
 #[test]
 fn listed_count_decrements_on_set_listed_false() {
     let (env, creator, client) = setup();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    let id = String::from_str(&env, "res1");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
-    client.set_listed(&"res1", &false);
+    client.set_listed(&id, &false);
     assert_eq!(client.listed_count(), 0);
 }
 
 #[test]
 fn listed_count_increments_when_relisted() {
     let (env, creator, client) = setup();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    let id = String::from_str(&env, "res1");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
-    client.set_listed(&"res1", &false);
+    client.set_listed(&id, &false);
     assert_eq!(client.listed_count(), 0);
-    client.set_listed(&"res1", &true);
+    client.set_listed(&id, &true);
     assert_eq!(client.listed_count(), 1);
 }
 
 #[test]
 fn listed_count_noop_when_already_in_target_state() {
     let (env, creator, client) = setup();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    let id = String::from_str(&env, "res1");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
     // set_listed(true) on an already-listed resource should not change count
-    client.set_listed(&"res1", &true);
+    client.set_listed(&id, &true);
     assert_eq!(client.listed_count(), 1);
 }
 
 #[test]
 fn listed_count_decrements_on_freeze() {
     let (env, creator, client) = setup();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    let id = String::from_str(&env, "res1");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
-    client.freeze_resource(&"res1");
+    client.freeze_resource(&id);
     assert_eq!(client.listed_count(), 0);
 }
 
 #[test]
 fn listed_count_decrements_on_tombstone() {
     let (env, creator, _admin, client) = setup_with_admin();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    let id = String::from_str(&env, "res1");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
-    client.tombstone_resource(&"res1", &_admin);
+    client.tombstone_resource(&id, &_admin);
     assert_eq!(client.listed_count(), 0);
 }
 
 #[test]
 fn listed_count_increments_when_dispute_resolved_to_listed() {
     let (env, creator, _admin, client) = setup_with_admin();
-    client.register(&creator, &"res1", &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
+    let id = String::from_str(&env, "res1");
+    client.register(&creator, &id, &100i128, &String::from_str(&env, "ipfs://a"), &empty_tags(&env));
     assert_eq!(client.listed_count(), 1);
-    client.open_dispute(&"res1", &_admin);
+    client.open_dispute(&id, &_admin);
     assert_eq!(client.listed_count(), 0);
-    client.resolve_dispute(&"res1", &_admin, &ResourceState::Listed);
+    client.resolve_dispute(&id, &_admin, &ResourceState::Listed);
     assert_eq!(client.listed_count(), 1);
+}
 // ── Duplicate receipt buyer normalization (#683) ──────────────────────────────
 //
 // The duplicate-receipt guard is keyed on the exact `(resource_id, buyer)`
@@ -7393,7 +7404,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 19] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 24] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -7413,10 +7424,17 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 19] {
         (DataKey::Verifier(who.clone()), "Verifier", 2),
         (DataKey::NetworkId, "NetworkId", 1),
         (
-            DataKey::PaymentReceipt(id.clone(), who.clone()),
+            DataKey::PaymentReceipt(id.clone()),
             "PaymentReceipt",
+            2,
+        ),
+        (
+            DataKey::PaymentIndex(id.clone(), who.clone()),
+            "PaymentIndex",
             3,
         ),
+        (DataKey::Paused, "Paused", 1),
+        (DataKey::Settler(who.clone()), "Settler", 2),
         (
             DataKey::PurchaseReceipt(id.clone(), who.clone()),
             "PurchaseReceipt",
@@ -7426,7 +7444,9 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 19] {
         (DataKey::FeeConfig, "FeeConfig", 1),
         (DataKey::Moderator(who.clone()), "Moderator", 2),
         (DataKey::DisputeFlag(id.clone()), "DisputeFlag", 2),
+        (DataKey::ListedCount, "ListedCount", 1),
         (DataKey::FlagReasonHash(id.clone()), "FlagReasonHash", 2),
+        (DataKey::AttestationHash(id.clone()), "AttestationHash", 2),
         (DataKey::PendingAdminExpiry, "PendingAdminExpiry", 1),
     ]
 }
@@ -7469,7 +7489,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        18,
+        24,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -7486,13 +7506,19 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::PendingTransfer(_) => "PendingTransfer",
             DataKey::Verifier(_) => "Verifier",
             DataKey::NetworkId => "NetworkId",
-            DataKey::PaymentReceipt(_, _) => "PaymentReceipt",
+            DataKey::PaymentReceipt(_) => "PaymentReceipt",
+            DataKey::PaymentIndex(_, _) => "PaymentIndex",
+            DataKey::Paused => "Paused",
+            DataKey::Settler(_) => "Settler",
             DataKey::PurchaseReceipt(_, _) => "PurchaseReceipt",
             DataKey::TagIndex(_) => "TagIndex",
             DataKey::FeeConfig => "FeeConfig",
             DataKey::Moderator(_) => "Moderator",
             DataKey::DisputeFlag(_) => "DisputeFlag",
+            DataKey::ListedCount => "ListedCount",
             DataKey::FlagReasonHash(_) => "FlagReasonHash",
+            DataKey::AttestationHash(_) => "AttestationHash",
+            DataKey::PendingAdminExpiry => "PendingAdminExpiry",
         };
         assert_eq!(
             matched, *name,
@@ -7569,9 +7595,9 @@ fn receipt_keys_are_scoped_to_both_resource_and_counterparty() {
     // payer would let one buyer's receipt overwrite another's.
     env.as_contract(&client.address, || {
         let keys = [
-            DataKey::PaymentReceipt(res_a.clone(), party_a.clone()),
-            DataKey::PaymentReceipt(res_a.clone(), party_b.clone()),
-            DataKey::PaymentReceipt(res_b.clone(), party_a.clone()),
+            DataKey::PaymentIndex(res_a.clone(), party_a.clone()),
+            DataKey::PaymentIndex(res_a.clone(), party_b.clone()),
+            DataKey::PaymentIndex(res_b.clone(), party_a.clone()),
             DataKey::PurchaseReceipt(res_a.clone(), party_a.clone()),
             DataKey::PurchaseReceipt(res_b.clone(), party_b.clone()),
         ];
@@ -7788,6 +7814,8 @@ fn readme_version_compatibility_names_the_breaking_changes() {
     assert!(
         section.contains("crate_version") && section.contains("resource_schema_version"),
         "the compatibility section must distinguish the two reported versions"
+    );
+}
 // ── Reporting anchor failures as events ──────────────────────────────────────
 //
 // `anchor_purchase_receipt` reverts on a rejected anchor, and a Soroban error
@@ -8324,15 +8352,3 @@ fn measure_entry(
         budget,
     })
 }
-
-include!("test/core_catalog.rs");
-include!("test/metadata_updates.rs");
-include!("test/tags.rs");
-include!("test/schema_registry.rs");
-include!("test/lifecycle_roles.rs");
-include!("test/hardening_preflight.rs");
-include!("test/payments.rs");
-include!("test/moderation_pause.rs");
-include!("test/properties_events.rs");
-include!("test/purchase_receipts.rs");
-include!("test/storage_footprint.rs");

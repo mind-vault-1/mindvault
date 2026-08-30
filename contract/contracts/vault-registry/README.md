@@ -117,7 +117,7 @@ questions. Read both with one call:
 stellar contract invoke --id $CONTRACT --rpc-url $RPC \
   --network-passphrase "Test SDF Network ; September 2015" \
   -- contract_version
-# { "crate_version": "0.0.0", "resource_schema_version": 5 }
+# { "crate_version": "0.0.0", "resource_schema_version": 6 }
 ```
 
 | Field                     | Source                    | Changes when                                                           |
@@ -143,6 +143,7 @@ future bump should add a row here, naming the field that changed:
 | -------------- | --------------------------------------------------------- |
 | 2              | Added `tags` — discovery labels, normalized to lowercase. |
 | 4              | Added `dispute_flag` — moderator dispute state.           |
+| 6              | Added metadata freeze timestamp to `Resource`.           |
 | 5              | Current value of `RESOURCE_SCHEMA_VERSION`.               |
 
 ### What is and is not a breaking change
@@ -378,8 +379,8 @@ Admin = A
 
 Before expiry: B ─ accept_admin(B) ─► Admin = B, pending entries cleared
 
-At/after expiry: any nomination/acceptance path ─► stale pending entries
-                                                   cleared; acceptance rejected
+At/after expiry: nomination path ─► stale pending entries cleared;
+                 acceptance path ─► acceptance rejected
 ```
 
 - `nominate_new_admin(B)` continues to require the current admin's
@@ -390,8 +391,9 @@ At/after expiry: any nomination/acceptance path ─► stale pending entries
   Emit the normal `nomadmin` event for the replacement; do not silently change
   the current admin.
 - `accept_admin(B)` first loads and checks the expiry. If no pending entry
-  exists, or the sequence is at/after expiry, clear stale entries and return a
-  dedicated `AdminNominationExpired` error. If still valid, preserve the
+  exists, or the sequence is at/after expiry, return a dedicated
+  `AdminNominationExpired` error. Because Soroban rolls back storage writes on
+  errors, durable cleanup is performed by a later successful nomination. If still valid, preserve the
   current address-match and `require_auth` checks, then promote B and clear
   both entries.
 - Bootstrap remains immediate and has no expiry because there is no pending
@@ -401,9 +403,9 @@ At/after expiry: any nomination/acceptance path ─► stale pending entries
 
 Add a read-only `pending_admin_expiry()` query returning the absolute expiry
 sequence (or `None`) so operators can display the deadline without guessing.
-Keep `pending_admin()` focused on the nominee address. Expiry cleanup may be
-performed lazily by `nominate_new_admin` or `accept_admin`; read-only queries
-should not be required to mutate storage.
+Keep `pending_admin()` focused on the nominee address. Expiry cleanup is
+performed lazily by `nominate_new_admin`; read-only queries and rejected
+acceptance attempts do not mutate storage.
 
 The expiry is a governance safety mechanism, not an automatic rejection or
 admin handoff. It must not alter the current admin, grant authority to the
