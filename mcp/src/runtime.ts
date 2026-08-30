@@ -34,6 +34,7 @@ import {
   withTimeout,
   type TimeoutService,
 } from "./httpTimeout.js";
+import { writeAtomically } from "./stateBackup.js";
 import {
   formatRetryLog,
   isIdempotentMethod,
@@ -206,13 +207,12 @@ function persistableProfiles(): Record<string, WalletProfile> {
 
 function saveState(): void {
   try {
-    mkdirSync(STATE_DIR, { recursive: true });
     const state: ProfileState = {
       version: STATE_VERSION,
       activeProfile: activeProfileName,
       profiles: persistableProfiles(),
     };
-    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
+    writeAtomically(STATE_FILE, JSON.stringify(state, null, 2), 0o600);
   } catch (err) {
     console.error("MindVault MCP: failed to persist state:", safeErrorMessage(err));
   }

@@ -15,7 +15,16 @@
  */
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import { STATE_VERSION, type ProfileState, type WalletProfile } from "./profiles.js";
@@ -215,13 +224,47 @@ function normalizePersisted(raw: unknown): ProfileState {
 }
 
 /**
+ * Write bytes to a temp file in the same directory and atomically rename it over
+ * the destination to avoid partial writes. The destination is never left half-
+ * written when the rename fails, and the file retains the requested mode.
+ */
+export function writeAtomically(
+  filePath: string,
+  data: string,
+  mode: number,
+  ops: Partial<typeof import("fs")> = {},
+): void {
+  const dir = dirname(filePath);
+  mkdirSync(dir, { recursive: true });
+
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  const writeSync = ops.writeFileSync ?? writeFileSync;
+  const rename = ops.renameSync ?? renameSync;
+  const chmod = ops.chmodSync ?? chmodSync;
+  const pathExists = ops.existsSync ?? existsSync;
+  const remove = ops.unlinkSync ?? unlinkSync;
+
+  try {
+    writeSync(tempPath, data, { mode });
+    rename(tempPath, filePath);
+    chmod(filePath, mode);
+  } catch (err) {
+    try {
+      if (pathExists(tempPath)) remove(tempPath);
+    } catch {
+      // ignore cleanup errors; the caller already received the write failure
+    }
+    throw err;
+  }
+}
+
+/**
  * Persist a restored ProfileState to disk (mode 0600), mirroring saveState in
  * index.ts. Exposed for testability.
  */
 export function persistState(state: ProfileState): void {
   try {
-    mkdirSync(STATE_DIR, { recursive: true });
-    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
+    writeAtomically(STATE_FILE, JSON.stringify(state, null, 2), 0o600);
   } catch (err) {
     throw new StateBackupError(`Failed to persist restored state: ${err}`);
   }
