@@ -11,6 +11,12 @@ import { createRotatingWriter, type RotatingJsonlWriter } from "./auditLogRotati
 
 export interface AuditLogEntry {
   timestamp: string;
+  /**
+   * Ties every entry from one tool call together (#572). Absent outside a tool
+   * call — an unattributed entry should say so rather than claim a correlation
+   * that does not exist.
+   */
+  correlationId?: string;
   toolName: string;
   status: "start" | "success" | "error";
   duration?: number;
@@ -25,6 +31,8 @@ export interface AuditLogEntry {
 
 export interface NetworkAuditLog {
   timestamp: string;
+  /** The tool call this request was made under (#572). */
+  correlationId?: string;
   method: "GET" | "POST" | "PUT" | "DELETE";
   endpoint: string;
   status: number;
@@ -107,6 +115,22 @@ export function setAuditLogEnabled(enabled: boolean): void {
  */
 function formatTimestamp(): string {
   return new Date().toISOString();
+}
+
+/**
+ * Stamp the in-flight tool call's correlation ID onto an entry (#572).
+ *
+ * Applied centrally rather than at each of the ten log sites, so a log helper
+ * added later is correlated automatically instead of being silently orphaned.
+ */
+function withCorrelation<T extends AuditLogEntry | NetworkAuditLog>(entry: T): T {
+  const correlationId = currentCorrelationId();
+  return correlationId ? { ...entry, correlationId } : entry;
+}
+
+/** Single exit point for every audit entry, so correlation is never skipped. */
+function emit(entry: AuditLogEntry | NetworkAuditLog): void {
+  console.error(JSON.stringify(withCorrelation(entry), null, 2));
 }
 
 /**
