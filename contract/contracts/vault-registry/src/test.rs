@@ -9505,4 +9505,5 @@ fn record_payment_allows_same_receipt_id_with_different_tx_hash() {
     assert_eq!(client.get_payment(&String::from_str(&env, "rcpt-second")).tx_hash, tx_b);
 }
 
+include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
