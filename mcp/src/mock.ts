@@ -387,6 +387,43 @@ export function mockSetListed(resourceId: string, listed: boolean): string {
 }
 
 /**
+ * Deterministic mock receipt for buy flows. Returns a purchase receipt object
+ * that mirrors the shape of a real x402 payment receipt, with deterministic
+ * fields so tests can assert on exact values.
+ */
+export interface MockBuyReceipt {
+  resourceId: string;
+  amount: string;
+  network: string;
+  txHash: string;
+  receiptRef: string;
+  purchasedAt: string;
+}
+
+const MOCK_BUY_COUNTER = new WeakMap<object, number>();
+
+export function mockBuyReceipt(
+  resourceId: string,
+  amount: string,
+  network: string = "stellar:testnet",
+  nonce?: object,
+): MockBuyReceipt {
+  const counter = nonce
+    ? ((MOCK_BUY_COUNTER.get(nonce) ?? 0) + 1,
+      MOCK_BUY_COUNTER.set(nonce, (MOCK_BUY_COUNTER.get(nonce) ?? 0) + 1),
+      MOCK_BUY_COUNTER.get(nonce)!)
+    : 1;
+  return {
+    resourceId,
+    amount,
+    network,
+    txHash: `MOCK_TX_BUY_${resourceId}_${counter}`,
+    receiptRef: `mock-receipt-${resourceId}-${counter}`,
+    purchasedAt: "2026-08-25T12:00:00.000Z",
+  };
+}
+
+/**
  * On-chain registry resources seeded into the mock. Exported so the fixture
  * generation script can serialise them alongside the catalog fixtures.
  */
