@@ -107,10 +107,56 @@ describe("newCorrelationId", () => {
     expect(id.split("-")[2]).toHaveLength(4);
   });
 
-  it("produces distinct ids in a tight loop", () => {
-    const ids = new Set(Array.from({ length: 500 }, () => newCorrelationId()));
+  it("produces distinct ids across advancing milliseconds", () => {
+    let clock = 1_700_000_000_000;
+    const ids = new Set(
+      Array.from({ length: 500 }, () =>
+        newCorrelationId(
+          () => clock++,
+          () => 0.5,
+        ),
+      ),
+    );
 
     expect(ids.size).toBe(500);
+  });
+
+  it("maps distinct randomness within one millisecond to distinct ids", () => {
+    // Within a millisecond the suffix is all that varies, so what this module
+    // owes is an injective mapping from randomness to suffix — no two distinct
+    // draws may collapse onto one id.
+    //
+    // This replaces an assertion that 500 ids from the *real* clock and
+    // Math.random were all distinct. That is not a property this design can
+    // have: `newCorrelationId` is deliberately deterministic in (clock,
+    // random) — the test above this one pins that — so it cannot also carry a
+    // uniqueness counter. A 500-call burst lands in one millisecond, drawing
+    // 500 times from 36**4 = 1,679,616 values, which by the birthday bound
+    // collides about 7% of the time. The old test failed roughly one run in
+    // fourteen, and the failure was correct: the assertion was wrong.
+    const draws = [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1 - Number.EPSILON];
+    const ids = new Set(
+      draws.map((r) =>
+        newCorrelationId(
+          () => 1,
+          () => r,
+        ),
+      ),
+    );
+
+    expect(ids.size).toBe(draws.length);
+  });
+
+  it("keeps the suffix at the full four base36 digits", () => {
+    // Narrowing the suffix would raise the same-millisecond collision rate,
+    // and a collision merges two concurrent calls' audit trails — the exact
+    // failure this module exists to prevent.
+    const highest = newCorrelationId(
+      () => 1,
+      () => 1 - Number.EPSILON,
+    );
+
+    expect(highest.split("-")[2]).toBe("zzzz");
   });
 });
 
