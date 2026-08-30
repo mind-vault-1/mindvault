@@ -53,7 +53,10 @@ import {
   mockSetListed,
 } from "./mock.js";
 import { purchaseHistoryTool, recordPurchase } from "./purchaseHistory.js";
+import { Mutex } from "./mutex.js";
+import { EXTRA_OUTPUT_SCHEMAS } from "./outputSchemas.js";
 import { exportReceiptsTool } from "./receipts.js";
+import { normalizeToolResult, outcomeText, type ToolOutcome } from "./toolResult.js";
 import { TOOL_DEFINITIONS, type ToolDefinition } from "./tools.js";
 import { dryRunPublish, dryRunBuy } from "./dryRun.js";
 import { initAuditLogging } from "./auditLog.js";
@@ -145,6 +148,13 @@ import {
   parseCatalogFilters,
   type CatalogFilters,
 } from "./catalogFilters.js";
+import {
+  catalogCacheLabel,
+  getCatalogSnapshot,
+  getPreviewSnapshot,
+  recordCatalogSnapshot,
+  recordPreviewSnapshot,
+} from "./catalogCache.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -606,7 +616,7 @@ async function importWallet(args: {
   secretKey?: string;
   profile?: string;
   persist?: boolean;
-}): Promise<string> {
+}): Promise<ToolOutcome> {
   const target = resolveProfileName(args.profile);
   const persist = args.persist !== false;
 
@@ -640,19 +650,25 @@ async function importWallet(args: {
     activeProfileName = target;
     activeProfile().wallet = { publicKey, secretKey };
     saveState();
-    return [
-      `Wallet imported.`,
-      `Profile: ${target}`,
-      `Address: ${publicKey}`,
-      `Wallet persisted to ${STATE_FILE} (mode 0600).`,
-    ].join("\n");
+    return {
+      text: [
+        `Wallet imported.`,
+        `Profile: ${target}`,
+        `Address: ${publicKey}`,
+        `Wallet persisted to ${STATE_FILE} (mode 0600).`,
+      ].join("\n"),
+      structured: { profile: target, address: publicKey, persisted: true },
+    };
   }
 
-  return [
-    `Wallet validated (not persisted).`,
-    `Address: ${publicKey}`,
-    `Pass persist: true to save to the state file.`,
-  ].join("\n");
+  return {
+    text: [
+      `Wallet validated (not persisted).`,
+      `Address: ${publicKey}`,
+      `Pass persist: true to save to the state file.`,
+    ].join("\n"),
+    structured: { profile: target, address: publicKey, persisted: false },
+  };
 }
 
 // ── #405: Rotate publisher API key ───────────────────────────────────────────
@@ -999,6 +1015,35 @@ function formatResource(r: any): string {
   return `[${r.id}] ${r.title} — $${r.price} USDC\n  ${r.description ?? ""}\n  ${r.accessUrl}`;
 }
 
+function catalogItemStructured(r: any): {
+  id: string | null;
+  title: string | null;
+  price: string | number | null;
+  description: string | null;
+  accessUrl: string | null;
+} {
+  return {
+    id: r?.id ?? null,
+    title: r?.title ?? null,
+    price: r?.price ?? null,
+    description: r?.description ?? null,
+    accessUrl: r?.accessUrl ?? null,
+  };
+}
+
+function catalogOutcome(items: any[], body: string, notice: string | null): ToolOutcome {
+  const full = notice ? `${body}\n\n${notice}` : body;
+  const text = truncateResponse(full);
+  return {
+    text,
+    structured: {
+      items: items.map(catalogItemStructured),
+      notice,
+      truncated: text !== full,
+    },
+  };
+}
+
 export type SearchFilters = CatalogFilters;
 
 /**
@@ -1110,7 +1155,7 @@ function sponsoredAccountErrorData(status: number, data: unknown): unknown {
   return data;
 }
 
-async function setupWallet(profileArg?: string): Promise<string> {
+async function setupWallet(profileArg?: string): Promise<ToolOutcome> {
   const target = resolveProfileName(profileArg);
   const operation = "mindvault_setup_wallet failed to create wallet";
 
@@ -1143,17 +1188,22 @@ async function setupWallet(profileArg?: string): Promise<string> {
   activeProfileName = target;
   activeProfile().wallet = { publicKey: res.data.publicKey, secretKey: res.data.secretKey };
   saveState();
-  return [
+  const text = [
     `Wallet created.`,
     `Profile: ${target}`,
     `Address: ${res.data.publicKey}`,
     `Wallet persisted to ${STATE_FILE} (mode 0600).`,
   ].join("\n");
+  return {
+    text,
+    structured: { profile: target, address: res.data.publicKey, persisted: true },
+  };
 }
 
-export async function walletInfo(): Promise<string> {
+async function walletInfoOutcome(): Promise<ToolOutcome> {
   const wallet = requireWallet();
   const details = await getBalanceDetails(wallet.publicKey);
+  const publisherRegistered = !!currentApiKey();
 
   const lines = [
     `Profile: ${activeProfileName}`,
@@ -1163,18 +1213,35 @@ export async function walletInfo(): Promise<string> {
     `XLM Available: ${details.xlmAvailable}`,
     `USDC Balance: ${details.usdcBalance}`,
     `USDC Status: ${details.status}`,
-    `Publisher registered: ${currentApiKey() ? "yes" : "no"}`,
+    `Publisher registered: ${publisherRegistered ? "yes" : "no"}`,
   ];
 
   if (details.message) {
     lines.push(`Note: ${details.message}`);
   }
 
-  return lines.join("\n");
+  return {
+    text: lines.join("\n"),
+    structured: {
+      profile: activeProfileName,
+      address: wallet.publicKey,
+      xlmBalance: details.xlmBalance,
+      xlmReserve: details.xlmReserve,
+      xlmAvailable: details.xlmAvailable,
+      usdcBalance: details.usdcBalance,
+      usdcStatus: details.status,
+      publisherRegistered,
+      note: details.message ?? null,
+    },
+  };
+}
+
+export async function walletInfo(): Promise<string> {
+  return outcomeText(await walletInfoOutcome());
 }
 
 /** Switch the active profile, creating it if new. */
-export function useProfile(nameArg: string): string {
+function useProfileOutcome(nameArg: string): ToolOutcome {
   if (!isValidProfileName(nameArg)) {
     throw new Error(
       `Invalid profile name. Use 1–64 characters from letters, digits, dot, dash, or underscore.`,
@@ -1184,20 +1251,46 @@ export function useProfile(nameArg: string): string {
   const profile = activeProfile();
   saveState();
   if (profile.wallet) {
-    return [
-      `Active profile: ${nameArg}`,
-      `Address: ${profile.wallet.publicKey}`,
-      `Publisher registered: ${profile.apiKey ? "yes" : "no"}`,
-    ].join("\n");
+    return {
+      text: [
+        `Active profile: ${nameArg}`,
+        `Address: ${profile.wallet.publicKey}`,
+        `Publisher registered: ${profile.apiKey ? "yes" : "no"}`,
+      ].join("\n"),
+      structured: {
+        profile: nameArg,
+        address: profile.wallet.publicKey,
+        publisherRegistered: !!profile.apiKey,
+      },
+    };
   }
-  return `Active profile: ${nameArg}\nNo wallet in this profile yet. Run mindvault_setup_wallet to create one.`;
+  return {
+    text: `Active profile: ${nameArg}\nNo wallet in this profile yet. Run mindvault_setup_wallet to create one.`,
+    structured: { profile: nameArg, address: null, publisherRegistered: null },
+  };
+}
+
+export function useProfile(nameArg: string): string {
+  return outcomeText(useProfileOutcome(nameArg));
 }
 
 /** List every named profile, marking the active one. Secrets are never shown. */
-export function listProfiles(): string {
+function listProfilesOutcome(): ToolOutcome {
   const names = Object.keys(profiles).sort();
+  const structured = {
+    active: activeProfileName,
+    profiles: names.map((name) => ({
+      name,
+      address: profiles[name].wallet ? profiles[name].wallet!.publicKey : null,
+      publisherRegistered: !!profiles[name].apiKey,
+      active: name === activeProfileName,
+    })),
+  };
   if (names.length === 0) {
-    return `No profiles yet. Run mindvault_setup_wallet to create one (default profile: "${DEFAULT_PROFILE}").`;
+    return {
+      text: `No profiles yet. Run mindvault_setup_wallet to create one (default profile: "${DEFAULT_PROFILE}").`,
+      structured,
+    };
   }
   const lines = names.map((name) => {
     const profile = profiles[name];
@@ -1206,25 +1299,40 @@ export function listProfiles(): string {
     const registered = profile.apiKey ? ", registered" : "";
     return `${marker} ${name} — ${address}${registered}`;
   });
-  return [`Profiles (* = active):`, ...lines].join("\n");
+  return { text: [`Profiles (* = active):`, ...lines].join("\n"), structured };
 }
 
-export async function browse(filters: CatalogFilters = {}): Promise<string> {
+export function listProfiles(): string {
+  return outcomeText(listProfilesOutcome());
+}
+
+async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome> {
   const qs = buildCatalogQueryString(filters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
-  const res = await jsonFetch(url);
-  if (!res.ok) {
-    throw mcpError(
-      mapHttpError({
-        operation: "Browse failed",
-        source: "api",
-        status: res.status,
-        data: res.data,
-      }),
-    );
+  let raw: any[] = [];
+  let notice: string | null = null;
+  try {
+    const res = await jsonFetch(url);
+    if (!res.ok) {
+      throw mcpError(
+        mapHttpError({
+          operation: "Browse failed",
+          source: "api",
+          status: res.status,
+          data: res.data,
+        }),
+      );
+    }
+    raw = Array.isArray(res.data) ? res.data : [];
+    recordCatalogSnapshot(raw);
+    notice = cacheStalenessNotice(res.headers);
+  } catch (err) {
+    const snapshot = getCatalogSnapshot();
+    if (!snapshot) throw err;
+    raw = Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [];
+    notice = catalogCacheLabel(snapshot.savedAtMs);
   }
-  let items: any[] = Array.isArray(res.data) ? res.data : [];
-  items = applyCatalogSort(applyClientCatalogFilters(items, filters), filters.sort);
+  const items: any[] = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
   const body =
     items.length === 0
       ? filters.query ||
@@ -1238,14 +1346,14 @@ export async function browse(filters: CatalogFilters = {}): Promise<string> {
         ? `No resources match ${describeCatalogFilters(filters)}.`
         : "No resources listed yet."
       : items.map(formatResource).join("\n\n");
-  // Warn when the catalog may be stale relative to the on-chain registry, based
-  // on the server's cache headers. Silent when there is no cache metadata.
-  const notice = cacheStalenessNotice(res.headers);
-  const full = notice ? `${body}\n\n${notice}` : body;
-  return truncateResponse(full);
+  return catalogOutcome(items, body, notice);
 }
 
-export async function search(filtersOrQuery: string | CatalogFilters): Promise<string> {
+export async function browse(filters: CatalogFilters = {}): Promise<string> {
+  return outcomeText(await browseOutcome(filters));
+}
+
+async function searchOutcome(filtersOrQuery: string | CatalogFilters): Promise<ToolOutcome> {
   const filters: CatalogFilters =
     typeof filtersOrQuery === "string" ? { query: filtersOrQuery } : filtersOrQuery;
 
@@ -1262,29 +1370,48 @@ export async function search(filtersOrQuery: string | CatalogFilters): Promise<s
     (filters.tags && filters.tags.length > 0) ||
     filters.listed !== undefined,
   );
-  if (!hasCriteria) return "Provide a search query or at least one catalog filter.";
+  if (!hasCriteria) {
+    return catalogOutcome([], "Provide a search query or at least one catalog filter.", null);
+  }
 
   const qs = buildCatalogQueryString(filters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
-  const res = await jsonFetch(url);
-  if (!res.ok) {
-    throw mcpError(
-      mapHttpError({
-        operation: "Search failed",
-        source: "api",
-        status: res.status,
-        data: res.data,
-      }),
-    );
+  let raw: any[] = [];
+  let notice: string | null = null;
+  try {
+    const res = await jsonFetch(url);
+    if (!res.ok) {
+      throw mcpError(
+        mapHttpError({
+          operation: "Search failed",
+          source: "api",
+          status: res.status,
+          data: res.data,
+        }),
+      );
+    }
+    raw = Array.isArray(res.data) ? res.data : [];
+    recordCatalogSnapshot(raw);
+    notice = cacheStalenessNotice(res.headers);
+  } catch (err) {
+    const snapshot = getCatalogSnapshot();
+    if (!snapshot) throw err;
+    raw = Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [];
+    notice = catalogCacheLabel(snapshot.savedAtMs);
   }
-  let items: any[] = Array.isArray(res.data) ? res.data : [];
 
   // Client-side keyword / tags / listed / skipped for unit-test compatibility
   // and parity with fields the public catalog schema does not accept.
-  items = applyCatalogSort(applyClientCatalogFilters(items, filters), filters.sort);
+  const items = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
 
-  if (items.length === 0) return `No resources match ${describeCatalogFilters(filters)}.`;
-  return truncateResponse(items.map(formatResource).join("\n\n"));
+  if (items.length === 0) {
+    return catalogOutcome([], `No resources match ${describeCatalogFilters(filters)}.`, notice);
+  }
+  return catalogOutcome(items, items.map(formatResource).join("\n\n"), notice);
+}
+
+export async function search(filtersOrQuery: string | CatalogFilters): Promise<string> {
+  return outcomeText(await searchOutcome(filtersOrQuery));
 }
 
 export async function preview(resourceId: string): Promise<string> {
@@ -2142,10 +2269,9 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
   );
 }
 
-export async function registryLookup(
-  resourceId: string,
-): Promise<string> {
-  if (_isMock()) return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
+export async function registryLookup(resourceId: string): Promise<string> {
+  if (_isMock())
+    return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
   const client = createRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
@@ -2226,11 +2352,9 @@ export async function registryLookup(
  * Paginated list of resources from the on-chain vault registry (contract `list`).
  * Data comes from Soroban, not the MindVault API catalog.
  */
-export async function registryList(
-  start: number,
-  limit: number,
-): Promise<string> {
-  if (_isMock()) return mockRegistryList(start, limit, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
+export async function registryList(start: number, limit: number): Promise<string> {
+  if (_isMock())
+    return mockRegistryList(start, limit, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
 
   const client = createRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
@@ -2312,7 +2436,11 @@ export async function registryList(
 export async function recoverCatalogCache(): Promise<string> {
   if (_isMock()) {
     return JSON.stringify(
-      { source: "mcp", action: "recover_catalog_cache", message: "Mock: catalog cache recovery triggered (no-op in mock)." },
+      {
+        source: "mcp",
+        action: "recover_catalog_cache",
+        message: "Mock: catalog cache recovery triggered (no-op in mock).",
+      },
       null,
       2,
     );
@@ -2552,40 +2680,44 @@ export function networkProfile(): string {
     warnings,
   };
 
-const STATE_DIR = join(homedir(), ".mindvault");
-const STATE_FILE = join(STATE_DIR, "state.json");
-configureStatePaths(STATE_DIR, STATE_FILE);
-loadState();
+  return JSON.stringify(profile, null, 2);
+}
 
-export {
-  browse,
-  search,
-  preview,
-  txStatus,
-  walletInfo,
-  useProfile,
-  listProfiles,
-  publishStatus,
-  buy,
-  registerOnchain,
-  updateMetadata,
-  setPrice,
-  transferOwnership,
-  setListed,
-  registryLookup,
-  registryList,
-  checkConsistency,
-  networkProfile,
-  backupState,
-  restoreStateTool,
-  resetState,
-  usdcToStroops,
-  type SearchFilters,
-  _setAgentWallet,
-  _setAgentApiKey,
-  _resetProfiles,
-  _setMockMode,
-};
+/**
+ * Verify the installed registry-client bindings match the deployed contract's
+ * interface. Returns the check's deterministic, agent-safe message.
+ */
+async function checkBindings(): Promise<string> {
+  if (_isMock()) return "Mock mode: contract binding check skipped (no live RPC).";
+  const result = await checkContractBindings({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    network: STELLAR_NETWORK,
+  });
+  return result.message;
+}
+
+/**
+ * Return opt-in tool-level metrics as JSON. Pass reset=true to clear counters
+ * after reading. Text-only when disabled (still JSON so structuredContent works).
+ */
+function toolMetrics(reset: boolean): string {
+  const snapshot = metrics.snapshot();
+  if (reset) metrics.reset();
+  if (!snapshot.enabled) {
+    return JSON.stringify(
+      {
+        enabled: false,
+        message:
+          "Metrics are disabled. Set MINDVAULT_METRICS=1 (or true/yes/on) and restart the server to collect tool-level metrics.",
+      },
+      null,
+      2,
+    );
+  }
+  return JSON.stringify(snapshot, null, 2);
+}
 
 const TOOLS_WITHOUT_ARG_VALIDATION = new Set([
   "mindvault_publish_status",
@@ -2617,11 +2749,11 @@ const STATE_MUTATING_TOOLS = new Set([
 
 const stateMutex = new Mutex();
 
-export async function dispatchTool(
+async function dispatchToolOutcome(
   name: string,
   rawArgs: unknown,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
-): Promise<string> {
+): Promise<ToolOutcome> {
   if (!isDispatchableTool(name)) {
     throw new UnknownToolError(name);
   }
@@ -2640,23 +2772,27 @@ export async function dispatchTool(
 
   assertMainnetMutationAllowed(NETWORK, name, rawRecord);
 
-  const execute = async (): Promise<string> => {
+  if (API_MUTATION_TOOLS.has(name) && !isDryRunCall) {
+    await assertApiReachableFor(name);
+  }
+
+  const execute = async (): Promise<ToolOutcome> => {
     switch (name) {
       case "mindvault_setup_wallet":
         return setupWallet(optionalString(args, "profile"));
       case "mindvault_wallet_info":
-        return walletInfo();
+        return walletInfoOutcome();
       case "mindvault_use_profile":
-        return useProfile(requiredString(args, "name"));
+        return useProfileOutcome(requiredString(args, "name"));
       case "mindvault_list_profiles":
-        return listProfiles();
+        return listProfilesOutcome();
       case "mindvault_browse": {
         const parsed = parseCatalogFilters(rawRecord);
-        return parsed.ok ? browse(parsed.filters) : parsed.error;
+        return parsed.ok ? browseOutcome(parsed.filters) : parsed.error;
       }
       case "mindvault_search": {
         const parsed = parseCatalogFilters(rawRecord, { requireCriteria: true });
-        return parsed.ok ? search(parsed.filters) : parsed.error;
+        return parsed.ok ? searchOutcome(parsed.filters) : parsed.error;
       }
       case "mindvault_preview":
         return preview(requiredString(args, "resourceId"));
@@ -2678,11 +2814,11 @@ export async function dispatchTool(
         return publishStatus(rawRecord, onProgress);
       case "mindvault_buy":
         return buy(
-          requiredString(args, "resourceId"),
-          flag(args, "dryRun"),
+          requiredString(dryRunArgs, "resourceId"),
+          flag(dryRunArgs, "dryRun"),
           undefined,
           onProgress,
-          optionalString(args, "maxAutoPayUsdc"),
+          optionalString(dryRunArgs, "maxAutoPayUsdc"),
         );
       case "mindvault_purchase_history":
         return purchaseHistoryTool(rawRecord);
@@ -2745,100 +2881,11 @@ export async function dispatchTool(
         return rotatePublisherKey(optionalString(args, "profile"));
       case "mindvault_verify_install":
         return formatVerifyInstall(verifyInstall(process.env));
+      case "mindvault_recover_catalog_cache":
+        return recoverCatalogCache();
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
-    case "mindvault_preview":
-      return preview(requiredString(args, "resourceId"));
-    case "mindvault_register":
-      return register(
-        requiredString(args, "name"),
-        requiredString(args, "email"),
-        optionalString(args, "walletAddress"),
-      );
-    case "mindvault_publish":
-      return publish({
-        title: requiredString(dryRunArgs, "title"),
-        description: optionalString(dryRunArgs, "description"),
-        price: requiredString(dryRunArgs, "price"),
-        externalUrl: requiredString(dryRunArgs, "externalUrl"),
-        dryRun: flag(dryRunArgs, "dryRun"),
-      });
-    case "mindvault_publish_status":
-      return publishStatus(rawRecord);
-    case "mindvault_buy":
-      return buy(
-        requiredString(args, "resourceId"),
-        flag(args, "dryRun"),
-        undefined,
-        onProgress,
-        optionalString(args, "maxAutoPayUsdc"),
-      );
-    case "mindvault_purchase_history":
-      return purchaseHistoryTool(rawRecord);
-    case "mindvault_export_receipts":
-      return exportReceiptsTool(rawRecord);
-    case "mindvault_register_onchain":
-      return registerOnchain(requiredString(args, "resourceId"), onProgress);
-    case "mindvault_agent_status":
-      return agentStatus();
-    case "mindvault_registry_info":
-      return registryInfo();
-    case "mindvault_network_profile":
-      return networkProfile();
-    case "mindvault_check_bindings":
-      return checkBindings();
-    case "mindvault_check_consistency":
-      return checkConsistency(
-        requiredString(args, "resourceId"),
-        optionalString(args, "expectedMetadataHash"),
-      );
-    case "mindvault_registry_lookup":
-      return registryLookup(requiredString(args, "resourceId"));
-    case "mindvault_registry_list":
-      return registryList(
-        optionalInt(args, "start", REGISTRY_LIST_DEFAULT_START),
-        optionalInt(args, "limit", REGISTRY_LIST_DEFAULT_LIMIT),
-      );
-    case "mindvault_update_metadata":
-      return updateMetadata(requiredString(args, "resourceId"), requiredString(args, "metadata"));
-    case "mindvault_set_price":
-      return setPrice(requiredString(args, "resourceId"), requiredString(args, "price"));
-    case "mindvault_transfer_ownership":
-      return transferOwnership(
-        requiredString(args, "resourceId"),
-        requiredString(args, "newCreator"),
-      );
-    case "mindvault_set_listed":
-      return setListed(requiredString(args, "resourceId"), flag(args, "listed"));
-    case "mindvault_tx_status":
-      return txStatus(requiredString(args, "txHash"));
-    case "mindvault_reset":
-      return resetState(flag(args, "all"), rawRecord.confirm);
-    case "mindvault_backup_state":
-      return backupState(requiredString(args, "passphrase"));
-    case "mindvault_restore_state":
-      return restoreStateTool(requiredString(args, "blob"), requiredString(args, "passphrase"));
-    case "mindvault_metrics":
-      return toolMetrics(flag(args, "reset"));
-    case "mindvault_check_state_permissions":
-      return checkStatePermissionsTool();
-    case "mindvault_registry_health":
-      return registryHealth();
-    case "mindvault_import_wallet":
-      return importWallet({
-        secretKey: optionalString(args, "secretKey"),
-        profile: optionalString(args, "profile"),
-        persist: flag(args, "persist"),
-      });
-    case "mindvault_rotate_publisher_key":
-      return rotatePublisherKey(optionalString(args, "profile"));
-    case "mindvault_verify_install":
-      return formatVerifyInstall(verifyInstall(process.env));
-    case "mindvault_recover_catalog_cache":
-      return recoverCatalogCache();
-    default:
-      throw new Error(`Unknown tool: ${name}`);
   };
 
   if (STATE_MUTATING_TOOLS.has(name)) {
@@ -2846,6 +2893,15 @@ export async function dispatchTool(
   }
 
   return execute();
+}
+
+/** Dispatch a tool and return the human-readable text block (unit-test surface). */
+export async function dispatchTool(
+  name: string,
+  rawArgs: unknown,
+  onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
+): Promise<string> {
+  return outcomeText(await dispatchToolOutcome(name, rawArgs, onProgress));
 }
 
 function toolDefinition(name: string): ToolDefinition {
@@ -2888,18 +2944,18 @@ function toolAnnotations(name: string): {
   };
 }
 
-const TOOLS_WITH_OUTPUT_SCHEMA = new Set(
-  TOOL_DEFINITIONS.filter((tool) => tool.outputSchema).map((tool) => tool.name),
-);
+function outputSchemaFor(name: string): Record<string, unknown> | undefined {
+  if (name in EXTRA_OUTPUT_SCHEMAS) return EXTRA_OUTPUT_SCHEMAS[name];
+  return TOOL_DEFINITIONS.find((tool) => tool.name === name)?.outputSchema;
+}
 
-function structuredResult(name: string, text: string): Record<string, unknown> | undefined {
-  if (!TOOLS_WITH_OUTPUT_SCHEMA.has(name)) return undefined;
-  try {
-    const parsed = JSON.parse(text);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
+function hasOutputSchema(name: string): boolean {
+  return outputSchemaFor(name) !== undefined;
+}
+
+/** Test helper: wrap a handler outcome the same way CallTool does. */
+export function normalizeToolResultForTest(name: string, outcome: ToolOutcome) {
+  return normalizeToolResult(name, outcome, hasOutputSchema);
 }
 
 const server = new Server(
@@ -3399,6 +3455,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: advertisedTools.map((tool) => ({
       ...tool,
       annotations: toolAnnotations(tool.name),
+      ...(outputSchemaFor(tool.name) ? { outputSchema: outputSchemaFor(tool.name) } : {}),
     })),
   };
 });
@@ -3411,8 +3468,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       ? createProgressEmitter({ token: progressToken, send: extra.sendNotification })
       : undefined;
   try {
-    const result = await measureTool(metrics, name, () => dispatchTool(name, args, onProgress));
-    return { content: [{ type: "text", text: result }] };
+    const result = await measureTool(metrics, name, () =>
+      dispatchToolOutcome(name, args, onProgress),
+    );
+    return normalizeToolResult(name, result, hasOutputSchema);
   } catch (err: any) {
     const mapped = mappedErrorOf(err);
     return {

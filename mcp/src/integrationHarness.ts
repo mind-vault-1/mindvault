@@ -30,6 +30,16 @@ export function harnessResultText(result: {
     .trim();
 }
 
+/** Machine-readable MCP `structuredContent` object, or undefined. */
+export function harnessStructuredContent(result: {
+  structuredContent?: unknown;
+}): Record<string, unknown> | undefined {
+  const payload = result.structuredContent;
+  return payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>)
+    : undefined;
+}
+
 /** True when the MCP result is flagged as an error or carries the Error: marker. */
 export function harnessIsToolError(result: {
   isError?: boolean;
