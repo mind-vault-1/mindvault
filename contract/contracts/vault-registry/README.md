@@ -348,6 +348,70 @@ stellar contract invoke \
   -- accept_transfer --id swcn98besxpp6t1u8e77fqz3
 ```
 
+### Admin nomination expiry design
+
+The two-step admin rotation now has a deadline: a nominee cannot remain
+pending indefinitely and block a later nomination. The change keeps
+the existing authorization model and adds an expiry to only the post-bootstrap
+nomination path.
+
+#### State and duration
+
+- Keep `DataKey::PendingAdmin` as the nominee address for wire compatibility.
+- Add a separate instance entry, `DataKey::PendingAdminExpiry`, containing an
+  absolute ledger sequence number. A separate key avoids changing the encoded
+  shape of the existing pending-admin entry.
+- Use a fixed seven-day duration (`7 * DAY_IN_LEDGERS`). It is long enough for
+  an administrator to coordinate an acceptance and short enough to prevent a
+  forgotten nomination from blocking governance indefinitely. It is a
+  contract constant, not caller-configurable, so a nominee cannot extend its
+  own authority window.
+- Treat ledger sequence numbers as the clock. They are deterministic on-chain
+  and avoid wall-clock/time-zone assumptions.
+
+#### State transitions
+
+```text
+Admin = A
+  └─ nominate(B) ─► PendingAdmin = B,
+                    PendingAdminExpiry = current_sequence + 7 days
+
+Before expiry: B ─ accept_admin(B) ─► Admin = B, pending entries cleared
+
+At/after expiry: any nomination/acceptance path ─► stale pending entries
+                                                   cleared; acceptance rejected
+```
+
+- `nominate_new_admin(B)` continues to require the current admin's
+  authorization. If a pending nomination exists and its expiry is still in
+  the future, return `PendingAdminAlreadySet` exactly as today.
+- If the pending nomination is expired, clear both pending entries first, then
+  allow the current admin to nominate a new address in the same invocation.
+  Emit the normal `nomadmin` event for the replacement; do not silently change
+  the current admin.
+- `accept_admin(B)` first loads and checks the expiry. If no pending entry
+  exists, or the sequence is at/after expiry, clear stale entries and return a
+  dedicated `AdminNominationExpired` error. If still valid, preserve the
+  current address-match and `require_auth` checks, then promote B and clear
+  both entries.
+- Bootstrap remains immediate and has no expiry because there is no pending
+  nomination in that path.
+
+#### Observability and compatibility
+
+Add a read-only `pending_admin_expiry()` query returning the absolute expiry
+sequence (or `None`) so operators can display the deadline without guessing.
+Keep `pending_admin()` focused on the nominee address. Expiry cleanup may be
+performed lazily by `nominate_new_admin` or `accept_admin`; read-only queries
+should not be required to mutate storage.
+
+The expiry is a governance safety mechanism, not an automatic rejection or
+admin handoff. It must not alter the current admin, grant authority to the
+nominee after expiry, or permit a third party to clear an active nomination.
+Future implementation work should add tests for valid acceptance, expired
+acceptance, replacement after expiry, blocked replacement before expiry,
+wrong-caller authorization, exact-boundary sequence behavior, and bootstrap.
+
 ### Admin bootstrap and verifier role
 
 The very first `nominate_new_admin` call bootstraps the admin directly

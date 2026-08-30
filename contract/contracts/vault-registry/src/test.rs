@@ -1713,11 +1713,56 @@ fn admin_transfer_nominate_then_accept() {
     client.nominate_new_admin(&new_admin);
     assert_eq!(client.admin(), Some(initial_admin.clone()));
     assert_eq!(client.pending_admin(), Some(new_admin.clone()));
+    assert_eq!(
+        client.pending_admin_expiry(),
+        Some(env.ledger().sequence() + ADMIN_NOMINATION_DURATION)
+    );
 
     // Accept admin nomination
     client.accept_admin(&new_admin);
     assert_eq!(client.admin(), Some(new_admin));
     assert_eq!(client.pending_admin(), None);
+    assert_eq!(client.pending_admin_expiry(), None);
+}
+
+#[test]
+fn expired_admin_nomination_can_be_replaced() {
+    let (env, _creator, client) = setup();
+    let admin = Address::generate(&env);
+    let expired = Address::generate(&env);
+    let replacement = Address::generate(&env);
+
+    client.nominate_new_admin(&admin);
+    client.nominate_new_admin(&expired);
+    let expiry = client.pending_admin_expiry().unwrap();
+    env.ledger().set_sequence_number(expiry);
+
+    assert_eq!(
+        client.try_nominate_new_admin(&replacement),
+        Ok(Ok(()))
+    );
+    assert_eq!(client.pending_admin(), Some(replacement));
+    assert_eq!(client.pending_admin_expiry(), Some(expiry + ADMIN_NOMINATION_DURATION));
+}
+
+#[test]
+fn expired_admin_nomination_cannot_be_accepted_and_is_cleared() {
+    let (env, _creator, client) = setup();
+    let admin = Address::generate(&env);
+    let pending = Address::generate(&env);
+
+    client.nominate_new_admin(&admin);
+    client.nominate_new_admin(&pending);
+    env.ledger()
+        .set_sequence_number(client.pending_admin_expiry().unwrap());
+
+    assert_eq!(
+        client.try_accept_admin(&pending),
+        Err(Ok(Error::AdminNominationExpired))
+    );
+    assert_eq!(client.admin(), Some(admin));
+    assert_eq!(client.pending_admin(), None);
+    assert_eq!(client.pending_admin_expiry(), None);
 }
 
 #[test]
@@ -1745,7 +1790,7 @@ fn accept_admin_without_pending_returns_not_set() {
 
     assert_eq!(
         client.try_accept_admin(&caller),
-        Err(Ok(Error::PendingAdminNotSet))
+        Err(Ok(Error::AdminNominationExpired))
     );
 }
 
@@ -7348,7 +7393,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 18] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 19] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -7382,6 +7427,7 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 18] {
         (DataKey::Moderator(who.clone()), "Moderator", 2),
         (DataKey::DisputeFlag(id.clone()), "DisputeFlag", 2),
         (DataKey::FlagReasonHash(id.clone()), "FlagReasonHash", 2),
+        (DataKey::PendingAdminExpiry, "PendingAdminExpiry", 1),
     ]
 }
 
