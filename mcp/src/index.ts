@@ -94,6 +94,8 @@ import {
   type PublishProgressReporter,
   type PublishStatusFetch,
 } from "./publishStatus.js";
+import { type ApiResponse } from "./apiResponse.js";
+import { safeErrorMessage, safeLog } from "./redaction.js";
 import { safeErrorMessage } from "./redaction.js";
 import { assertAutoPaymentWithinCeiling } from "./paymentCeiling.js";
 import { signMutatingHeaders } from "./requestSignature.js";
@@ -752,10 +754,7 @@ const SERVICE_OPERATION: Record<ErrorSource, string> = {
   registry: "Registry request failed",
 };
 
-async function jsonFetch(
-  url: string,
-  init?: RequestInit,
-): Promise<{ ok: boolean; status: number; data: any; headers: Record<string, string> }> {
+async function jsonFetch(url: string, init?: RequestInit): Promise<ApiResponse<any>> {
   const method = (init?.method ?? "GET").toUpperCase();
   const body =
     typeof init?.body === "string" ? init.body : init?.body ? JSON.stringify(init.body) : undefined;
@@ -1532,14 +1531,14 @@ async function publish(args: {
     : "failed";
   const onchainTxHash: string | null = registerRes.ok
     ? (registerRes.data.onchainTxHash ?? null)
-    : ((registerRes.data?.txHash as string | undefined) ?? null);
+    : (((registerRes.data as Record<string, any>)?.txHash as string | undefined) ?? null);
 
   // On failure the server returns actionable guidance (next steps, the retry
   // endpoint, and a tx-status link when a hash exists). Surface it verbatim so
   // the agent knows exactly how to recover instead of getting an opaque error.
   const failureGuidance: string[] = [];
   if (!registerRes.ok) {
-    const data = registerRes.data ?? {};
+    const data = (registerRes.data ?? {}) as Record<string, any>;
     const retryEndpoint =
       typeof data.retryEndpoint === "string"
         ? data.retryEndpoint
@@ -1762,7 +1761,10 @@ export async function registerOnchain(
     body: JSON.stringify({ signedXdr }),
   });
   if (!submit.ok) {
-    const txHash = submit.data && typeof submit.data === "object" ? submit.data.txHash : undefined;
+    const txHash =
+      submit.data && typeof submit.data === "object"
+        ? (submit.data as Record<string, any>).txHash
+        : undefined;
     const mapped = mapHttpError({
       operation: `On-chain registration failed for "${resourceId}" [${submit.status}]`,
       source: "api",
