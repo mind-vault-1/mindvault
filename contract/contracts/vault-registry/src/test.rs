@@ -9506,3 +9506,6 @@ fn record_payment_allows_same_receipt_id_with_different_tx_hash() {
 }
 
 include!("test/storage_footprint.rs");
+
+include!("test/auth_fixtures.rs");
+include!("test/tombstone_read.rs");
