@@ -117,6 +117,9 @@ const USDC_AMOUNT: ArgumentSpec = {
 /** Confirmation flag for mainnet mutations (see mainnetGuardrails.ts). */
 const CONFIRM_MAINNET: ArgumentSpec = { kind: "flag" };
 
+/** Confirmation flag for paid operations (see paidOperations.ts). */
+const CONFIRM_PAID: ArgumentSpec = { kind: "flag" };
+
 /** Preview flag: publish/buy report what they would do without paying. */
 const DRY_RUN: ArgumentSpec = { kind: "flag" };
 
@@ -174,6 +177,25 @@ const CATALOG_FILTER_ARGS: ToolArgumentSpec = {
 // ── Per-tool specs ────────────────────────────────────────────────────────────
 
 /**
+ * Tools that parse their own arguments instead of going through
+ * {@link TOOL_ARGUMENT_SPECS}.
+ *
+ * Both normalize in their own module — `publishStatus.ts` clamps `timeoutMs`
+ * to a maximum and floors `intervalMs` at a minimum, and both raise messages
+ * their own suites pin. Running the generic validator first would reject
+ * values those functions deliberately accept and clamp, so the exemption is
+ * real rather than an oversight.
+ *
+ * It is a closed list, not a category: `listToolsContract.test.ts` asserts
+ * every other advertised tool has a spec, so a new tool cannot join this set
+ * by accident.
+ */
+export const TOOLS_WITHOUT_ARG_VALIDATION: readonly string[] = [
+  "mindvault_publish_status",
+  "mindvault_purchase_history",
+];
+
+/**
  * The validation contract for every public tool. Key order is the order in
  * which problems are reported, which keeps multi-issue errors deterministic.
  */
@@ -215,12 +237,14 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     },
     dryRun: DRY_RUN,
     confirmMainnet: CONFIRM_MAINNET,
+    confirmPaid: CONFIRM_PAID,
   },
   mindvault_buy: {
     resourceId: RESOURCE_ID,
     dryRun: DRY_RUN,
     maxAutoPayUsdc: { ...USDC_AMOUNT, required: false },
     confirmMainnet: CONFIRM_MAINNET,
+    confirmPaid: CONFIRM_PAID,
   },
   mindvault_export_receipts: {
     format: { kind: "enum", values: ["json", "csv"] },
@@ -230,7 +254,11 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     until: { kind: "string", maxLength: 64 },
     limit: { kind: "integer", min: 1, max: RECEIPT_EXPORT_MAX_LIMIT },
   },
-  mindvault_register_onchain: { resourceId: RESOURCE_ID, confirmMainnet: CONFIRM_MAINNET },
+  mindvault_register_onchain: {
+    resourceId: RESOURCE_ID,
+    confirmMainnet: CONFIRM_MAINNET,
+    confirmPaid: CONFIRM_PAID,
+  },
   mindvault_agent_status: {},
   mindvault_registry_info: {},
   mindvault_network_profile: {},
@@ -245,7 +273,14 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     limit: { kind: "integer", min: 1, max: REGISTRY_LIST_MAX_LIMIT },
   },
   mindvault_tx_status: { txHash: { kind: "hash", required: true, bareHex: true } },
-  mindvault_reset: { all: { kind: "flag" }, confirmMainnet: CONFIRM_MAINNET },
+  // `confirm` is what resetGuard.isResetConfirmed reads. It was advertised in
+  // ListTools and absent here, so every confirmed reset failed validation as an
+  // unknown argument and the tool was permanently stuck in preview mode (#596).
+  mindvault_reset: {
+    confirm: { kind: "flag" },
+    all: { kind: "flag" },
+    confirmMainnet: CONFIRM_MAINNET,
+  },
   mindvault_backup_state: { passphrase: PASSPHRASE },
   mindvault_restore_state: {
     blob: { kind: "string", required: true, maxLength: 1_048_576 },
@@ -261,21 +296,25 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     resourceId: RESOURCE_ID,
     metadata: METADATA_POINTER,
     confirmMainnet: CONFIRM_MAINNET,
+    confirmPaid: CONFIRM_PAID,
   },
   mindvault_set_price: {
     resourceId: RESOURCE_ID,
     price: { ...USDC_AMOUNT, required: true },
     confirmMainnet: CONFIRM_MAINNET,
+    confirmPaid: CONFIRM_PAID,
   },
   mindvault_transfer_ownership: {
     resourceId: RESOURCE_ID,
     newCreator: { ...STELLAR_ADDRESS, required: true },
     confirmMainnet: CONFIRM_MAINNET,
+    confirmPaid: CONFIRM_PAID,
   },
   mindvault_set_listed: {
     resourceId: RESOURCE_ID,
     listed: { kind: "flag", required: true },
     confirmMainnet: CONFIRM_MAINNET,
+    confirmPaid: CONFIRM_PAID,
   },
   mindvault_check_state_permissions: {},
   mindvault_registry_health: {},

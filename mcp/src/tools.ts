@@ -6,6 +6,12 @@
  * argument-validation layer can import it without booting the server or its
  * stdio transport. Every tool listed here must have a matching entry in
  * TOOL_ARGUMENT_SPECS (see validation.ts) — enforced by validation.test.ts.
+ *
+ * `toolSurface.ts` turns this array into the ListTools payload, and
+ * `listToolsContract.test.ts` checks the live response against it along with
+ * the argument validator and the dispatch switch. Until #596 the handler in
+ * index.ts kept its own copy of this list and the two had drifted apart in
+ * both directions; the contract test exists so that cannot recur silently.
  */
 
 import { catalogFilterInputProperties } from "./catalogFilters.js";
@@ -19,6 +25,8 @@ import {
   ONCHAIN_MUTATION_OUTPUT_SCHEMA,
   PREVIEW_OUTPUT_SCHEMA,
   PUBLISH_BUY_OUTPUT_SCHEMA,
+  PUBLISH_STATUS_OUTPUT_SCHEMA,
+  PURCHASE_HISTORY_OUTPUT_SCHEMA,
   RECOVER_CACHE_OUTPUT_SCHEMA,
   REGISTER_ONCHAIN_OUTPUT_SCHEMA,
   REGISTRY_INFO_OUTPUT_SCHEMA,
@@ -30,6 +38,19 @@ import {
   WALLET_SETUP_OUTPUT_SCHEMA,
 } from "./outputSchemas.js";
 import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_EXPORT_OUTPUT_SCHEMA } from "./receipts.js";
+
+/**
+ * The `confirmPaid` argument advertised by every tool the paid-operation policy
+ * can gate (#594).
+ *
+ * Declared once and spread into each schema so the wording an agent reads can
+ * never drift between two tools that answer to the same guardrail.
+ */
+const CONFIRM_PAID_PROPERTY = {
+  type: "boolean",
+  description:
+    "Required when the server runs with MINDVAULT_CONFIRM_PAID_OPERATIONS=usdc or =all. Explicitly confirm that this call may spend from the agent wallet. Ignored when the policy is off (the default) and on dry runs.",
+} as const;
 
 /** JSON Schema (draft subset) advertised for a tool's arguments. */
 export interface ToolInputSchema {
@@ -287,6 +308,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["title", "price", "externalUrl"],
     },
@@ -327,6 +349,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["resourceId"],
     },
@@ -410,6 +433,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["resourceId"],
     },
@@ -594,6 +618,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
+        confirm: {
+          type: "boolean",
+          description:
+            "Required to actually clear anything. Omitted or false returns a warning describing what would be removed and performs no deletion. Example: true clears the credentials.",
+          examples: [true, false],
+        },
         all: {
           type: "boolean",
           description:
@@ -747,6 +777,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["resourceId", "metadata"],
     },
@@ -781,6 +812,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["resourceId", "price"],
     },
@@ -814,6 +846,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["resourceId", "newCreator"],
     },
@@ -848,6 +881,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["resourceId", "listed"],
     },
@@ -972,6 +1006,80 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: {
       title: "Recover Catalog Cache",
       readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    // Advertised by the ListTools handler in index.ts long before it was
+    // defined here, so the generated tool reference never listed it (#596).
+    name: "mindvault_publish_status",
+    description:
+      "Poll a published resource's verification and on-chain sync status. Returns verificationStatus (pending, verified, rejected, skipped), listed, onchainStatus, onchainTxHash, and optional verification details. Pass wait: true to poll until verification settles or timeoutMs elapses. Deterministic errors for missing resourceId and 404s.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description:
+            "The resource ID from mindvault_publish (or browse/search). Example: 'cm7x8y9z'",
+          examples: ["cm7x8y9z", "res-001", "swcn98besxpp6t1u8e77fqz3"],
+        },
+        wait: {
+          type: "boolean",
+          description:
+            "When true, poll until verificationStatus is verified, rejected, or skipped (or until timeoutMs). Default false (single fetch).",
+        },
+        timeoutMs: {
+          type: "number",
+          description:
+            "Max wait time in milliseconds when wait is true (default 60000, max 300000).",
+          examples: [30000, 60000, 120000],
+        },
+        intervalMs: {
+          type: "number",
+          description:
+            "Delay between polls in milliseconds when wait is true (default 2000, min 200).",
+          examples: [1000, 2000, 5000],
+        },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: PUBLISH_STATUS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Publish Status",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    // As with mindvault_publish_status: advertised from index.ts only, so it
+    // was invisible to the generated docs and the schema snapshots (#596).
+    name: "mindvault_purchase_history",
+    description:
+      "List locally persisted purchase receipts from successful mindvault_buy calls (~/.mindvault/purchases.json). Read-only. Optional filters: resourceId and network (exact match, e.g. stellar:testnet). Returns count + purchases (newest first), or an empty list when nothing matches.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description: "Optional. Only return receipts for this resource id. Example: 'cm7x8y9z'",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+        network: {
+          type: "string",
+          description:
+            "Optional. Only return receipts recorded on this x402 network id. Example: 'stellar:testnet'",
+          examples: ["stellar:testnet", "stellar:pubnet"],
+        },
+      },
+      required: [],
+    },
+    outputSchema: PURCHASE_HISTORY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Purchase History",
+      readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
     },

@@ -45,8 +45,16 @@ export const correlationStorage = new AsyncLocalStorage<string>();
  *
  * Format: `mv-<time>-<random>`, both base36. The time component sorts
  * chronologically as a string, so IDs from one session group naturally when a
- * log is sorted; the random component makes a collision within the same
- * millisecond effectively impossible.
+ * log is sorted; the four-digit random component distinguishes calls that
+ * share a millisecond.
+ *
+ * That suffix spans 36**4 = 1,679,616 values, which is sized for real tool
+ * calls — each does network I/O, so a handful per millisecond is already an
+ * extreme burst and the collision odds there are far below one in a million.
+ * It is not sized for a synthetic loop: 500 IDs minted in a single millisecond
+ * collide about 7% of the time. Widening it is possible, but a uniqueness
+ * counter is not — `newCorrelationId` is deterministic in (clock, random) on
+ * purpose, so that tests can pin exact IDs.
  *
  * Short on purpose — it is meant to be read aloud, pasted into an issue, and
  * typed into a `grep`.

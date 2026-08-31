@@ -32,25 +32,15 @@ import { wrapFetchWithPayment, x402Client } from "@x402/fetch";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { Mutex } from "./mutex.js";
 import { cacheStalenessNotice } from "./cacheStaleness.js";
-import {
-  catalogCacheLabel,
-  getCatalogSnapshot,
-  getPreviewSnapshot,
-  recordCatalogSnapshot,
-  recordPreviewSnapshot,
-} from "./catalogCache.js";
-import {
-  collectStartupDiagnostics,
-  formatDiagnostics,
-  hasBlockingDiagnostics,
-} from "./diagnostics.js";
+import { buildConfig, resolveConfig } from "./config.js";
 import {
   assertMainnetMutationAllowed,
   formatMainnetDiagnostics,
   mainnetAllowedFromEnv,
 } from "./mainnetGuardrails.js";
+import { assertPaidOperationConfirmed } from "./paidOperations.js";
+import { assertToolAllowedInReadOnlyMode } from "./readOnlyMode.js";
 import {
   createMetricsRecorder,
   measureTool,
@@ -69,10 +59,9 @@ import {
 } from "./mock.js";
 import { purchaseHistoryTool, recordPurchase } from "./purchaseHistory.js";
 import { Mutex } from "./mutex.js";
-import { EXTRA_OUTPUT_SCHEMAS } from "./outputSchemas.js";
 import { exportReceiptsTool } from "./receipts.js";
 import { normalizeToolResult, outcomeText, type ToolOutcome } from "./toolResult.js";
-import { TOOL_DEFINITIONS, type ToolDefinition } from "./tools.js";
+import { advertisedTools, hasOutputSchema } from "./toolSurface.js";
 import { dryRunPublish, dryRunBuy } from "./dryRun.js";
 import { initAuditLogging } from "./auditLog.js";
 import { REGISTRY_LIST_DEFAULT_LIMIT, REGISTRY_LIST_DEFAULT_START } from "./registryPagination.js";
@@ -82,6 +71,7 @@ import {
   optionalString,
   requiredString,
   TOOL_ARGUMENT_SPECS,
+  TOOLS_WITHOUT_ARG_VALIDATION,
   UnknownToolError,
   validateToolArgs,
   type ValidatedArgs,
@@ -106,7 +96,6 @@ import {
 } from "./publishStatus.js";
 import { type ApiResponse } from "./apiResponse.js";
 import { safeErrorMessage, safeLog } from "./redaction.js";
-import { safeErrorMessage } from "./redaction.js";
 import { assertAutoPaymentWithinCeiling } from "./paymentCeiling.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
@@ -159,7 +148,6 @@ import {
   applyCatalogSort,
   applyClientCatalogFilters,
   buildCatalogQueryString,
-  catalogFilterInputProperties,
   describeCatalogFilters,
   parseCatalogFilters,
   type CatalogFilters,
@@ -1159,46 +1147,37 @@ function listProfilesOutcome(): ToolOutcome {
   return { text: [`Profiles (* = active):`, ...lines].join("\n"), structured };
 }
 
-interface CatalogLoad {
-  items: any[];
-  /** Notice appended to the output. Fresh reads use the server cache headers; offline reads use the snapshot-age label. */
-  notice: string | null;
-  /** True when the catalog was served from the offline snapshot rather than the live API. */
-  fromCache: boolean;
+export function listProfiles(): string {
+  return outcomeText(listProfilesOutcome());
 }
 
-/**
- * Fetch the catalog resource array, recording a snapshot on success and falling
- * back to the last snapshot on transport failure (#556). A reachable-but-error
- * response is surfaced verbatim — the cache is only for the unreachable case.
- */
-async function loadCatalog(url: string, operation: string): Promise<CatalogLoad> {
-  let res;
-  try {
-    res = await jsonFetch(url);
-  } catch (err) {
-    const snapshot = getCatalogSnapshot();
-    // No cached snapshot — surface the original deterministic error from jsonFetch.
-    if (!snapshot) throw err;
-    return {
-      items: Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [],
-      notice: catalogCacheLabel(snapshot.savedAtMs),
-      fromCache: true,
-    };
-  }
-  if (!res.ok) {
-    throw mcpError(mapHttpError({ operation, source: "api", status: res.status, data: res.data }));
-  }
-  const items = Array.isArray(res.data) ? res.data : [];
-  recordCatalogSnapshot(items);
-  return { items, notice: cacheStalenessNotice(res.headers), fromCache: false };
-}
-
-export async function browse(filters: CatalogFilters = {}): Promise<string> {
+async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome> {
   const qs = buildCatalogQueryString(filters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
-  const { items: raw, notice } = await loadCatalog(url, "Browse failed");
-  const items = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
+  let raw: any[] = [];
+  let notice: string | null = null;
+  try {
+    const res = await jsonFetch(url);
+    if (!res.ok) {
+      throw mcpError(
+        mapHttpError({
+          operation: "Browse failed",
+          source: "api",
+          status: res.status,
+          data: res.data,
+        }),
+      );
+    }
+    raw = Array.isArray(res.data) ? res.data : [];
+    recordCatalogSnapshot(raw);
+    notice = cacheStalenessNotice(res.headers);
+  } catch (err) {
+    const snapshot = getCatalogSnapshot();
+    if (!snapshot) throw err;
+    raw = Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [];
+    notice = catalogCacheLabel(snapshot.savedAtMs);
+  }
+  const items: any[] = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
   const body =
     items.length === 0
       ? filters.query ||
@@ -1212,10 +1191,7 @@ export async function browse(filters: CatalogFilters = {}): Promise<string> {
         ? `No resources match ${describeCatalogFilters(filters)}.`
         : "No resources listed yet."
       : items.map(formatResource).join("\n\n");
-  // Warn when the catalog may be stale relative to the on-chain registry, based
-  // on the server's cache headers. Silent when there is no cache metadata.
-  const full = notice ? `${body}\n\n${notice}` : body;
-  return truncateResponse(full);
+  return catalogOutcome(items, body, notice);
 }
 
 export async function browse(filters: CatalogFilters = {}): Promise<string> {
@@ -1245,19 +1221,50 @@ async function searchOutcome(filtersOrQuery: string | CatalogFilters): Promise<T
 
   const qs = buildCatalogQueryString(filters);
   const url = qs ? `${BASE_URL}/resources?${qs}` : `${BASE_URL}/resources`;
-  const { items: raw, notice, fromCache } = await loadCatalog(url, "Search failed");
+  let raw: any[] = [];
+  let notice: string | null = null;
+  try {
+    const res = await jsonFetch(url);
+    if (!res.ok) {
+      throw mcpError(
+        mapHttpError({
+          operation: "Search failed",
+          source: "api",
+          status: res.status,
+          data: res.data,
+        }),
+      );
+    }
+    raw = Array.isArray(res.data) ? res.data : [];
+    recordCatalogSnapshot(raw);
+    notice = cacheStalenessNotice(res.headers);
+  } catch (err) {
+    const snapshot = getCatalogSnapshot();
+    if (!snapshot) throw err;
+    raw = Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [];
+    notice = catalogCacheLabel(snapshot.savedAtMs);
+  }
+
   // Client-side keyword / tags / listed / skipped for unit-test compatibility
   // and parity with fields the public catalog schema does not accept.
   const items = applyCatalogSort(applyClientCatalogFilters(raw, filters), filters.sort);
 
-  if (items.length === 0) return `No resources match ${describeCatalogFilters(filters)}.`;
-  const body = items.map(formatResource).join("\n\n");
-  // Search never appended a server cache-staleness notice; only the explicit
-  // offline-snapshot label is added here, so fresh-search output is unchanged.
-  const full = fromCache && notice ? `${body}\n\n${notice}` : body;
-  return truncateResponse(full);
+  if (items.length === 0) {
+    return catalogOutcome([], `No resources match ${describeCatalogFilters(filters)}.`, notice);
+  }
+  return catalogOutcome(items, items.map(formatResource).join("\n\n"), notice);
 }
 
+export async function search(filtersOrQuery: string | CatalogFilters): Promise<string> {
+  return outcomeText(await searchOutcome(filtersOrQuery));
+}
+
+/**
+ * Fetch one resource's public metadata, recording a snapshot on success and
+ * falling back to the last snapshot on transport failure (#556). A
+ * reachable-but-error response is surfaced verbatim — the cache only covers the
+ * unreachable case.
+ */
 async function previewData(resourceId: string): Promise<{ r: any; label: string | null }> {
   try {
     const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
@@ -1280,7 +1287,9 @@ async function previewData(resourceId: string): Promise<{ r: any; label: string 
 
 export async function preview(resourceId: string): Promise<string> {
   const { r, label } = await previewData(resourceId);
-  const out: Record<string, unknown> = {
+  // Publisher-supplied title/description are unbounded at the source, so cap
+  // them before serializing rather than truncating the JSON afterwards (#582).
+  const out: Record<string, unknown> = applyPreviewLimits({
     id: r.id,
     title: r.title,
     description: r.description,
@@ -1288,9 +1297,9 @@ export async function preview(resourceId: string): Promise<string> {
     type: r.resourceType,
     verificationStatus: r.verificationStatus,
     accessUrl: r.accessUrl,
-  };
+  });
   if (label) out.offlineCache = label;
-  return JSON.stringify(out, null, 2);
+  return serializePreview(out);
 }
 
 async function fetchPublishStatusData(resourceId: string): Promise<PublishStatusFetch> {
@@ -2455,9 +2464,7 @@ export function networkProfile(): string {
 
 /**
  * Verify the installed registry-client bindings match the deployed contract's
- * interface. Returns the check's deterministic, agent-safe message (a match
- * summary, a mismatch warning with a recommended fix, or a "could not verify"
- * note when the contract/RPC is unreachable).
+ * interface. Returns the check's deterministic, agent-safe message.
  */
 async function checkBindings(): Promise<string> {
   if (_isMock()) return "Mock mode: contract binding check skipped (no live RPC).";
@@ -2468,29 +2475,6 @@ async function checkBindings(): Promise<string> {
     network: STELLAR_NETWORK,
   });
   return result.message;
-}
-
-/**
- * Return opt-in tool-level metrics as JSON. Only counts, durations, and tool
- * names are included — never arguments, wallets, or API keys. When metrics are
- * disabled, returns an actionable note instead of counters. Pass reset=true to
- * clear counters after reading.
- */
-function toolMetrics(reset: boolean): string {
-  const snapshot = metrics.snapshot();
-  if (reset) metrics.reset();
-  if (!snapshot.enabled) {
-    return JSON.stringify(
-      {
-        enabled: false,
-        message:
-          "Metrics are disabled. Set MINDVAULT_METRICS=1 (or true/yes/on) and restart the server to collect tool-level metrics.",
-      },
-      null,
-      2,
-    );
-  }
-  return JSON.stringify(snapshot, null, 2);
 }
 
 /**
@@ -2514,13 +2498,10 @@ function toolMetrics(reset: boolean): string {
   return JSON.stringify(snapshot, null, 2);
 }
 
-const TOOLS_WITHOUT_ARG_VALIDATION = new Set([
-  "mindvault_publish_status",
-  "mindvault_purchase_history",
-]);
+const SELF_VALIDATING_TOOLS = new Set(TOOLS_WITHOUT_ARG_VALIDATION);
 
 function isDispatchableTool(name: string): boolean {
-  return name in TOOL_ARGUMENT_SPECS || TOOLS_WITHOUT_ARG_VALIDATION.has(name);
+  return name in TOOL_ARGUMENT_SPECS || SELF_VALIDATING_TOOLS.has(name);
 }
 
 const STATE_MUTATING_TOOLS = new Set([
@@ -2553,6 +2534,12 @@ async function dispatchToolOutcome(
     throw new UnknownToolError(name);
   }
 
+  // Read-only mode is checked before argument validation (#593): when the
+  // server cannot run this tool at all, a malformed-arguments error would be
+  // a misleading thing to report, and the refusal does not depend on the
+  // arguments being well-formed.
+  assertToolAllowedInReadOnlyMode(name, process.env);
+
   const rawRecord =
     typeof rawArgs === "object" && rawArgs !== null && !Array.isArray(rawArgs)
       ? (rawArgs as Record<string, unknown>)
@@ -2567,11 +2554,22 @@ async function dispatchToolOutcome(
 
   assertMainnetMutationAllowed(NETWORK, name, rawRecord);
 
+  // Network-independent spend confirmation (#594). Distinct from the mainnet
+  // guardrail above (which only fires on pubnet) and from the auto-pay ceiling
+  // in buy() (which only fires above an amount); a call may have to satisfy
+  // all three. Off unless MINDVAULT_CONFIRM_PAID_OPERATIONS says otherwise.
+  assertPaidOperationConfirmed({
+    toolName: name,
+    args: rawRecord,
+    dryRun: isDryRunCall,
+    env: process.env,
+  });
+
   if (API_MUTATION_TOOLS.has(name) && !isDryRunCall) {
     await assertApiReachableFor(name);
   }
 
-  const execute = async (): Promise<string> => {
+  const execute = async (): Promise<ToolOutcome> => {
     switch (name) {
       case "mindvault_setup_wallet":
         return setupWallet(optionalString(args, "profile"));
@@ -2698,55 +2696,6 @@ export async function dispatchTool(
   return outcomeText(await dispatchToolOutcome(name, rawArgs, onProgress));
 }
 
-function toolDefinition(name: string): ToolDefinition {
-  const definition = TOOL_DEFINITIONS.find((tool) => tool.name === name);
-  if (!definition) throw new Error(`No tool definition for ${name} in TOOL_DEFINITIONS.`);
-  return definition;
-}
-
-const EXTRA_TOOL_ANNOTATIONS: Record<
-  string,
-  { title: string; readOnlyHint: boolean; destructiveHint: boolean; idempotentHint: boolean }
-> = {
-  mindvault_publish_status: {
-    title: "Publish Status",
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-  },
-  mindvault_purchase_history: {
-    title: "Purchase History",
-    readOnlyHint: true,
-    destructiveHint: false,
-    idempotentHint: true,
-  },
-};
-
-function toolAnnotations(name: string): {
-  title: string;
-  readOnlyHint: boolean;
-  destructiveHint: boolean;
-  idempotentHint: boolean;
-} {
-  if (name in EXTRA_TOOL_ANNOTATIONS) return EXTRA_TOOL_ANNOTATIONS[name];
-  const { annotations } = toolDefinition(name);
-  return {
-    title: annotations.title,
-    readOnlyHint: annotations.readOnlyHint,
-    destructiveHint: annotations.destructiveHint,
-    idempotentHint: annotations.idempotentHint,
-  };
-}
-
-function outputSchemaFor(name: string): Record<string, unknown> | undefined {
-  if (name in EXTRA_OUTPUT_SCHEMAS) return EXTRA_OUTPUT_SCHEMAS[name];
-  return TOOL_DEFINITIONS.find((tool) => tool.name === name)?.outputSchema;
-}
-
-function hasOutputSchema(name: string): boolean {
-  return outputSchemaFor(name) !== undefined;
-}
-
 /** Test helper: wrap a handler outcome the same way CallTool does. */
 export function normalizeToolResultForTest(name: string, outcome: ToolOutcome) {
   return normalizeToolResult(name, outcome, hasOutputSchema);
@@ -2771,502 +2720,16 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => ({
   contents: [await readCatalogResource(request.params.uri)],
 }));
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const advertisedTools = [
-    {
-      name: "mindvault_setup_wallet",
-      description:
-        "Create a Stellar wallet using the sponsored account protocol. Optionally pass a profile name to create the wallet under a named profile (e.g. testnet, mainnet, publisher, buyer) and make it active; defaults to the active profile. The wallet (public key + secret key) is persisted to ~/.mindvault/state.json (mode 0600) and reloaded automatically on restart.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          profile: {
-            type: "string",
-            description:
-              "Optional profile name to create/switch to. Use letters, digits, dot, dash, or underscore (1–64 chars). Examples: 'testnet', 'mainnet-publisher', 'buyer.alice'",
-            examples: ["testnet", "mainnet-publisher", "buyer.alice"],
-          },
-          confirmMainnet: {
-            type: "boolean",
-            description:
-              "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
-          },
-        },
-        required: [],
-      },
-    },
-    {
-      name: "mindvault_wallet_info",
-      description:
-        "Check the active profile name, its agent wallet address, USDC balance, and whether it is registered as a publisher.",
-      inputSchema: { type: "object", properties: {}, required: [] },
-    },
-    {
-      name: "mindvault_use_profile",
-      description:
-        "Switch the active wallet profile, creating it if it does not exist. Profiles let one agent keep separate identities (e.g. testnet vs mainnet, publisher vs buyer); each has its own wallet and publisher API key. Subsequent tools operate on the active profile.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          name: {
-            type: "string",
-            description:
-              "Profile name to make active. Use letters, digits, dot, dash, or underscore (1–64 chars). Examples: 'mainnet', 'testnet-buyer', 'publisher.bob'",
-            examples: ["mainnet", "testnet-buyer", "publisher.bob"],
-          },
-        },
-        required: ["name"],
-      },
-    },
-    {
-      name: "mindvault_list_profiles",
-      description:
-        "List all named wallet profiles, marking the active one and showing each profile's wallet address and whether it is registered as a publisher. Secret keys are never shown.",
-      inputSchema: { type: "object", properties: {}, required: [] },
-    },
-    {
-      name: "mindvault_browse",
-      description:
-        "List resources in the MindVault catalog with the same optional filters as mindvault_search and GET /resources: keyword, price range, verification status, resource type, owner, sort, pagination, tags, and listed state.",
-      inputSchema: {
-        type: "object",
-        properties: { ...catalogFilterInputProperties },
-        required: [],
-      },
-    },
-    {
-      name: "mindvault_search",
-      description:
-        "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries.",
-      inputSchema: {
-        type: "object",
-        properties: { ...catalogFilterInputProperties },
-        required: [],
-      },
-    },
-    {
-      name: "mindvault_preview",
-      description:
-        "Get details and price for a specific resource before purchasing. Returns title, description, price, type, verification status, and access URL.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          resourceId: {
-            type: "string",
-            description:
-              "The unique resource identifier from mindvault_browse or mindvault_search. Example: 'cm7x8y9z'",
-            examples: ["cm7x8y9z", "res-001", "ckx9j2h3f"],
-          },
-        },
-        required: ["resourceId"],
-      },
-    },
-    {
-      name: "mindvault_register",
-      description:
-        "Register as a publisher using the agent wallet. The API key is persisted to ~/.mindvault/state.json (mode 0600, key not shown in output) and reloaded on restart so mindvault_publish works across sessions.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          email: { type: "string" },
-          walletAddress: { type: "string" },
-          confirmMainnet: {
-            type: "boolean",
-            description:
-              "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
-          },
-        },
-        required: ["name", "email"],
-      },
-    },
-    {
-      name: "mindvault_publish",
-      description:
-        "Publish a link resource to the MindVault catalog. The resource undergoes AI verification (agent wallet pays ~$0.10 USDC via x402) and is automatically registered on-chain if verified. Returns resource ID, access URL, verification result, and on-chain registration status.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          title: { type: "string" },
-          description: { type: "string" },
-          price: { type: "string" },
-          externalUrl: { type: "string" },
-          confirmMainnet: {
-            type: "boolean",
-            description:
-              "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
-          },
-        },
-        required: ["title", "price", "externalUrl"],
-      },
-    },
-    {
-      name: "mindvault_publish_status",
-      description:
-        "Poll a published resource's verification and on-chain sync status. Returns verificationStatus (pending, verified, rejected, skipped), listed, onchainStatus, onchainTxHash, and optional verification details. Pass wait: true to poll until verification settles or timeoutMs elapses. Deterministic errors for missing resourceId and 404s.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          resourceId: {
-            type: "string",
-            description:
-              "The resource ID from mindvault_publish (or browse/search). Example: 'cm7x8y9z'",
-            examples: ["cm7x8y9z", "res-001", "swcn98besxpp6t1u8e77fqz3"],
-          },
-          wait: {
-            type: "boolean",
-            description:
-              "When true, poll until verificationStatus is verified, rejected, or skipped (or until timeoutMs). Default false (single fetch).",
-          },
-          timeoutMs: {
-            type: "number",
-            description:
-              "Max wait time in milliseconds when wait is true (default 60000, max 300000).",
-            examples: [30000, 60000, 120000],
-          },
-          intervalMs: {
-            type: "number",
-            description:
-              "Delay between polls in milliseconds when wait is true (default 2000, min 200).",
-            examples: [1000, 2000, 5000],
-          },
-        },
-        required: ["resourceId"],
-      },
-    },
-    {
-      name: "mindvault_buy",
-      description:
-        "Pay USDC via x402 and access a resource. On mainnet, pass confirmMainnet: true (or set MINDVAULT_ALLOW_MAINNET=1).",
-      inputSchema: {
-        type: "object",
-        properties: {
-          resourceId: { type: "string" },
-          confirmMainnet: {
-            type: "boolean",
-            description:
-              "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
-          },
-        },
-        required: ["resourceId"],
-      },
-    },
-    {
-      name: "mindvault_purchase_history",
-      description:
-        "List locally persisted purchase receipts from successful mindvault_buy calls (~/.mindvault/purchases.json). Read-only. Optional filters: resourceId and network (exact match, e.g. stellar:testnet). Returns count + purchases (newest first), or an empty list when nothing matches.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          resourceId: {
-            type: "string",
-            description: "Optional. Only return receipts for this resource id. Example: 'cm7x8y9z'",
-            examples: ["cm7x8y9z", "res-001"],
-          },
-          network: {
-            type: "string",
-            description:
-              "Optional. Only return receipts recorded on this x402 network id. Example: 'stellar:testnet'",
-            examples: ["stellar:testnet", "stellar:pubnet"],
-          },
-        },
-        required: [],
-      },
-    },
-    toolDefinition("mindvault_export_receipts"),
-    {
-      name: "mindvault_register_onchain",
-      description:
-        "Register an already-published, verified resource on the vault registry contract. Use this to retry on-chain registration after mindvault_publish reports the on-chain step failed. Prepares the unsigned transaction, signs it with the agent wallet (which must be the resource creator), submits it, and returns the registry status and on-chain tx hash.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          resourceId: {
-            type: "string",
-            description:
-              "The resource ID to register on-chain (from mindvault_publish output). Must be verified and not already registered. Example: 'cm7x8y9z'",
-            examples: ["cm7x8y9z", "res-001", "ckx9j2h3f"],
-          },
-          confirmMainnet: {
-            type: "boolean",
-            description:
-              "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
-          },
-        },
-        required: ["resourceId"],
-      },
-    },
-    {
-      name: "mindvault_agent_status",
-      description:
-        "Check the verification agent's earnings and activity. Returns total verifications, pass/fail counts, total USDC earned, average confidence score, and recent verification history with resource titles.",
-      inputSchema: { type: "object", properties: {}, required: [] },
-    },
-    {
-      name: "mindvault_registry_info",
-      description:
-        "Return the on-chain vault-registry contract ID, network passphrase, RPC URL, and the resource fields available for direct Soroban queries. Use this to verify ownership, price, and listing state directly from Stellar without trusting the MindVault API.",
-      inputSchema: { type: "object", properties: {}, required: [] },
-    },
-    {
-      name: "mindvault_network_profile",
-      description:
-        "Report current Stellar/x402 network configuration (testnet/mainnet), RPC URLs, registry contract ID, and warnings for custom overrides. Use this to verify which network the MCP is connected to and diagnose configuration issues.",
-      inputSchema: { type: "object", properties: {}, required: [] },
-    },
-    {
-      name: "mindvault_check_bindings",
-      description:
-        "Verify the installed registry-client bindings match the deployed vault-registry contract interface. Reports a match, or a warning listing the drifting methods with the contract ID, network, client version, and a recommended fix (redeploy the contract or regenerate bindings). Useful after a contract redeploy or client upgrade.",
-      inputSchema: { type: "object", properties: {}, required: [] },
-    },
-    {
-      name: "mindvault_check_consistency",
-      description:
-        "Compare a resource from the API catalog with the same resource in the vault-registry contract. Reports matching fields, mismatches, missing API records, and missing on-chain records. Useful for detecting synchronization issues between the API and on-chain registry.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          resourceId: {
-            type: "string",
-            description: "The resource ID to compare between API and on-chain registry.",
-          },
-          expectedMetadataHash: {
-            type: "string",
-            description:
-              "Optional. The canonical SHA-256 digest (sha256:<hex>) of the off-chain content the agent expects to be anchored on-chain. When supplied, it is compared against the contentHash in the on-chain metadata pointer.",
-            examples: ["sha256:1f09d48cb617cd04c123454e2b1b6d51acd66378f2c4b79d5ac09e9d3b123456"],
-          },
-        },
-        required: ["resourceId"],
-      },
-    },
-    {
-      name: "mindvault_registry_lookup",
-      description:
-        "Look up a resource directly from the on-chain vault registry by its ID. Returns creator wallet address, price (USDC), metadata (title/description), listed state, tags, contract ID, and network. Data comes from Stellar/Soroban, not the MindVault API. Returns an actionable message when the resource is not registered on-chain.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          resourceId: {
-            type: "string",
-            description:
-              "The resource ID to look up on-chain. Must be a registered resource. Example: 'cm7x8y9z'",
-            examples: ["cm7x8y9z", "res-001", "ckx9j2h3f"],
-          },
-        },
-        required: ["resourceId"],
-      },
-    },
-    {
-      name: "mindvault_registry_list",
-      description:
-        "List resources registered in the on-chain vault-registry contract with pagination (Soroban list). Returns compact summaries directly from Stellar, not the MindVault API catalog. Use start/limit to page through insertion order; limit is capped at 20 to match the contract. Empty pages return a clear message and next-step hint.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          start: {
-            type: "integer",
-            minimum: 0,
-            description:
-              "0-based index into the on-chain registry (default 0). Example: 0 for the first page, 20 for the second page when limit is 20.",
-            examples: [0, 20],
-          },
-          limit: {
-            type: "integer",
-            minimum: 1,
-            maximum: 20,
-            description:
-              "Page size (1–20, default 20). The contract silently caps higher values at 20.",
-            examples: [20, 10],
-          },
-        },
-        required: [],
-      },
-    },
-    {
-      name: "mindvault_tx_status",
-      description:
-        "Look up the status of a Stellar transaction by hash via Soroban RPC. Returns SUCCESS, FAILED, or NOT_FOUND along with ledger number, close time, application order, and XDR envelopes. Useful for debugging on-chain registration failures.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          txHash: {
-            type: "string",
-            description:
-              "The 64-character hex transaction hash from Stellar. Example: 'abc123def456...' (from mindvault_register_onchain or mindvault_publish output).",
-            examples: [
-              "abc123def456789012345678901234567890123456789012345678901234",
-              "f47ac10b58cc4372a5670e02b2c3d479c3e5d0a1b2c3d4e5f6a7b8c9d0e1f2a3",
-            ],
-          },
-        },
-        required: ["txHash"],
-      },
-    },
-    {
-      name: "mindvault_reset",
-      description:
-        "Clear credentials from memory and disk (~/.mindvault/state.json). Destructive and irreversible, so it is two-step: without confirm=true the call changes nothing and returns a warning listing exactly what would be removed; call again with confirm=true to perform it. By default only the active profile is cleared; pass all=true to remove every profile and delete the state file. After a confirmed reset, run mindvault_setup_wallet and mindvault_register again.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          confirm: {
-            type: "boolean",
-            description:
-              "Required to actually clear anything. Omitted or false returns a warning describing what would be removed and performs no deletion. Example: true clears the credentials.",
-            examples: [true, false],
-          },
-          all: {
-            type: "boolean",
-            description:
-              "Clear every profile and delete the state file (default: false clears active profile only). Example: true removes all profiles.",
-            examples: [true, false],
-          },
-          confirmMainnet: {
-            type: "boolean",
-            description:
-              "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
-          },
-        },
-        required: [],
-      },
-    },
-    {
-      name: "mindvault_backup_state",
-      description:
-        "Export an encrypted backup of ~/.mindvault/state.json for moving agent environments. Requires a passphrase (min 8 chars). Output is a self-contained ciphertext blob — wallet secret keys and API keys never appear in plaintext. Restore with mindvault_restore_state using the same passphrase. Does not change reset behavior.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          passphrase: {
-            type: "string",
-            description:
-              "Passphrase used to encrypt the backup (min 8 characters). Keep it offline.",
-          },
-        },
-        required: ["passphrase"],
-      },
-    },
-    {
-      name: "mindvault_restore_state",
-      description:
-        "Restore ~/.mindvault/state.json from an encrypted backup produced by mindvault_backup_state. Validates integrity (wrong passphrase or tampered data fails before any write). Replaces in-memory profiles and re-persists to disk (mode 0600). Existing reset behavior is unchanged.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          blob: {
-            type: "string",
-            description: "Encrypted backup blob from mindvault_backup_state (v1:… format).",
-          },
-          passphrase: {
-            type: "string",
-            description: "Passphrase used when the backup was created (min 8 characters).",
-          },
-        },
-        required: ["blob", "passphrase"],
-      },
-    },
-    {
-      name: "mindvault_metrics",
-      description:
-        "Return opt-in tool-level metrics: per-tool call/error counts and durations, plus payment attempt/failure totals. Enable by setting MINDVAULT_METRICS=1 on the server. Output contains only tool names, counts, and durations — never arguments, wallets, or API keys. Pass reset=true to clear counters after reading.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          reset: {
-            type: "boolean",
-            description:
-              "Clear all counters after returning the current snapshot (default: false leaves counters intact). Example: true resets metrics after reading.",
-            examples: [true, false],
-          },
-        },
-        required: [],
-      },
-    },
-    {
-      name: "mindvault_check_state_permissions",
-      description:
-        "Verify the state file (~/.mindvault/state.json) has safe permissions (mode 0600). Warns when the file is world-readable or group-readable, which would expose wallet secret keys and API keys to other system users. Safe by default; run after any manual file operations or environment migration.",
-      inputSchema: { type: "object", properties: {}, required: [] },
-    },
-    {
-      name: "mindvault_registry_health",
-      description:
-        "Check the health of every dependency the MCP server relies on: MindVault API, Horizon, Soroban RPC, vault-registry contract, and x402 network alignment. Returns per-dependency status (ok/error) with actionable failure messages. Does not leak secrets or environment variables.",
-      inputSchema: { type: "object", properties: {}, required: [] },
-    },
-    {
-      name: "mindvault_import_wallet",
-      description:
-        "Import an existing Stellar wallet by providing a secret key (or reading MINDVAULT_AGENT_SECRET from the environment). Validates the key, optionally persists it to the active profile (or a named profile), and never logs the secret. Use this to restore a wallet from backup or connect to an existing identity.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          secretKey: {
-            type: "string",
-            description:
-              "Stellar secret key (S… , 56 chars) to import. If omitted, reads from MINDVAULT_AGENT_SECRET env var.",
-            examples: ["SCHZPJ..."],
-          },
-          profile: {
-            type: "string",
-            description: "Optional profile name to import into. Defaults to the active profile.",
-            examples: ["testnet", "mainnet-publisher"],
-          },
-          persist: {
-            type: "boolean",
-            description:
-              "When true (default), save the imported wallet to the state file. When false, validate only and return the public key without writing to disk.",
-            examples: [true, false],
-          },
-          confirmMainnet: {
-            type: "boolean",
-            description:
-              "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
-          },
-        },
-        required: [],
-      },
-    },
-    {
-      name: "mindvault_rotate_publisher_key",
-      description:
-        "Rotate the publisher API key for the active profile. Calls the MindVault server rotation endpoint (POST /publishers/rotate-key), stores the new key in the state file, and returns the updated publisher ID. The old key is invalidated server-side. Requires an existing registration (mindvault_register).",
-      inputSchema: {
-        type: "object",
-        properties: {
-          profile: {
-            type: "string",
-            description:
-              "Optional profile name to rotate the key for. Defaults to the active profile.",
-            examples: ["testnet", "mainnet-publisher"],
-          },
-          confirmMainnet: {
-            type: "boolean",
-            description:
-              "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
-          },
-        },
-        required: [],
-      },
-    },
-    {
-      name: "mindvault_verify_install",
-      description:
-        "Verify the MindVault MCP server is installed and configured correctly. Checks Node.js version (>=20), network settings, URL variables, vault-registry contract ID, and warns about plaintext secrets in the environment. No network calls are made — all checks are local. Run this first when setting up a new agent or diagnosing a configuration problem.",
-      inputSchema: { type: "object", properties: {}, required: [] },
-    },
-  ];
-
-  return {
-    tools: advertisedTools.map((tool) => ({
-      ...tool,
-      annotations: toolAnnotations(tool.name),
-      ...(outputSchemaFor(tool.name) ? { outputSchema: outputSchemaFor(tool.name) } : {}),
-    })),
-  };
-});
+// ListTools is derived from TOOL_DEFINITIONS rather than restated here (#596).
+// The handler used to carry its own copy of the whole list, which had drifted
+// from tools.ts in both directions — six implemented tools were undiscoverable,
+// two advertised tools were missing from the generated docs, and several
+// schemas had lost their field descriptions and optional arguments.
+// `listToolsContract.test.ts` checks this response against the definitions, the
+// argument validator, and the dispatch switch on every run.
+server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: advertisedTools(process.env),
+}));
 
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const { name, arguments: args = {} } = request.params;
@@ -3276,12 +2739,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       ? createProgressEmitter({ token: progressToken, send: extra.sendNotification })
       : undefined;
   try {
-    const result = await measureTool(metrics, name, () => dispatchTool(name, args, onProgress));
-    const structured = structuredResult(name, result);
-    return {
-      content: [{ type: "text", text: result }],
-      ...(structured ? { structuredContent: structured } : {}),
-    };
+    const result = await measureTool(metrics, name, () =>
+      dispatchToolOutcome(name, args, onProgress),
+    );
+    return normalizeToolResult(name, result, hasOutputSchema);
   } catch (err: any) {
     const mapped = mappedErrorOf(err);
     return {
