@@ -29,6 +29,24 @@ When the on-chain settlement succeeds but the receipt write fails:
 - clients should treat the missing receipt as a recoverable condition and may
   retry the receipt write.
 
+## Metrics
+
+The metrics tool reports payment attempts and settlement outcomes as separate
+counters so that a publish which pays and then fails settlement is not
+double-counted.
+
+- **Payment attempts** count each distinct payment made for a publish. A retry
+  that reuses the same payment does not increment this counter again.
+- **Settlement outcomes** count the terminal result of a publish: `settled` or
+  `failed`. A publish that pays but fails settlement increments the failure
+  counter only; it is not also counted as a payment.
+
+This preserves the documented guarantee that a failure is never counted as a
+payment: the payment-attempt counter reflects money actually moved, while the
+settlement counter reflects the publish outcome. A failed settlement after a
+successful payment therefore appears once as a payment attempt and once as a
+failure, never as two payments or as a payment plus a duplicate failure.
+
 ## Smoke tests
 
 The smoke and install-smoke tests must not bind to a fixed mock catalog id.
