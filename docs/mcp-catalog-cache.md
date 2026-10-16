@@ -119,3 +119,7 @@ request against data that could never reflect it.
   configuration parsing, the TTL/max-age interaction, expiry and eviction
 - [`mcp/src/index.test.ts`](../mcp/src/index.test.ts) — which failures serve the
   snapshot and which surface (`offline catalog cache fallback`)
+
+## Concurrent misses (#1040)
+
+Concurrent catalog requests for the same URL and preview requests for the same resource ID share an in-flight upstream fetch. Different keys proceed independently. The shared promise is discarded on both success and failure, so this is request coalescing rather than a persistent response cache. The existing offline snapshot and retry rules remain unchanged.
