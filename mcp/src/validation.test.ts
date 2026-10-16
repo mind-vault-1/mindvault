@@ -82,6 +82,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_tx_status: { txHash: VALID_SHA256 },
   mindvault_reset: {},
   mindvault_backup_state: { passphrase: "correct-horse" },
+  mindvault_compare_state_backup: { blob: "v1:abc", passphrase: "correct-horse" },
   mindvault_resource_provenance: { resourceId: "res-001" },
   mindvault_resource_change_log: { resourceId: "res-001" },
   mindvault_restore_state: { blob: "v1:abc", passphrase: "correct-horse" },

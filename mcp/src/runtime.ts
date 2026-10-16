@@ -17,6 +17,7 @@ import { createMockFetch, mockEnabledFromEnv } from "./mock.js";
 import { initAuditLogging } from "./auditLog.js";
 import { safeErrorMessage } from "./redaction.js";
 import { signMutatingHeaders } from "./requestSignature.js";
+import { readBoundedResponse, resolveMaxResponseBytes } from "./responseSize.js";
 import { type ResetScope } from "./resetGuard.js";
 import {
   DEFAULT_PROFILE,
@@ -290,7 +291,7 @@ async function jsonFetch(
   res.headers.forEach((value, key) => {
     responseHeaders[key.toLowerCase()] = value;
   });
-  const text = await res.text();
+  const text = await readBoundedResponse(res, resolveMaxResponseBytes());
   try {
     return { ok: res.ok, status: res.status, data: JSON.parse(text), headers: responseHeaders };
   } catch {

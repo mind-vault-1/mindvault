@@ -123,6 +123,7 @@ import {
   type ResourceSubscriptionSnapshot,
 } from "./resourceSubscriptionTool.js";
 import { type ApiResponse } from "./apiResponse.js";
+import { readBoundedResponse, resolveMaxResponseBytes } from "./responseSize.js";
 import { safeErrorMessage, safeLog } from "./redaction.js";
 import {
   assertAutoPaymentWithinCeiling,
@@ -140,6 +141,7 @@ import {
   exportStateFile,
   restoreState,
   checkStatePermissions,
+  compareStateWithBackup,
   preserveLegacyState,
   quarantineStateFile,
   writeAtomically,
@@ -316,7 +318,10 @@ function httpRetryOptions(label: string) {
 function sorobanRpcFetch(init: RequestInit, label: string): Promise<Response> {
   const initWithUA: RequestInit = {
     ...init,
-    headers: { "User-Agent": USER_AGENT, ...correlationHeaders(init.headers as Record<string, string> | undefined) },
+    headers: {
+      "User-Agent": USER_AGENT,
+      ...correlationHeaders(init.headers as Record<string, string> | undefined),
+    },
   };
   return withRetry(
     () => fetchWithTimeout(httpFetch, SOROBAN_RPC_URL, initWithUA, "soroban", TIMEOUTS.soroban),
@@ -390,6 +395,10 @@ export function restoreStateTool(blob: string, passphrase: string): string {
   return restoreState(blob, passphrase, applyRestoredState, {
     expectedNetwork: NETWORK,
   });
+}
+
+export function compareStateBackupTool(blob: string, passphrase: string): string {
+  return JSON.stringify(compareStateWithBackup(blob, passphrase), null, 2);
 }
 
 function quarantineCorruptState(reason: string, detail: string): void {
@@ -541,7 +550,10 @@ async function checkDependency(
 ): Promise<DependencyStatus> {
   const initWithUA: RequestInit = {
     ...init,
-    headers: { "User-Agent": USER_AGENT, ...correlationHeaders(init?.headers as Record<string, string> | undefined) },
+    headers: {
+      "User-Agent": USER_AGENT,
+      ...correlationHeaders(init?.headers as Record<string, string> | undefined),
+    },
   };
   try {
     const res = await withRetry(
@@ -838,7 +850,7 @@ async function jsonFetch(url: string, init?: RequestInit): Promise<ApiResponse<a
   res.headers.forEach((value, key) => {
     responseHeaders[key.toLowerCase()] = value;
   });
-  const text = await res.text();
+  const text = await readBoundedResponse(res, resolveMaxResponseBytes());
   try {
     return { ok: res.ok, status: res.status, data: JSON.parse(text), headers: responseHeaders };
   } catch {
@@ -2085,18 +2097,13 @@ async function publish(args: {
         const bal = await getBalanceDetails(wallet.publicKey);
         live.usdcBalance = bal.usdcBalance;
       } catch (err) {
-        live.readError = live.readError ? `${live.readError}; ${safeErrorMessage(err)}` : safeErrorMessage(err);
+        live.readError = live.readError
+          ? `${live.readError}; ${safeErrorMessage(err)}`
+          : safeErrorMessage(err);
       }
     }
     return JSON.stringify(
-      dryRunPublish(
-        args,
-        NETWORK,
-        BASE_URL,
-        !!wallet,
-        !!currentApiKey(),
-        live,
-      ),
+      dryRunPublish(args, NETWORK, BASE_URL, !!wallet, !!currentApiKey(), live),
       null,
       2,
     );
@@ -3828,9 +3835,7 @@ const stateMutex = new Mutex();
 
 async function dispatchToolOutcome(
   name: string,
-  args: ValidatedArgs,
-  dryRunArgs: ValidatedArgs,
-  rawRecord: Record<string, unknown>,
+  rawArgs: unknown,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
 ): Promise<ToolOutcome> {
   if (!isDispatchableTool(name)) {
@@ -4047,6 +4052,11 @@ async function dispatchToolOutcome(
         return resetState(flag(args, "all"), rawRecord.confirm);
       case "mindvault_backup_state":
         return backupState(requiredString(args, "passphrase"), rawRecord.confirm);
+      case "mindvault_compare_state_backup":
+        return compareStateBackupTool(
+          requiredString(args, "blob"),
+          requiredString(args, "passphrase"),
+        );
       case "mindvault_resource_provenance":
         return provenanceChain(requiredString(args, "resourceId"));
       case "mindvault_resource_change_log":

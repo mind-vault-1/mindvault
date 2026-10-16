@@ -31,6 +31,7 @@ import { DEFAULT_TOOL_DURATION_BUDGET_MS } from "./metrics.js";
 import { DEFAULT_COOLDOWN_MS, DEFAULT_MAX_ATTEMPTS } from "./rpcFailover.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_FILES } from "./auditLogRotation.js";
 import { DEFAULT_CATALOG_CACHE_CONFIG } from "./catalogCache.js";
+import { DEFAULT_MAX_RESPONSE_BYTES } from "./responseSize.js";
 
 /** One environment variable, as an operator reads it in a reference page. */
 export interface EnvVarDoc {
@@ -210,6 +211,12 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
       "Request deadline for the MindVault API and sponsored-account service. 0 disables.",
     default: `${DEFAULT_TIMEOUTS.http} (ms)`,
     source: "mcp/src/httpTimeout.ts",
+  },
+  {
+    name: "MINDVAULT_MAX_RESPONSE_BYTES",
+    description: "Maximum UTF-8 bytes accepted from an upstream API response.",
+    default: `${DEFAULT_MAX_RESPONSE_BYTES} (bytes)`,
+    source: "mcp/src/responseSize.ts",
   },
   {
     name: "MINDVAULT_HORIZON_TIMEOUT_MS",

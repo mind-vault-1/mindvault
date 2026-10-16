@@ -14,7 +14,7 @@
  * Reset behavior is intentionally untouched — this module only adds export/import.
  */
 
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "crypto";
 import {
   chmodSync,
   existsSync,
@@ -59,6 +59,66 @@ export interface RestoreStateOptions {
 export interface PersistedStateSecretMatch {
   path: string;
   kind: "wallet-secret-key" | "api-key";
+}
+
+export interface StateBackupComparison {
+  localVersion: number;
+  backupVersion: number;
+  integrityVerified: true;
+  digestMatches: boolean;
+  differences: string[];
+}
+
+export function compareStateSnapshots(
+  local: ProfileState,
+  backup: ProfileState,
+): StateBackupComparison {
+  return {
+    localVersion: local.version,
+    backupVersion: backup.version,
+    integrityVerified: true,
+    digestMatches: stateDigest(local) === stateDigest(backup),
+    differences: compareStructure(local, backup),
+  };
+}
+
+function canonicalState(state: ProfileState): string {
+  const sort = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(sort);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, child]) => [key, sort(child)]),
+    );
+  };
+  return JSON.stringify(sort(state));
+}
+
+function stateDigest(state: ProfileState): string {
+  return createHash("sha256").update(canonicalState(state)).digest("hex");
+}
+
+function structuralSummary(state: ProfileState): Record<string, string> {
+  const result: Record<string, string> = { activeProfile: state.activeProfile };
+  for (const [name, profile] of Object.entries(state.profiles).sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    result[`profiles.${name}`] = [
+      profile.network ?? "none",
+      profile.wallet ? "wallet" : "no-wallet",
+      profile.apiKey ? "api-key" : "no-api-key",
+    ].join(":");
+  }
+  return result;
+}
+
+function compareStructure(local: ProfileState, backup: ProfileState): string[] {
+  const left = structuralSummary(local);
+  const right = structuralSummary(backup);
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])]
+    .sort()
+    .filter((key) => left[key] !== right[key]);
 }
 
 /**
@@ -210,6 +270,17 @@ export function restoreState(
   }
   write(state);
   return `State restored: ${Object.keys(state.profiles).length} profile(s), active "${state.activeProfile}".`;
+}
+
+/** Compare state with an encrypted backup without restoring or exposing secret values. */
+export function compareStateWithBackup(blob: string, passphrase: string): StateBackupComparison {
+  const local = readPersistedState();
+  let backup: ProfileState | undefined;
+  restoreState(blob, passphrase, (state) => {
+    backup = state;
+  });
+  if (!backup) throw new StateBackupError("Backup contents are not valid state.");
+  return compareStateSnapshots(local, backup);
 }
 
 /**

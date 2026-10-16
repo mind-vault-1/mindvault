@@ -173,6 +173,21 @@ describe("receiptsToCsv", () => {
     const csv = receiptsToCsv([exportedRow({ txHash: null, explorerUrl: null })]);
     expect(csv).not.toContain("null");
   });
+
+  it.each(["=SUM(A1:A2)", "+cmd", "-2+3", "@IMPORTXML(x)", "  =1+1"])(
+    "neutralizes spreadsheet formula value %s",
+    (title) => {
+      const csv = receiptsToCsv([exportedRow({ title })]);
+      expect(csv.split("\r\n")[1]).toContain(`'${title}`);
+    },
+  );
+
+  it("preserves Unicode while escaping physical line breaks", () => {
+    const csv = receiptsToCsv([exportedRow({ title: 'Résumé 東京\r\n"quoted"\nnext' })]);
+    expect(csv).toContain("Résumé 東京\\r\\n");
+    expect(csv).toContain("\\nnext");
+    expect(csv.split("\r\n")).toHaveLength(2);
+  });
 });
 
 describe("receiptsToNdjson", () => {
@@ -203,6 +218,14 @@ describe("receiptsToNdjson", () => {
     expect(parsed.txHash).toBeNull();
     expect(parsed.explorerUrl).toBeNull();
     expect(parsed.title).toBeNull();
+  });
+
+  it("preserves Unicode and JSON-escapes CRLF so records cannot inject lines", () => {
+    const title = 'Résumé 東京\r\n"quoted"';
+    const result = receiptsToNdjson([exportedRow({ title }), exportedRow({ title: "next" })]);
+    const lines = result.split("\n");
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0]).title).toBe(title);
   });
 });
 

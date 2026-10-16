@@ -247,7 +247,9 @@ export function sumAmounts(receipts: ExportedReceipt[]): string {
 
 /** Quote one CSV field per RFC 4180 (double the quotes, wrap when needed). */
 function csvField(value: string | null, forceQuote = false): string {
-  const text = value ?? "";
+  const raw = value ?? "";
+  const lineSafe = raw.replace(/\r\n/g, "\\r\\n").replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+  const text = /^\s*[=+\-@]/.test(lineSafe) ? `'${lineSafe}` : lineSafe;
   return forceQuote || /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

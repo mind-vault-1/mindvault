@@ -6,6 +6,12 @@ reconcile against, or a person can file.
 
 Source: [`mcp/src/receipts.ts`](../mcp/src/receipts.ts).
 
+CSV fields beginning with `=`, `+`, `-`, or `@` (including after leading
+whitespace) are prefixed with an apostrophe to prevent spreadsheet formula
+execution. Embedded CR/LF characters are exported as visible `\\r` and `\\n`
+sequences, so a receipt cannot create an extra physical CSV row. NDJSON uses
+JSON string escaping for line endings. Both formats preserve valid UTF-8 text.
+
 ## Export vs. history
 
 [`mindvault_purchase_history`](mcp-quickstart.md) lists what was bought; it is a

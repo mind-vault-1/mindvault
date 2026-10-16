@@ -13,7 +13,7 @@ For the server-side (non-MCP) variables, see
 [environment-variables.md](environment-variables.md), which remains the
 prose-level explanation of deployment configuration.
 
-**38 variables** as of last generation.
+**39 variables** as of last generation.
 
 ---
 
@@ -40,6 +40,7 @@ prose-level explanation of deployment configuration.
 | `MINDVAULT_PREVIEW_FIELD_MAX_CHARS` | Character ceiling for each free-text preview field (title, description); 0 disables. | 1000 (chars) | — | `mcp/src/previewLimits.ts` |
 | `MINDVAULT_PURCHASES_FILE` | Path of the purchase-receipt file mindvault_buy appends to. | ~/.mindvault/purchases.json | — | `mcp/src/purchaseHistory.ts` |
 | `MINDVAULT_HTTP_TIMEOUT_MS` | Request deadline for the MindVault API and sponsored-account service. 0 disables. | 15000 (ms) | — | `mcp/src/httpTimeout.ts` |
+| `MINDVAULT_MAX_RESPONSE_BYTES` | Maximum UTF-8 bytes accepted from an upstream API response. | 2097152 (bytes) | — | `mcp/src/responseSize.ts` |
 | `MINDVAULT_HORIZON_TIMEOUT_MS` | Request deadline for Horizon balance/account reads. 0 disables. | 15000 (ms) | — | `mcp/src/httpTimeout.ts` |
 | `MINDVAULT_SOROBAN_TIMEOUT_MS` | Request deadline for Soroban RPC calls. 0 disables. | 20000 (ms) | — | `mcp/src/httpTimeout.ts` |
 | `MINDVAULT_PAYMENT_TIMEOUT_MS` | Request deadline for x402 paid fetches, which include on-chain settlement. 0 disables. | 45000 (ms) | — | `mcp/src/httpTimeout.ts` |
@@ -60,4 +61,5 @@ prose-level explanation of deployment configuration.
 
 ---
 
-_This file was generated from `mcp/src/envReference.ts` — 38 variables._
+_This file was generated from `mcp/src/envReference.ts` —
+39 variables._

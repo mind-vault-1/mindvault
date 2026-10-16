@@ -368,6 +368,10 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     confirmMainnet: CONFIRM_MAINNET,
   },
   mindvault_backup_state: { passphrase: PASSPHRASE, confirm: { kind: "flag" } },
+  mindvault_compare_state_backup: {
+    blob: { kind: "string", required: true, maxLength: 1_048_576 },
+    passphrase: PASSPHRASE,
+  },
   mindvault_resource_provenance: { resourceId: RESOURCE_ID },
   mindvault_resource_change_log: { resourceId: RESOURCE_ID },
   mindvault_restore_state: {

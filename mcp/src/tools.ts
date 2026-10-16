@@ -944,6 +944,31 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_compare_state_backup",
+    description:
+      "Compare local state with an encrypted backup without restoring it. Verifies backup integrity and reports only version, digest equality, and structural paths; wallet secrets and API keys are never returned.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        blob: {
+          type: "string",
+          description: "Encrypted backup blob from mindvault_backup_state (v1:… format).",
+        },
+        passphrase: {
+          type: "string",
+          description: "Passphrase used when the backup was created (min 8 characters).",
+        },
+      },
+      required: ["blob", "passphrase"],
+    },
+    annotations: {
+      title: "Compare State Backup",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_resource_provenance",
     description:
       "Return the chronological creator, purchase, and ownership-transfer chain recorded for a resource. Never exposes wallet secrets or API keys.",

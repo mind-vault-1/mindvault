@@ -19,6 +19,7 @@ import {
 import { DEFAULT_PROFILE, isValidProfileName } from "../profiles.js";
 import {
   checkStatePermissions,
+  compareStateWithBackup,
   exportStateFile,
   restoreState as restoreStateFromBackup,
 } from "../stateBackup.js";
@@ -46,6 +47,10 @@ export function backupState(passphrase: string, confirm: unknown = false): strin
 
 export function restoreStateTool(blob: string, passphrase: string): string {
   return restoreStateFromBackup(blob, passphrase, applyRestoredState, { expectedNetwork: NETWORK });
+}
+
+export function compareStateBackupTool(blob: string, passphrase: string): string {
+  return JSON.stringify(compareStateWithBackup(blob, passphrase), null, 2);
 }
 
 export function resetState(all: boolean, confirm: unknown = false): string {

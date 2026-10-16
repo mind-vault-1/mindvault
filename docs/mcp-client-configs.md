@@ -26,6 +26,10 @@ page, but pre-filled with this running process's actual entrypoint path and
 detected network profile instead of the placeholder path and testnet
 defaults shown here.
 
+Large upstream payloads are rejected by default at 2 MiB. Set
+`MINDVAULT_MAX_RESPONSE_BYTES` to an integer from 1024 through 16777216 when a
+deployment needs a different safe ceiling.
+
 ---
 
 ## Claude Code
