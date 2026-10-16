@@ -168,6 +168,7 @@ describe("collectAuditTail", () => {
     const present = collectAuditTail({ MINDVAULT_AUDIT_LOG_FILE: file }, 1);
     expect(present).toMatchObject({ enabled: true, filePath: file, exists: true, requested: 1 });
     expect(present.entries).toEqual([{ toolName: "y" }]);
+    expect(present.truncated).toBe(false);
 
     const missing = collectAuditTail({ MINDVAULT_AUDIT_LOG_FILE: join(dir, "nope.jsonl") }, 5);
     expect(missing.exists).toBe(false);
@@ -176,6 +177,24 @@ describe("collectAuditTail", () => {
     const unconfigured = collectAuditTail({}, 5);
     expect(unconfigured.filePath).toBeNull();
     expect(unconfigured.entries).toEqual([]);
+    expect(unconfigured.truncated).toBe(false);
+  });
+
+  it("caps reads of oversized logs, retains recent events, and reports truncation", () => {
+    dir = mkdtempSync(join(tmpdir(), "mindvault-bundle-large-"));
+    const file = join(dir, "audit.jsonl");
+    const old = `${JSON.stringify({ toolName: "old", payload: "x".repeat(300_000) })}\n`;
+    const latest = Array.from({ length: 6 }, (_, n) =>
+      JSON.stringify({ toolName: `recent-${n}`, status: "success" }),
+    ).join("\n");
+    writeFileSync(file, old + latest + "\n");
+
+    const result = collectAuditTail({ MINDVAULT_AUDIT_LOG_FILE: file }, 5);
+    expect(result.truncated).toBe(true);
+    expect(result.entries.map((entry) => entry.toolName)).toEqual([
+      "recent-1", "recent-2", "recent-3", "recent-4", "recent-5",
+    ]);
+    expect(JSON.stringify(result)).not.toContain("x".repeat(100));
   });
 });
 
