@@ -334,6 +334,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("record_admin_refund", "admin override"),
     ("get_refund", "—"),
     ("get_refunded_amount", "—"),
+    ("get_remaining_refundable", "—"),
     ("get_refund_deadline", "—"),
     ("anchor_purchase_receipt", "verifier"),
     ("attempt_anchor_purchase_receipt", "verifier"),
@@ -1334,6 +1335,9 @@ pub struct RefundReceipt {
     pub initiated_by: Address,
     pub recorded_at: u32,
     pub admin_override: bool,
+    /// Remaining refundable balance after this refund is applied.
+    /// Calculated as: original payment amount - cumulative refunds (including this one).
+    pub remaining_balance: i128,
 }
 
 /// Immutable on-chain anchor for a purchase receipt hash.
@@ -4987,6 +4991,14 @@ impl VaultRegistry {
         Ok(refunded)
     }
 
+    /// Remaining refundable balance for a payment receipt.
+    /// Returns the payment amount minus all recorded refunds, clamped to zero.
+    pub fn get_remaining_refundable(env: Env, payment_receipt_id: String) -> Result<i128, Error> {
+        let payment = Self::get_payment(env.clone(), payment_receipt_id.clone())?;
+        let refunded = Self::get_refunded_amount(env, payment_receipt_id)?;
+        Ok(payment.amount.saturating_sub(refunded).max(0))
+    }
+
     /// Exclusive ledger deadline for creator refunds of a settled payment.
     pub fn get_refund_deadline(env: Env, payment_receipt_id: String) -> Result<u32, Error> {
         let payment = Self::get_payment(env.clone(), payment_receipt_id.clone())?;
@@ -6066,6 +6078,9 @@ impl VaultRegistry {
         let next_refunded = refunded
             .checked_add(amount)
             .ok_or(Error::PaymentAmountMismatch)?;
+        
+        // Calculate remaining balance after this refund
+        let remaining_balance = payment.amount.saturating_sub(next_refunded).max(0);
 
         let refund = RefundReceipt {
             refund_id: refund_id.clone(),
@@ -6077,6 +6092,7 @@ impl VaultRegistry {
             initiated_by: initiator,
             recorded_at: env.ledger().sequence(),
             admin_override,
+            remaining_balance,
         };
         env.storage().persistent().set(&refund_key, &refund);
         Self::bump_persistent(env, &refund_key);
