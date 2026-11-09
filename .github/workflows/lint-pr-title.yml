@@ -21,7 +21,7 @@ jobs:
         run: echo "Accepting issue-number title format for Wave/issue PRs."
       - name: Lint PR Title
         if: ${{ !startsWith(github.event.pull_request.title, '[') }}
-        uses: amannn/action-semantic-pull-request@v6.1.1
+        uses: amannn/action-semantic-pull-request@v6.1.2
         with:
           types: |
             build
