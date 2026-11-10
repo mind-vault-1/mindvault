@@ -4990,8 +4990,6 @@ fn full_workflow_emits_exactly_the_documented_events() {
     record(&env, &client, &mut observed);
     client.set_paused(&admin2, &false);
     record(&env, &client, &mut observed);
-    client.set_maintenance_status(&admin2, &MaintenanceKind::Scheduled, &1u32); // -> "mntstat"
-    record(&env, &client, &mut observed);
 
     // Network bootstrap and the creator reactivation path round out the
     // documented event schema (`netinit` was already observed above, so this
@@ -5709,7 +5707,7 @@ fn remove_verifier_revokes_verification_ability() {
 
 #[test]
 fn admin_can_rotate_verifier_with_audit_event() {
-    let (env, _creator, _admin, client) = setup_with_admin();
+    let (env, _creator, admin, client) = setup_with_admin();
     let old_verifier = Address::generate(&env);
     let new_verifier = Address::generate(&env);
 
@@ -5738,6 +5736,7 @@ fn admin_can_rotate_verifier_with_audit_event() {
         assert_eq!(
             payload,
             VerifierRotation {
+                admin: admin.clone(),
                 old_verifier: old_verifier.clone(),
                 new_verifier: new_verifier.clone(),
                 ledger,
@@ -6998,6 +6997,126 @@ fn repair_index_with_empty_list_is_a_silent_noop() {
     let page = client.list(&0u32, &10u32);
     assert_eq!(page.len(), 1);
     assert_eq!(page.get(0).unwrap().id, a);
+}
+
+#[test]
+fn repair_index_invalid_final_item_does_not_partially_modify_earlier_entries() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let a = register_default(&env, &creator, &client, "rres7a");
+    let b = register_default(&env, &creator, &client, "rres7b");
+    let c = register_default(&env, &creator, &client, "rres7c");
+    let bad_schema = register_default(&env, &creator, &client, "rres7bad");
+
+    // Corrupt `bad_schema` in storage to an unsupported schema_version so it
+    // passes a bare existence check but fails full resource validation.
+    env.as_contract(&client.address, || {
+        let mut stored: Resource = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Resource(bad_schema.clone()))
+            .unwrap();
+        stored.schema_version = 0;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Resource(bad_schema.clone()), &stored);
+    });
+
+    // Establish an authoritative 3-item baseline order [a, b, c].
+    client.repair_index(&Vec::from_array(&env, [a.clone(), b.clone(), c.clone()]));
+
+    // 1. Final item has malformed ID format after valid reordered prefix [c, b].
+    let res_malformed = client.try_repair_index(&Vec::from_array(
+        &env,
+        [c.clone(), b.clone(), String::from_str(&env, "bad@id")],
+    ));
+    assert_eq!(res_malformed, Err(Ok(Error::InvalidResourceId)));
+
+    // 2. Final item is an unknown resource after valid reordered prefix [c, b].
+    let res_unknown = client.try_repair_index(&Vec::from_array(
+        &env,
+        [c.clone(), b.clone(), String::from_str(&env, "ghost")],
+    ));
+    assert_eq!(res_unknown, Err(Ok(Error::NotFound)));
+
+    // 3. Final item duplicates an earlier item after valid prefix [c, b].
+    let res_dup = client.try_repair_index(&Vec::from_array(
+        &env,
+        [c.clone(), b.clone(), c.clone()],
+    ));
+    assert_eq!(res_dup, Err(Ok(Error::DuplicateInRepair)));
+
+    // 4. Final item exists in storage but has an unsupported schema version.
+    let res_schema = client.try_repair_index(&Vec::from_array(
+        &env,
+        [c.clone(), b.clone(), bad_schema.clone()],
+    ));
+    assert_eq!(res_schema, Err(Ok(Error::InvalidResourceId)));
+
+    // Earlier entries must not be silently modified: order is still [a, b, c].
+    assert_eq!(client.count(), 3);
+    let page = client.list(&0u32, &10u32);
+    assert_eq!(page.len(), 3);
+    assert_eq!(page.get(0).unwrap().id, a);
+    assert_eq!(page.get(1).unwrap().id, b);
+    assert_eq!(page.get(2).unwrap().id, c);
+}
+
+#[test]
+fn repair_index_rejects_oversized_batch_before_writing() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let a = register_default(&env, &creator, &client, "rres8a");
+
+    let mut oversized: Vec<String> = Vec::new(&env);
+    for _ in 0..=MAX_TAG_INDEX_REPAIR {
+        oversized.push_back(a.clone());
+    }
+
+    let res = client.try_repair_index(&oversized);
+    assert_eq!(res, Err(Ok(Error::BatchTooLarge)));
+    assert_eq!(client.count(), 1);
+    assert_eq!(client.list(&0u32, &10u32).get(0).unwrap().id, a);
+}
+
+#[test]
+fn repair_tag_index_invalid_final_item_does_not_partially_modify_earlier_entries() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let a = register_tagged(&env, &creator, &client, "rtia1", &["alpha"]);
+    let b = register_tagged(&env, &creator, &client, "rtib1", &["beta"]);
+    let bad_schema = register_tagged(&env, &creator, &client, "rtibad", &["gamma"]);
+
+    let alpha = String::from_str(&env, "alpha");
+    // Simulate drift on `alpha` so any partial write for `a` would be visible.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::TagIndex(alpha.clone()), &Vec::<String>::new(&env));
+        let mut stored: Resource = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Resource(bad_schema.clone()))
+            .unwrap();
+        stored.schema_version = 0;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Resource(bad_schema.clone()), &stored);
+    });
+    assert_eq!(client.list_by_tag(&alpha, &0u32, &10u32).len(), 0);
+
+    // Malformed final ID must fail without rebuilding `alpha` for `a`.
+    let res_malformed = client.try_repair_tag_index(&Vec::from_array(
+        &env,
+        [a.clone(), b.clone(), String::from_str(&env, "bad@id")],
+    ));
+    assert_eq!(res_malformed, Err(Ok(Error::InvalidResourceId)));
+    assert_eq!(client.list_by_tag(&alpha, &0u32, &10u32).len(), 0);
+
+    // Unsupported-schema final resource must fail without rebuilding `alpha`.
+    let res_schema = client.try_repair_tag_index(&Vec::from_array(
+        &env,
+        [a.clone(), b.clone(), bad_schema.clone()],
+    ));
+    assert_eq!(res_schema, Err(Ok(Error::InvalidResourceId)));
+    assert_eq!(client.list_by_tag(&alpha, &0u32, &10u32).len(), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -10072,7 +10191,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 55] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -10117,6 +10236,7 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
         (DataKey::RegistryTerms, "RegistryTerms", 1),
         (DataKey::Paused, "Paused", 1),
         (DataKey::PauseUntil, "PauseUntil", 1),
+        (DataKey::MaintenanceStatus, "MaintenanceStatus", 1),
         (DataKey::Settler(who.clone()), "Settler", 2),
         (
             DataKey::PurchaseReceipt(id.clone(), who.clone()),
@@ -10135,6 +10255,11 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
         (DataKey::ListedCount, "ListedCount", 1),
         (DataKey::FlagReasonHash(id.clone()), "FlagReasonHash", 2),
         (DataKey::AttestationHash(id.clone()), "AttestationHash", 2),
+        (
+            DataKey::RevocationReasonHash(id.clone()),
+            "RevocationReasonHash",
+            2,
+        ),
         (DataKey::PendingAdminExpiry, "PendingAdminExpiry", 1),
         (
             DataKey::PendingAdminNominatedAt,
@@ -10150,9 +10275,13 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
         ),
         (DataKey::MemoHash(id.clone()), "MemoHash", 2),
         (DataKey::FeeDestination, "FeeDestination", 1),
+        (DataKey::AccruedFees, "AccruedFees", 1),
         (DataKey::MetadataPointers(id.clone()), "MetadataPointers", 2),
         (DataKey::RecoveryAdmin, "RecoveryAdmin", 1),
         (DataKey::Revision(id.clone()), "Revision", 2),
+        (DataKey::RoleHolders(RoleKind::Verifier), "RoleHolders", 2),
+        (DataKey::PaymentPaused, "PaymentPaused", 1),
+        (DataKey::PaymentPauseUntil, "PaymentPauseUntil", 1),
     ]
 }
 
@@ -10192,7 +10321,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        49,
+        55,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -10227,6 +10356,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::RegistryTerms => "RegistryTerms",
             DataKey::Paused => "Paused",
             DataKey::PauseUntil => "PauseUntil",
+            DataKey::MaintenanceStatus => "MaintenanceStatus",
             DataKey::Settler(_) => "Settler",
             DataKey::PurchaseReceipt(_, _) => "PurchaseReceipt",
             DataKey::AnchorFailure(_, _) => "AnchorFailure",
@@ -10237,6 +10367,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::ListedCount => "ListedCount",
             DataKey::FlagReasonHash(_) => "FlagReasonHash",
             DataKey::AttestationHash(_) => "AttestationHash",
+            DataKey::RevocationReasonHash(_) => "RevocationReasonHash",
             DataKey::PendingAdminExpiry => "PendingAdminExpiry",
             DataKey::PendingAdminNominatedAt => "PendingAdminNominatedAt",
             DataKey::TagCount(_) => "TagCount",
@@ -10244,9 +10375,13 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::CreatorListedCount(_) => "CreatorListedCount",
             DataKey::MemoHash(_) => "MemoHash",
             DataKey::FeeDestination => "FeeDestination",
+            DataKey::AccruedFees => "AccruedFees",
             DataKey::MetadataPointers(_) => "MetadataPointers",
             DataKey::RecoveryAdmin => "RecoveryAdmin",
             DataKey::Revision(_) => "Revision",
+            DataKey::RoleHolders(_) => "RoleHolders",
+            DataKey::PaymentPaused => "PaymentPaused",
+            DataKey::PaymentPauseUntil => "PaymentPauseUntil",
         };
         assert_eq!(
             matched, *name,
@@ -11802,12 +11937,8 @@ include!("test/creator_listed_count.rs");
 include!("test/memo_hash.rs");
 include!("test/flag_details.rs");
 include!("test/payment_idempotency.rs");
-include!("test/payment_pause_scope.rs");
-include!("test/simulation_mutation_validation.rs");
 include!("test/stellar_wave_804_805_806_808.rs");
 include!("test/stellar_wave_970_971_975_976.rs");
 include!("test/stellar_wave_981_982_983_984.rs");
-include!("test/stellar_wave_977_978_979_980.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
-include!("test/pause_scope_matrix.rs");

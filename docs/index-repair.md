@@ -62,11 +62,15 @@ pub fn repair_index(env: Env, ids: Vec<String>) -> Result<(), Error>
     checked against the DB's own resource list,
   - a last-known-good snapshot of `list`/`list_page` output taken before the
     drift was introduced.
-- **Validation**: every id in the input must already exist as a `Resource`
-  (`NotFound` otherwise), and the input must not contain duplicates
-  (`DuplicateInRepair` otherwise). Validation runs as a first pass over the
-  whole input before any storage write, so a bad call fails atomically with
-  no partial state change.
+- **Validation**: input is bounded by `MAX_TAG_INDEX_REPAIR` (200;
+  `BatchTooLarge` otherwise). Every id in the input must pass format validation
+  and load a resource with a supported schema version (`InvalidResourceId`
+  otherwise), must already exist as a `Resource` (`NotFound` otherwise), and
+  the input must not contain duplicates (`DuplicateInRepair` otherwise).
+  Validation runs as a complete first pass over the whole bounded input before
+  any storage write, so an invalid final item fails atomically and never leaves
+  earlier index entries partially modified. Any stale `IndexRepairProgress`
+  cursor is cleared only when a full repair commits.
 - **Effect**: `Index(0..ids.len())` is overwritten to match the given order,
   and `Count` is set to `ids.len()`. `Resource` entries are never read for
   their content, never written, and never deleted — repair only rewrites the

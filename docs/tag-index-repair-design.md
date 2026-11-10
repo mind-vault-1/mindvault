@@ -78,8 +78,12 @@ pub fn repair_tag_index(env: Env, ids: Vec<String>) -> Result<(), Error>
   A tag index is a pure function of already-canonical on-chain state (`id ->
 tags`); unlike the pagination index, the contract does not need to be told
   _what_ the correct tag associations are, only _which ids_ to refresh.
-- **Validation**: every id must already exist as a `Resource` (`NotFound`
-  otherwise), matching `repair_index`. Unlike `repair_index`,
+- **Validation**: every id must pass resource-id format validation and carry a
+  supported resource schema version (`InvalidResourceId` otherwise) and must
+  already exist as a `Resource` (`NotFound` otherwise), matching `repair_index`
+  and `check_tag_index`. All validation runs across the entire bounded input
+  before any `TagIndex` entry is written, so a failing final item never leaves
+  earlier tag index entries partially modified. Unlike `repair_index`,
   `repair_tag_index` does not need a `DuplicateInRepair`-style check: a
   pagination index is positional (a duplicate id would silently overwrite
   one slot with another, corrupting order), while a tag index has set

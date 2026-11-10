@@ -847,6 +847,50 @@ fn repair_index_emits_reindex_event() {
     );
 }
 
+#[test]
+fn repair_index_invalid_final_item_does_not_partially_modify_earlier_entries() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let a = register_default(&env, &creator, &client, "rres7a");
+    let b = register_default(&env, &creator, &client, "rres7b");
+    let c = register_default(&env, &creator, &client, "rres7c");
+    let bad_schema = register_default(&env, &creator, &client, "rres7bad");
+
+    env.as_contract(&client.address, || {
+        let mut stored: Resource = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Resource(bad_schema.clone()))
+            .unwrap();
+        stored.schema_version = 0;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Resource(bad_schema.clone()), &stored);
+    });
+
+    client.repair_index(&Vec::from_array(&env, [a.clone(), b.clone(), c.clone()]));
+
+    assert_eq!(
+        client.try_repair_index(&Vec::from_array(
+            &env,
+            [c.clone(), b.clone(), String::from_str(&env, "bad@id")],
+        )),
+        Err(Ok(Error::InvalidResourceId))
+    );
+    assert_eq!(
+        client.try_repair_index(&Vec::from_array(
+            &env,
+            [c.clone(), b.clone(), bad_schema.clone()],
+        )),
+        Err(Ok(Error::InvalidResourceId))
+    );
+
+    assert_eq!(client.count(), 3);
+    let page = client.list(&0u32, &10u32);
+    assert_eq!(page.get(0).unwrap().id, a);
+    assert_eq!(page.get(1).unwrap().id, b);
+    assert_eq!(page.get(2).unwrap().id, c);
+}
+
 // ── Lifecycle transition property tests ──────────────────────────────────────
 //
 // The lifecycle state machine is documented as a table in `contract/README.md`
