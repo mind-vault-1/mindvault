@@ -209,10 +209,46 @@ describe("writeAtomically", () => {
     ).toThrow(/rename failed/);
 
     expect(readFileSync(STATE_FILE, "utf-8")).toContain("old");
+    expect(statSync(STATE_FILE).mode & 0o7777).toBe(0o600);
     const tmpMatches = fs
       .readdirSync(STATE_DIR)
       .filter((name) => name.startsWith("state.json.tmp"));
     expect(tmpMatches).toEqual([]);
+  });
+
+  it("never leaves the destination partially written when a write fails mid-flight (ENOSPC)", () => {
+    const enospc = Object.assign(new Error("ENOSPC: no space left on device, write"), {
+      code: "ENOSPC",
+    });
+    expect(() =>
+      writeAtomically(STATE_FILE, '{"version": 1, "activeProfile": "default"}', 0o600, {
+        writeFileSync: (targetPath, content, options) => {
+          // Simulate a partial/truncated write to the temp file before the disk fills up.
+          fs.writeFileSync(targetPath, String(content).slice(0, 14), options);
+          throw enospc;
+        },
+        renameSync: fs.renameSync,
+        chmodSync: fs.chmodSync,
+        existsSync: fs.existsSync,
+        unlinkSync: fs.unlinkSync,
+      }),
+    ).toThrow(/ENOSPC/);
+
+    // Original state file remains intact and valid JSON with 0600 permissions.
+    expect(JSON.parse(readFileSync(STATE_FILE, "utf-8"))).toEqual({ old: true });
+    expect(statSync(STATE_FILE).mode & 0o7777).toBe(0o600);
+    // Truncated temp file is deterministically removed.
+    const tmpMatches = fs
+      .readdirSync(STATE_DIR)
+      .filter((name) => name.startsWith("state.json.tmp"));
+    expect(tmpMatches).toEqual([]);
+  });
+
+  it("enforces mode 0600 on the replacement even if the prior file had wider permissions", () => {
+    chmodSync(STATE_FILE, 0o644);
+    writeAtomically(STATE_FILE, JSON.stringify({ hardened: true }, null, 2), 0o600);
+    expect(JSON.parse(readFileSync(STATE_FILE, "utf-8"))).toEqual({ hardened: true });
+    expect(statSync(STATE_FILE).mode & 0o7777).toBe(0o600);
   });
 });
 

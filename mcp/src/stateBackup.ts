@@ -417,7 +417,9 @@ function normalizePersisted(raw: unknown): ProfileState {
       }
     }
     if (typeof v.apiKey === "string" && v.apiKey.length > 0) profile.apiKey = v.apiKey;
-    if (v.network === "testnet" || v.network === "mainnet") profile.network = v.network;
+    if (typeof v.network === "string" && v.network.length > 0) {
+      profile.network = v.network as WalletProfile["network"];
+    }
     if (v.preferences && typeof v.preferences === "object" && !Array.isArray(v.preferences)) {
       profile.preferences = {};
       for (const [key, item] of Object.entries(v.preferences as Record<string, unknown>)) {
@@ -454,7 +456,8 @@ export function writeAtomically(
   const dir = dirname(filePath);
   mkdirSync(dir, { recursive: true });
 
-  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  const suffix = randomBytes(4).toString("hex");
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${suffix}`;
   const writeSync = ops.writeFileSync ?? writeFileSync;
   const rename = ops.renameSync ?? renameSync;
   const chmod = ops.chmodSync ?? chmodSync;
@@ -463,6 +466,7 @@ export function writeAtomically(
 
   try {
     writeSync(tempPath, data, { mode });
+    chmod(tempPath, mode);
     rename(tempPath, filePath);
     chmod(filePath, mode);
   } catch (err) {
@@ -520,8 +524,7 @@ export function quarantineStateFile(
  */
 export function preserveLegacyState(raw: unknown, filePath: string = STATE_FILE): void {
   try {
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(`${filePath}.legacy`, JSON.stringify(raw, null, 2), { mode: 0o600 });
+    writeAtomically(`${filePath}.legacy`, JSON.stringify(raw, null, 2), 0o600);
   } catch (err) {
     throw new StateBackupError(`Failed to preserve legacy state before migration: ${err}`);
   }
