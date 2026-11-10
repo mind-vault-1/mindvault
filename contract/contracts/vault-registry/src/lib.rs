@@ -5028,6 +5028,8 @@ impl VaultRegistry {
         amount: i128,
         tx_hash: String,
     ) -> Result<(), Error> {
+        Self::validate_receipt_id(&refund_id)?;
+        Self::validate_receipt_id(&payment_receipt_id)?;
         creator.require_auth();
         Self::record_refund(
             &env,
@@ -5052,6 +5054,8 @@ impl VaultRegistry {
         amount: i128,
         tx_hash: String,
     ) -> Result<(), Error> {
+        Self::validate_receipt_id(&refund_id)?;
+        Self::validate_receipt_id(&payment_receipt_id)?;
         Self::require_current_admin(&env, &admin)?;
         Self::record_refund(
             &env,
@@ -6311,9 +6315,15 @@ impl VaultRegistry {
     /// No character restrictions beyond length — callers typically use
     /// x402 facilitator receipt identifiers which may contain hyphens, etc.
     fn validate_receipt_id(id: &String) -> Result<(), Error> {
-        let len = id.len();
-        if len == 0 || len > MAX_RECEIPT_ID_LEN {
-            return Err(Error::InvalidReceiptId);
+        Self::validate_bounded_string(
+            id,
+            1,
+            MAX_RECEIPT_ID_LEN,
+            Error::InvalidReceiptId,
+            Error::InvalidReceiptId,
+        )?;
+        if Self::is_reserved_id(id) {
+            return Err(Error::ReservedId);
         }
         Ok(())
     }

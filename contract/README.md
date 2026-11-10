@@ -127,7 +127,7 @@ public behavior.
 | Each tag | `InvalidTag` (empty list is allowed) | 32 bytes before and after normalization | Counted as UTF-8 bytes; normalization only trims ASCII whitespace and folds ASCII case | `InvalidTag` |
 | Creator / registry `terms_hash` | Accepted | 64 bytes accepted | Counted as UTF-8 bytes | `TermsHashTooLong` |
 | `reason_hash` | Accepted | 64 bytes accepted | Counted as UTF-8 bytes | `FlagReasonHashTooLong` |
-| `receipt_id` | `InvalidReceiptId` | 64 bytes accepted | Counted as UTF-8 bytes | `InvalidReceiptId` |
+| `receipt_id` / `refund_id` | `InvalidReceiptId` | 64 bytes accepted (reserved IDs rejected with `ReservedId` before auth or storage access) | Counted as UTF-8 bytes | `InvalidReceiptId` |
 | Payment, refund, lease, or receipt `tx_hash` | `InvalidTxHash` | 128 bytes accepted | Counted as UTF-8 bytes | `InvalidTxHash` |
 | Optional `content_hash` | Rejected | 128 bytes accepted | Counted as UTF-8 bytes | `ContentHashTooLong` |
 | Attestation hash | Rejected | Untagged digest: 64 bytes; tagged form: algorithm 1–16 ASCII bytes plus `:` plus digest 1–64 bytes | Digest length is counted in UTF-8 bytes; algorithm remains ASCII-only | `AttestationHashTooLong` |

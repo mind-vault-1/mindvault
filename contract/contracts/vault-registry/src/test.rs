@@ -11807,3 +11807,110 @@ include!("test/stellar_wave_970_971_975_976.rs");
 include!("test/stellar_wave_981_982_983_984.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
+
+
+#[test]
+fn refund_receipt_ids_validate_bounds_and_reserved_words_before_auth_or_storage() {
+    let env = Env::default();
+    // Deliberately do NOT call env.mock_all_auths() and do NOT bootstrap an admin:
+    // invalid refund_id or payment_receipt_id must fail with InvalidReceiptId / ReservedId
+    // before creator.require_auth() or require_current_admin() touches auth or storage.
+    let contract_id = env.register(VaultRegistry, ());
+    let client = VaultRegistryClient::new(&env, &contract_id);
+    let creator = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let payer = Address::generate(&env);
+
+    let empty = String::from_str(&env, "");
+    let valid_id = String::from_str(&env, "r");
+    let too_long = String::from_str(&env, &"r".repeat((MAX_RECEIPT_ID_LEN + 1) as usize));
+    let reserved = String::from_str(&env, "admin");
+    let tx = String::from_str(&env, "tx-refund-validate");
+
+    assert_eq!(
+        client.try_record_creator_refund(&creator, &empty, &valid_id, &payer, &100, &tx),
+        Err(Ok(Error::InvalidReceiptId))
+    );
+    assert_eq!(
+        client.try_record_creator_refund(&creator, &too_long, &valid_id, &payer, &100, &tx),
+        Err(Ok(Error::InvalidReceiptId))
+    );
+    assert_eq!(
+        client.try_record_creator_refund(&creator, &reserved, &valid_id, &payer, &100, &tx),
+        Err(Ok(Error::ReservedId))
+    );
+    assert_eq!(
+        client.try_record_admin_refund(&admin, &empty, &valid_id, &payer, &100, &tx),
+        Err(Ok(Error::InvalidReceiptId))
+    );
+    assert_eq!(
+        client.try_record_admin_refund(&admin, &too_long, &valid_id, &payer, &100, &tx),
+        Err(Ok(Error::InvalidReceiptId))
+    );
+    assert_eq!(
+        client.try_record_admin_refund(&admin, &reserved, &valid_id, &payer, &100, &tx),
+        Err(Ok(Error::ReservedId))
+    );
+    assert_eq!(
+        client.try_get_refund(&empty),
+        Err(Ok(Error::InvalidReceiptId))
+    );
+    assert_eq!(
+        client.try_get_refund(&too_long),
+        Err(Ok(Error::InvalidReceiptId))
+    );
+    assert_eq!(
+        client.try_get_refund(&reserved),
+        Err(Ok(Error::ReservedId))
+    );
+}
+
+#[test]
+fn refund_receipt_ids_accept_min_and_max_lengths() {
+    let (env, creator, _admin, settler, client) = setup_with_settler();
+    let res_id = register_default(&env, &creator, &client, "reflen1");
+    let payer = Address::generate(&env);
+
+    let min_pay_id = String::from_str(&env, "p");
+    let max_pay_id = String::from_str(&env, &"p".repeat(MAX_RECEIPT_ID_LEN as usize));
+    let min_ref_id = String::from_str(&env, "f");
+    let max_ref_id = String::from_str(&env, &"f".repeat(MAX_RECEIPT_ID_LEN as usize));
+
+    client.record_payment(
+        &settler,
+        &min_pay_id,
+        &res_id,
+        &payer,
+        &100,
+        &String::from_str(&env, "tx-min-pay"),
+    );
+    client.settle_payment(&settler, &min_pay_id);
+    client.record_creator_refund(
+        &creator,
+        &min_ref_id,
+        &min_pay_id,
+        &payer,
+        &40,
+        &String::from_str(&env, "tx-min-ref"),
+    );
+    assert_eq!(client.get_refund(&min_ref_id).amount, 40);
+
+    client.record_payment(
+        &settler,
+        &max_pay_id,
+        &res_id,
+        &payer,
+        &100,
+        &String::from_str(&env, "tx-max-pay"),
+    );
+    client.settle_payment(&settler, &max_pay_id);
+    client.record_creator_refund(
+        &creator,
+        &max_ref_id,
+        &max_pay_id,
+        &payer,
+        &60,
+        &String::from_str(&env, "tx-max-ref"),
+    );
+    assert_eq!(client.get_refund(&max_ref_id).amount, 60);
+}
