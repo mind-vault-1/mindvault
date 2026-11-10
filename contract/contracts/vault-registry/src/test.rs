@@ -4981,6 +4981,17 @@ fn full_workflow_emits_exactly_the_documented_events() {
     record(&env, &client, &mut observed);
     client.revoke_lease(&r0, &bob); // -> "leaserevk"
     record(&env, &client, &mut observed);
+    let _ = client.try_simulate_record_payment(
+        &settler,
+        &String::from_str(&env, "sim-rcpt"),
+        &r0,
+        &bob,
+        &100i128,
+        &String::from_str(&env, "0xsimtx"),
+    ); // -> "simvalid"
+    record(&env, &client, &mut observed);
+    client.claim_fees(); // -> "claimfee"
+    record(&env, &client, &mut observed);
     client.remove_settler(&settler); // -> "rmsettlr"
     record(&env, &client, &mut observed);
 
@@ -4989,6 +5000,10 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.set_paused_until(&admin2, &200); // -> "pause", "pause_until"
     record(&env, &client, &mut observed);
     client.set_paused(&admin2, &false);
+    record(&env, &client, &mut observed);
+    client.set_payment_paused_until(&admin2, &200); // -> "payment_pause", "payment_pause_until"
+    record(&env, &client, &mut observed);
+    client.set_payment_paused(&admin2, &false);
     record(&env, &client, &mut observed);
     client.set_maintenance_status(&admin2, &MaintenanceKind::Scheduled, &1u32); // -> "mntstat"
     record(&env, &client, &mut observed);
@@ -5709,7 +5724,7 @@ fn remove_verifier_revokes_verification_ability() {
 
 #[test]
 fn admin_can_rotate_verifier_with_audit_event() {
-    let (env, _creator, _admin, client) = setup_with_admin();
+    let (env, _creator, admin, client) = setup_with_admin();
     let old_verifier = Address::generate(&env);
     let new_verifier = Address::generate(&env);
 
@@ -5738,6 +5753,7 @@ fn admin_can_rotate_verifier_with_audit_event() {
         assert_eq!(
             payload,
             VerifierRotation {
+                admin: admin.clone(),
                 old_verifier: old_verifier.clone(),
                 new_verifier: new_verifier.clone(),
                 ledger,
@@ -10072,7 +10088,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 55] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -10150,9 +10166,19 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
         ),
         (DataKey::MemoHash(id.clone()), "MemoHash", 2),
         (DataKey::FeeDestination, "FeeDestination", 1),
+        (DataKey::AccruedFees, "AccruedFees", 1),
         (DataKey::MetadataPointers(id.clone()), "MetadataPointers", 2),
         (DataKey::RecoveryAdmin, "RecoveryAdmin", 1),
         (DataKey::Revision(id.clone()), "Revision", 2),
+        (DataKey::MaintenanceStatus, "MaintenanceStatus", 1),
+        (
+            DataKey::RevocationReasonHash(id.clone()),
+            "RevocationReasonHash",
+            2,
+        ),
+        (DataKey::RoleHolders(RoleKind::Verifier), "RoleHolders", 2),
+        (DataKey::PaymentPaused, "PaymentPaused", 1),
+        (DataKey::PaymentPauseUntil, "PaymentPauseUntil", 1),
     ]
 }
 
@@ -10192,7 +10218,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        49,
+        55,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -10227,6 +10253,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::RegistryTerms => "RegistryTerms",
             DataKey::Paused => "Paused",
             DataKey::PauseUntil => "PauseUntil",
+            DataKey::MaintenanceStatus => "MaintenanceStatus",
             DataKey::Settler(_) => "Settler",
             DataKey::PurchaseReceipt(_, _) => "PurchaseReceipt",
             DataKey::AnchorFailure(_, _) => "AnchorFailure",
@@ -10237,6 +10264,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::ListedCount => "ListedCount",
             DataKey::FlagReasonHash(_) => "FlagReasonHash",
             DataKey::AttestationHash(_) => "AttestationHash",
+            DataKey::RevocationReasonHash(_) => "RevocationReasonHash",
             DataKey::PendingAdminExpiry => "PendingAdminExpiry",
             DataKey::PendingAdminNominatedAt => "PendingAdminNominatedAt",
             DataKey::TagCount(_) => "TagCount",
@@ -10244,9 +10272,13 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::CreatorListedCount(_) => "CreatorListedCount",
             DataKey::MemoHash(_) => "MemoHash",
             DataKey::FeeDestination => "FeeDestination",
+            DataKey::AccruedFees => "AccruedFees",
             DataKey::MetadataPointers(_) => "MetadataPointers",
             DataKey::RecoveryAdmin => "RecoveryAdmin",
             DataKey::Revision(_) => "Revision",
+            DataKey::RoleHolders(_) => "RoleHolders",
+            DataKey::PaymentPaused => "PaymentPaused",
+            DataKey::PaymentPauseUntil => "PaymentPauseUntil",
         };
         assert_eq!(
             matched, *name,

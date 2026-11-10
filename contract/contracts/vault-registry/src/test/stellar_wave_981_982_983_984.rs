@@ -21,7 +21,7 @@ fn setup_dual_admin<'a>() -> (Env, Address, Address, VaultRegistryClient<'a>) {
 
 #[test]
 fn recover_admin_rejects_current_admin_target() {
-    let (env, admin, recovery, client) = setup_dual_admin();
+    let (_env, admin, recovery, client) = setup_dual_admin();
 
     let res = client.try_recover_admin(&admin);
     assert_eq!(res, Err(Ok(Error::SameAdmin)));
@@ -51,7 +51,7 @@ fn recover_admin_rejects_pending_admin_target() {
 
 #[test]
 fn recover_admin_rejects_recovery_admin_target() {
-    let (env, admin, recovery, client) = setup_dual_admin();
+    let (_env, admin, recovery, client) = setup_dual_admin();
 
     let res = client.try_recover_admin(&recovery);
     assert_eq!(res, Err(Ok(Error::SameAdmin)));
@@ -299,8 +299,13 @@ fn role_inventory_membership_cap_rejects_grant_without_state_change() {
     assert_eq!(res, Err(Ok(Error::RoleCapacityReached)));
     assert!(!client.is_moderator(&overflow));
 
-    let page = client.role_inventory_page(&RoleKind::Moderator, &0, &ROLE_INVENTORY_PAGE_CAP);
-    assert_eq!(page.holders.len(), MAX_ROLE_HOLDERS);
+    let page1 = client.role_inventory_page(&RoleKind::Moderator, &0, &ROLE_INVENTORY_PAGE_CAP);
+    let page2 = client.role_inventory_page(
+        &RoleKind::Moderator,
+        &page1.next_cursor.unwrap(),
+        &ROLE_INVENTORY_PAGE_CAP,
+    );
+    assert_eq!(page1.holders.len() + page2.holders.len(), MAX_ROLE_HOLDERS);
 }
 
 #[test]
@@ -340,7 +345,7 @@ fn registry_info_exposes_role_capability_version() {
 
 #[test]
 fn role_capability_version_is_stable_across_calls() {
-    let (env, creator, client) = setup();
+    let (env, creator, _admin, client) = setup_with_admin();
     let before = client.registry_info().role_capability_version;
 
     client.add_moderator(&Address::generate(&env));

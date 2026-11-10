@@ -7,13 +7,6 @@
 //   • Keep changes bounded to the stated behavior and preserve existing client
 //     compatibility where applicable.
 
-fn setup_with_settlement<'a>() -> (Env, Address, Address, Address, VaultRegistryClient<'a>) {
-    let (env, creator, admin, client) = setup_with_admin();
-    let settler = Address::generate(&env);
-    client.add_settler(&settler);
-    (env, creator, admin, settler, client)
-}
-
 // ── Simulation succeeds for valid payments ──────────────────────────────────
 
 #[test]
@@ -22,19 +15,19 @@ fn simulate_record_payment_succeeds_for_valid_inputs() {
     let resource_id = register_default(&env, &creator, &client, "simres0");
     let payer = Address::generate(&env);
     let amount = LEASE_HOUR_MULTIPLIER * USDC_BASE_UNITS_PER_USDC;
+    let receipt1 = String::from_str(&env, "receipt1");
+    let txhash1 = String::from_str(&env, "txhash1");
 
-    let result = client.simulate_record_payment(
+    let receipt = client.simulate_record_payment(
         &settler,
-        "receipt1",
+        &receipt1,
         &resource_id,
         &payer,
         &amount,
-        &"txhash1",
+        &txhash1,
     );
 
-    assert!(result.is_ok());
-    let receipt = result.unwrap();
-    assert_eq!(receipt.receipt_id, String::from_str(&env, "receipt1"));
+    assert_eq!(receipt.receipt_id, receipt1);
     assert_eq!(receipt.resource_id, resource_id);
     assert_eq!(receipt.payer, payer);
     assert_eq!(receipt.amount, amount);
@@ -47,23 +40,24 @@ fn simulate_record_payment_fails_for_invalid_resource() {
     let (env, _creator, _admin, settler, client) = setup_with_settlement();
     let payer = Address::generate(&env);
     let amount = LEASE_HOUR_MULTIPLIER * USDC_BASE_UNITS_PER_USDC;
+    let invalid_res = String::from_str(&env, "invalid@resource");
 
     let sim_result = client.try_simulate_record_payment(
         &settler,
-        "receipt1",
-        "invalid@resource",
+        &String::from_str(&env, "receipt1"),
+        &invalid_res,
         &payer,
         &amount,
-        &"txhash1",
+        &String::from_str(&env, "txhash1"),
     );
 
     let mut_result = client.try_record_payment(
         &settler,
-        "receipt2",
-        "invalid@resource",
+        &String::from_str(&env, "receipt2"),
+        &invalid_res,
         &payer,
         &amount,
-        &"txhash2",
+        &String::from_str(&env, "txhash2"),
     );
 
     // Both should fail with the same error
@@ -79,20 +73,20 @@ fn simulate_record_payment_fails_for_invalid_payment_amount() {
 
     let sim_result = client.try_simulate_record_payment(
         &settler,
-        "receipt1",
+        &String::from_str(&env, "receipt1"),
         &resource_id,
         &payer,
         &-100i128,
-        &"txhash1",
+        &String::from_str(&env, "txhash1"),
     );
 
     let mut_result = client.try_record_payment(
         &settler,
-        "receipt2",
+        &String::from_str(&env, "receipt2"),
         &resource_id,
         &payer,
         &-100i128,
-        &"txhash2",
+        &String::from_str(&env, "txhash2"),
     );
 
     // Both should fail with the same error
@@ -114,20 +108,20 @@ fn simulate_record_payment_fails_when_paused_like_mutation() {
 
     let sim_result = client.try_simulate_record_payment(
         &settler,
-        "receipt1",
+        &String::from_str(&env, "receipt1"),
         &resource_id,
         &payer,
         &amount,
-        &"txhash1",
+        &String::from_str(&env, "txhash1"),
     );
 
     let mut_result = client.try_record_payment(
         &settler,
-        "receipt2",
+        &String::from_str(&env, "receipt2"),
         &resource_id,
         &payer,
         &amount,
-        &"txhash2",
+        &String::from_str(&env, "txhash2"),
     );
 
     // Both should fail with ContractPaused
@@ -147,20 +141,20 @@ fn simulate_record_payment_fails_when_payment_paused_like_mutation() {
 
     let sim_result = client.try_simulate_record_payment(
         &settler,
-        "receipt1",
+        &String::from_str(&env, "receipt1"),
         &resource_id,
         &payer,
         &amount,
-        &"txhash1",
+        &String::from_str(&env, "txhash1"),
     );
 
     let mut_result = client.try_record_payment(
         &settler,
-        "receipt2",
+        &String::from_str(&env, "receipt2"),
         &resource_id,
         &payer,
         &amount,
-        &"txhash2",
+        &String::from_str(&env, "txhash2"),
     );
 
     // Both should fail with ContractPaused
@@ -176,19 +170,20 @@ fn simulate_record_payment_does_not_modify_state() {
     let resource_id = register_default(&env, &creator, &client, "simres4");
     let payer = Address::generate(&env);
     let amount = LEASE_HOUR_MULTIPLIER * USDC_BASE_UNITS_PER_USDC;
+    let receipt1 = String::from_str(&env, "receipt1");
 
     // Simulate recording a payment
     let _sim_result = client.simulate_record_payment(
         &settler,
-        "receipt1",
+        &receipt1,
         &resource_id,
         &payer,
         &amount,
-        &"txhash1",
+        &String::from_str(&env, "txhash1"),
     );
 
     // Try to get the payment - it should not exist
-    let res = client.try_get_payment("receipt1");
+    let res = client.try_get_payment(&receipt1);
     assert_eq!(res, Err(Ok(Error::NotFound)));
 }
 
@@ -200,17 +195,14 @@ fn simulate_record_payment_returns_correct_receipt_structure() {
     let resource_id = register_default(&env, &creator, &client, "simres5");
     let payer = Address::generate(&env);
     let amount = 5_000_000i128;
-    let receipt_id = "simreceipt";
+    let receipt_id = String::from_str(&env, "simreceipt");
+    let txhash = String::from_str(&env, "txhash");
 
     let sim_receipt = client
-        .simulate_record_payment(&settler, receipt_id, &resource_id, &payer, &amount, &"txhash")
-        .unwrap();
+        .simulate_record_payment(&settler, &receipt_id, &resource_id, &payer, &amount, &txhash);
 
     // Verify all fields
-    assert_eq!(
-        sim_receipt.receipt_id,
-        String::from_str(&env, receipt_id)
-    );
+    assert_eq!(sim_receipt.receipt_id, receipt_id);
     assert_eq!(sim_receipt.resource_id, resource_id);
     assert_eq!(sim_receipt.payer, payer);
     assert_eq!(sim_receipt.amount, amount);
@@ -219,7 +211,7 @@ fn simulate_record_payment_returns_correct_receipt_structure() {
         PaymentState::Escrowed,
         "Simulated payment should be in Escrowed state"
     );
-    assert_eq!(sim_receipt.tx_hash, String::from_str(&env, "txhash"));
+    assert_eq!(sim_receipt.tx_hash, txhash);
 }
 
 // ── Simulation error codes match mutation errors ───────────────────────────
@@ -234,11 +226,11 @@ fn simulate_record_payment_emits_validation_event() {
     // Success case
     client.simulate_record_payment(
         &settler,
-        "receipt1",
+        &String::from_str(&env, "receipt1"),
         &resource_id,
         &payer,
         &amount,
-        &"txhash1",
+        &String::from_str(&env, "txhash1"),
     );
 
     let all_events = env.events().all();
@@ -271,20 +263,20 @@ fn simulate_record_payment_fails_without_settler_role() {
 
     let sim_result = client.try_simulate_record_payment(
         &not_settler,
-        "receipt1",
+        &String::from_str(&env, "receipt1"),
         &resource_id,
         &payer,
         &amount,
-        &"txhash1",
+        &String::from_str(&env, "txhash1"),
     );
 
     let mut_result = client.try_record_payment(
         &not_settler,
-        "receipt2",
+        &String::from_str(&env, "receipt2"),
         &resource_id,
         &payer,
         &amount,
-        &"txhash2",
+        &String::from_str(&env, "txhash2"),
     );
 
     // Both should fail with NotSettler

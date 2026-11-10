@@ -137,14 +137,14 @@ fn snapshot_scoped(env: &Env, contract: &Address, keys: &[DataKey]) -> alloc::ve
 ///
 /// A call that could not be delivered at all (host error or invoke error) is
 /// a test failure, not a contract error, so it panics.
-fn contract_error<T>(
-    result: Result<Result<T, Error>, Result<Error, InvokeError>>,
+fn contract_error<T, E: core::fmt::Debug>(
+    result: Result<Result<T, E>, Result<Error, InvokeError>>,
 ) -> Option<Error> {
     match result {
         Ok(Ok(_)) => None,
-        Ok(Err(error)) => Some(error),
+        Ok(Err(error)) => panic!("return value conversion failed: {error:?}"),
+        Err(Ok(error)) => Some(error),
         Err(Err(error)) => panic!("the call reverted at the host level: {error:?}"),
-        Err(Ok(error)) => panic!("the call could not be invoked: {error:?}"),
     }
 }
 
@@ -153,6 +153,7 @@ fn contract_error<T>(
 #[test]
 fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
     let (env, creator, client) = setup();
+    client.nominate_new_admin(&creator);
     let settler = Address::generate(&env);
     let verifier = Address::generate(&env);
     let payer = Address::generate(&env);
@@ -644,11 +645,11 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
     assert_eq!(
         contract_error(client.try_record_payment(
             &settler,
-            &receipt_id,
+            &String::from_str(&env, "pmt-post-pause"),
             &resource_id,
             &payer,
             &price,
-            &payment_tx,
+            &String::from_str(&env, "tx-post-pause"),
         )),
         None,
         "the registry must accept payments again once the pause is lifted"
@@ -660,6 +661,7 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
 #[test]
 fn pause_scope_matrix_leaves_the_read_surface_open() {
     let (env, creator, client) = setup();
+    client.nominate_new_admin(&creator);
     let settler = Address::generate(&env);
     let payer = Address::generate(&env);
 
@@ -684,14 +686,14 @@ fn pause_scope_matrix_leaves_the_read_surface_open() {
     assert!(client.is_paused(), "the registry must be paused");
     assert_eq!(
         client.get_resource_state(&resource_id),
-        Ok(ResourceState::Listed),
+        ResourceState::Listed,
         "reads must keep working while the registry is paused"
     );
     assert!(client.exists(&resource_id));
     assert_eq!(client.count(), 1);
     assert_eq!(
-        client.get_payment(&receipt_id).map(|receipt| receipt.receipt_id),
-        Ok(receipt_id.clone())
+        client.get_payment(&receipt_id).receipt_id,
+        receipt_id.clone()
     );
 }
 

@@ -26,7 +26,7 @@ fn set_payment_paused_before_admin_set_fails() {
 
 #[test]
 fn admin_can_set_payment_paused() {
-    let (env, _creator, admin, client) = setup_with_admin();
+    let (_env, _creator, admin, client) = setup_with_admin();
 
     assert!(!client.is_payment_paused());
 
@@ -48,10 +48,7 @@ fn set_payment_paused_emits_event() {
         let (_, topics, _) = all.get(i).unwrap();
         topics
             .get(0)
-            .and_then(|v| {
-                <Symbol as TryFromVal<Env, Val>>::try_from_val(&env, &v)
-                    .ok()
-            })
+            .and_then(|v| <Symbol as TryFromVal<Env, Val>>::try_from_val(&env, &v).ok())
             .map(|sym: Symbol| sym == Symbol::new(&env, "payment_pause"))
             .unwrap_or(false)
     });
@@ -65,17 +62,17 @@ fn record_payment_fails_when_payment_paused() {
     let (env, creator, admin, settler, client) = setup_with_settlement();
     let resource_id = register_default(&env, &creator, &client, "payres0");
     let payer = Address::generate(&env);
-    let amount = LEASE_HOUR_MULTIPLIER * USDC_BASE_UNITS_PER_USDC;
+    let amount = 100i128;
 
     client.set_payment_paused(&admin, &true);
 
     let res = client.try_record_payment(
         &settler,
-        "receipt1",
+        &String::from_str(&env, "receipt1"),
         &resource_id,
         &payer,
         &amount,
-        &"txhash1",
+        &String::from_str(&env, "txhash1"),
     );
     assert_eq!(res, Err(Ok(Error::ContractPaused)));
 }
@@ -85,13 +82,15 @@ fn settle_payment_fails_when_payment_paused() {
     let (env, creator, admin, settler, client) = setup_with_settlement();
     let resource_id = register_default(&env, &creator, &client, "payres1");
     let payer = Address::generate(&env);
-    let amount = LEASE_HOUR_MULTIPLIER * USDC_BASE_UNITS_PER_USDC;
+    let amount = 100i128;
+    let receipt1 = String::from_str(&env, "receipt1");
+    let txhash1 = String::from_str(&env, "txhash1");
 
-    client.record_payment(&settler, "receipt1", &resource_id, &payer, &amount, &"txhash1");
+    client.record_payment(&settler, &receipt1, &resource_id, &payer, &amount, &txhash1);
 
     client.set_payment_paused(&admin, &true);
 
-    let res = client.try_settle_payment(&settler, "receipt1");
+    let res = client.try_settle_payment(&settler, &receipt1);
     assert_eq!(res, Err(Ok(Error::ContractPaused)));
 }
 
@@ -102,20 +101,24 @@ fn record_creator_refund_fails_when_payment_paused() {
     let (env, creator, admin, settler, client) = setup_with_settlement();
     let resource_id = register_default(&env, &creator, &client, "payres2");
     let payer = Address::generate(&env);
-    let amount = LEASE_HOUR_MULTIPLIER * USDC_BASE_UNITS_PER_USDC;
+    let amount = 100i128;
+    let receipt1 = String::from_str(&env, "receipt1");
+    let refund1 = String::from_str(&env, "refund1");
+    let txhash1 = String::from_str(&env, "txhash1");
+    let txhash2 = String::from_str(&env, "txhash2");
 
-    client.record_payment(&settler, "receipt1", &resource_id, &payer, &amount, &"txhash1");
-    client.settle_payment(&settler, "receipt1");
+    client.record_payment(&settler, &receipt1, &resource_id, &payer, &amount, &txhash1);
+    client.settle_payment(&settler, &receipt1);
 
     client.set_payment_paused(&admin, &true);
 
     let res = client.try_record_creator_refund(
         &creator,
-        "refund1",
-        "receipt1",
+        &refund1,
+        &receipt1,
         &payer,
         &(amount / 2),
-        &"txhash2",
+        &txhash2,
     );
     assert_eq!(res, Err(Ok(Error::ContractPaused)));
 }
@@ -127,10 +130,17 @@ fn buy_lease_fails_when_payment_paused() {
     let (env, creator, admin, _settler, client) = setup_with_settlement();
     let resource_id = register_default(&env, &creator, &client, "leaseres0");
     let holder = Address::generate(&env);
+    let txhash = String::from_str(&env, "txhash1");
 
     client.set_payment_paused(&admin, &true);
 
-    let res = client.try_buy_lease(&holder, &resource_id, &LeaseTier::Hour, &LEASE_HOUR_MULTIPLIER);
+    let res = client.try_buy_lease(
+        &holder,
+        &resource_id,
+        &LeaseTier::Hour,
+        &LEASE_HOUR_MULTIPLIER,
+        &txhash,
+    );
     assert_eq!(res, Err(Ok(Error::ContractPaused)));
 }
 
@@ -144,7 +154,7 @@ fn set_price_works_when_payment_paused() {
     client.set_payment_paused(&admin, &true);
 
     let new_price = 2_000_000i128;
-    client.set_price(&creator, &resource_id, &new_price);
+    client.set_price(&resource_id, &new_price);
 
     let resource = client.get(&resource_id);
     assert_eq!(resource.price, new_price);
@@ -152,16 +162,22 @@ fn set_price_works_when_payment_paused() {
 
 #[test]
 fn register_works_when_payment_paused() {
-    let (env, creator, admin, _settler, client) = setup_with_admin();
+    let (env, creator, admin, client) = setup_with_admin();
     let _admin2 = admin.clone();
 
     client.set_payment_paused(&admin, &true);
 
-    let resource_id = "newresource";
+    let resource_id = String::from_str(&env, "newresource");
     let price = 1_000_000i128;
-    client.register(&creator, resource_id, &price, "ipfs://metadata");
+    client.register(
+        &creator,
+        &resource_id,
+        &price,
+        &String::from_str(&env, "ipfs://metadata"),
+        &empty_tags(&env),
+    );
 
-    let resource = client.get(resource_id);
+    let resource = client.get(&resource_id);
     assert_eq!(resource.id, resource_id);
     assert_eq!(resource.price, price);
 }
@@ -173,7 +189,9 @@ fn set_payment_paused_until_auto_resumes() {
     let (env, creator, admin, settler, client) = setup_with_settlement();
     let resource_id = register_default(&env, &creator, &client, "payres3");
     let payer = Address::generate(&env);
-    let amount = LEASE_HOUR_MULTIPLIER * USDC_BASE_UNITS_PER_USDC;
+    let amount = 100i128;
+    let receipt1 = String::from_str(&env, "receipt1");
+    let txhash1 = String::from_str(&env, "txhash1");
 
     let now = env.ledger().timestamp();
     let pause_until = now + 100u64;
@@ -183,11 +201,11 @@ fn set_payment_paused_until_auto_resumes() {
     // Should fail while paused
     let res = client.try_record_payment(
         &settler,
-        "receipt1",
+        &receipt1,
         &resource_id,
         &payer,
         &amount,
-        &"txhash1",
+        &txhash1,
     );
     assert_eq!(res, Err(Ok(Error::ContractPaused)));
 
@@ -198,7 +216,7 @@ fn set_payment_paused_until_auto_resumes() {
 
     // Should work after deadline
     assert!(!client.is_payment_paused());
-    client.record_payment(&settler, "receipt1", &resource_id, &payer, &amount, &"txhash1");
+    client.record_payment(&settler, &receipt1, &resource_id, &payer, &amount, &txhash1);
 }
 
 // ── payment_pause_until query ───────────────────────────────────────────────
@@ -223,44 +241,46 @@ fn payment_pause_independent_from_general_pause() {
     let (env, creator, admin, settler, client) = setup_with_settlement();
     let resource_id = register_default(&env, &creator, &client, "indep0");
     let payer = Address::generate(&env);
-    let amount = LEASE_HOUR_MULTIPLIER * USDC_BASE_UNITS_PER_USDC;
+    let amount = 100i128;
+    let receipt1 = String::from_str(&env, "receipt1");
+    let txhash1 = String::from_str(&env, "txhash1");
 
     // Pause only payments
     client.set_payment_paused(&admin, &true);
 
     // General catalog operations work
-    client.set_price(&creator, &resource_id, &2_000_000);
+    client.set_price(&resource_id, &2_000_000);
 
     // Payments fail
     let res = client.try_record_payment(
         &settler,
-        "receipt1",
+        &receipt1,
         &resource_id,
         &payer,
         &amount,
-        &"txhash1",
+        &txhash1,
     );
     assert_eq!(res, Err(Ok(Error::ContractPaused)));
 
     // General pause also prevents catalog mutations
     client.set_paused(&admin, &true);
-    let res2 = client.try_set_price(&creator, &resource_id, &3_000_000);
+    let res2 = client.try_set_price(&resource_id, &3_000_000);
     assert_eq!(res2, Err(Ok(Error::ContractPaused)));
 
     // Unpause general pause, payment pause remains
     client.set_paused(&admin, &false);
 
     // Catalog works again
-    client.set_price(&creator, &resource_id, &3_000_000);
+    client.set_price(&resource_id, &3_000_000);
 
     // Payments still fail
     let res3 = client.try_record_payment(
         &settler,
-        "receipt1",
+        &receipt1,
         &resource_id,
         &payer,
         &amount,
-        &"txhash1",
+        &txhash1,
     );
     assert_eq!(res3, Err(Ok(Error::ContractPaused)));
 }
