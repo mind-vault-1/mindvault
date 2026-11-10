@@ -11807,3 +11807,53 @@ include!("test/stellar_wave_970_971_975_976.rs");
 include!("test/stellar_wave_981_982_983_984.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
+
+
+#[test]
+fn royalty_opt_out_defaults_false_and_creator_can_toggle_with_audit_events() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "royaltyopt1");
+    client.register(
+        &creator,
+        &id,
+        &1_000_000,
+        &String::from_str(&env, "ipfs://royaltyopt1"),
+        &Vec::new(&env),
+    );
+
+    assert_eq!(client.is_royalty_opted_out(&id), false);
+
+    client.set_royalty_opt_out(&id, &true);
+    assert_eq!(client.is_royalty_opted_out(&id), true);
+
+    client.set_royalty_opt_out(&id, &false);
+    assert_eq!(client.is_royalty_opted_out(&id), false);
+}
+
+#[test]
+fn royalty_opt_out_rejects_unknown_or_immutable_resource() {
+    let (env, creator, client) = setup();
+    let missing = String::from_str(&env, "missingres");
+    assert_eq!(
+        client.try_is_royalty_opted_out(&missing),
+        Err(Ok(Error::NotFound))
+    );
+    assert_eq!(
+        client.try_set_royalty_opt_out(&missing, &true),
+        Err(Ok(Error::NotFound))
+    );
+
+    let id = String::from_str(&env, "frozenopt1");
+    client.register(
+        &creator,
+        &id,
+        &1_000_000,
+        &String::from_str(&env, "ipfs://frozenopt1"),
+        &Vec::new(&env),
+    );
+    client.freeze_resource(&id);
+    assert_eq!(
+        client.try_set_royalty_opt_out(&id, &true),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+}

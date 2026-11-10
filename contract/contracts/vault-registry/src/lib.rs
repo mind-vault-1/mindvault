@@ -219,6 +219,8 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("get_metadata_pointers", "—"),
     ("set_tags", "creator"),
     ("set_royalty_recipient", "creator"),
+    ("set_royalty_opt_out", "creator"),
+    ("is_royalty_opted_out", "—"),
     ("set_listed", "creator"),
     ("delist", "creator"),
     ("freeze_resource", "creator"),
@@ -484,6 +486,7 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
         "(prev_tags: Vec<String>, next_tags: Vec<String>)",
     ),
     ("setroyal", "(old_recipient: Option<Address>, new_recipient: Option<Address>)"),
+    ("royalopt", "(creator: Address, old_opt_out: bool, new_opt_out: bool, ledger: u32)"),
     ("transfer", "(previous_owner: Address, new_owner: Address)"),
     ("propose", "(owner: Address, proposed: Address)"),
     ("cancel", "owner: Address"),
@@ -1208,6 +1211,8 @@ pub enum DataKey {
     PaymentPaused,
     /// Unix timestamp at which a scheduled payment pause automatically expires.
     PaymentPauseUntil,
+    /// Per-resource flag indicating whether the creator has opted out of future royalty routing.
+    RoyaltyOptOut(String),
 }
 
 /// Payload of every role grant/revoke event (`addverif`/`rmverif`,
@@ -2377,6 +2382,50 @@ impl VaultRegistry {
         env.events()
             .publish((symbol_short!("setroyal"), id), (old_recipient, recipient));
         Ok(())
+    }
+
+    /// Enable or disable per-resource royalty routing opt-out. Only the current
+    /// resource owner (`creator`) may call this, and the resource must be mutable.
+    /// Defaults to `false` (royalties enabled) for backward compatibility.
+    ///
+    /// Emits a `royalopt` event carrying `(creator, old_opt_out, new_opt_out, ledger)`
+    /// so off-chain indexers and settlement engines preserve a full audit trail.
+    pub fn set_royalty_opt_out(env: Env, id: String, opt_out: bool) -> Result<(), Error> {
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&id)?;
+        let mut resource = Self::load(&env, &id)?;
+        resource.creator.require_auth();
+        Self::ensure_mutable(&resource)?;
+
+        let key = DataKey::RoyaltyOptOut(id.clone());
+        let old_opt_out: bool = env.storage().persistent().get(&key).unwrap_or(false);
+        env.storage().persistent().set(&key, &opt_out);
+        Self::bump_persistent(&env, &key);
+        Self::save(&env, &mut resource);
+
+        env.events().publish(
+            (symbol_short!("royalopt"), id),
+            (
+                resource.creator,
+                old_opt_out,
+                opt_out,
+                env.ledger().sequence(),
+            ),
+        );
+        Ok(())
+    }
+
+    /// Read whether the creator has opted out of royalty routing for resource `id`.
+    /// Returns `false` by default for any registered resource that has not opted out.
+    pub fn is_royalty_opted_out(env: Env, id: String) -> Result<bool, Error> {
+        Self::validate_resource_id(&id)?;
+        let _resource = Self::load(&env, &id)?;
+        let key = DataKey::RoyaltyOptOut(id);
+        let opt_out: bool = env.storage().persistent().get(&key).unwrap_or(false);
+        if env.storage().persistent().has(&key) {
+            Self::bump_persistent(&env, &key);
+        }
+        Ok(opt_out)
     }
 
     pub fn transfer_ownership(env: Env, id: String, new_creator: Address) -> Result<(), Error> {
