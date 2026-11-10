@@ -283,6 +283,49 @@ fn verifier_status_history_is_per_verifier() {
     assert_eq!(v2_page.items.len(), 0u32);
 }
 
+#[test]
+fn verifier_status_history_equal_ledger_updates_never_skip_or_duplicate_across_pages() {
+    let (env, creator, client) = setup();
+    let verifier = add_verifier_helper(&env, &client);
+
+    env.ledger().set_sequence_number(500);
+
+    // Record 5 verifier status updates within the exact same ledger (500).
+    let mut expected_ids = alloc::vec::Vec::new();
+    for i in 0..5u32 {
+        let id = String::from_str(&env, &format!("eqledg{i:02}"));
+        client.register(
+            &creator,
+            &id,
+            &100_000i128,
+            &String::from_str(&env, "ipfs://hist"),
+            &empty_tags(&env),
+        );
+        client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
+        expected_ids.push(id);
+    }
+
+    // Walk across equal-ledger entries 1 item at a time (`limit = 1`) and 2 items at a time (`limit = 2`).
+    for step in [1u32, 2u32] {
+        let mut cursor = Some(0u32);
+        let mut collected = alloc::vec::Vec::new();
+        while let Some(c) = cursor {
+            let page = client.get_verifier_status_history(&verifier, &c, &step);
+            for idx in 0..page.items.len() {
+                collected.push(page.items.get(idx).unwrap());
+            }
+            cursor = page.next_cursor;
+        }
+
+        assert_eq!(collected.len(), 5);
+        for (idx, entry) in collected.iter().enumerate() {
+            assert_eq!(entry.ledger, 500u32);
+            assert_eq!(entry.seq, idx as u32);
+            assert_eq!(entry.resource_id, expected_ids[idx]);
+        }
+    }
+}
+
 // ── Issue #806: list_by_state ─────────────────────────────────────────────────
 
 #[test]
