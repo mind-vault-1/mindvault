@@ -40,7 +40,7 @@ fn setup_strict_auth<'a>() -> (Env, Address, Address, VaultRegistryClient<'a>, S
     client.mock_all_auths().register(
         &owner,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://auth"),
         &empty_tags(&env),
     );
@@ -129,7 +129,7 @@ fn count_tracks_multiple_successful_registrations() {
         client.register(
             &creator,
             &String::from_str(&env, id),
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "ipfs://m"),
             &empty_tags(&env),
         );
@@ -142,7 +142,7 @@ fn count_tracks_multiple_successful_registrations() {
         client.try_register(
             &creator,
             &dup,
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "ipfs://m"),
             &empty_tags(&env)
         ),
@@ -156,9 +156,9 @@ fn duplicate_registration_fails() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "dup");
     let metadata = String::from_str(&env, "ipfs://x");
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
 
-    let res = client.try_register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    let res = client.try_register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
     assert_eq!(res, Err(Ok(Error::AlreadyRegistered)));
     assert_eq!(client.count(), 1);
 }
@@ -181,9 +181,9 @@ fn register_batch_succeeds_for_valid_items() {
     }
 
     let result = client.register_batch(&creator, &items);
-    assert_eq!(result.succeeded.len(), 5);
+    assert_eq!(result.succeeded.len(), 500);
     assert_eq!(result.failed.len(), 0);
-    assert_eq!(client.count(), 5);
+    assert_eq!(client.count(), 500);
 
     // Verify all resources were registered
     for i in 0..5 {
@@ -201,7 +201,7 @@ fn register_batch_handles_partial_failures() {
     client.register(
         &creator,
         &dup_id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -497,7 +497,7 @@ fn register_batch_contract_paused_aborts_entire_batch() {
     client.register(
         &creator,
         &String::from_str(&env, "beforepause"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -570,7 +570,7 @@ fn set_price_rejects_price_exceeding_max() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -597,13 +597,13 @@ fn invalid_resource_id_rejected() {
 
     let empty = String::from_str(&env, "");
     assert_eq!(
-        client.try_register(&creator, &empty, &100i128, &metadata, &empty_tags(&env)),
+        client.try_register(&creator, &empty, &10_000i128, &metadata, &empty_tags(&env)),
         Err(Ok(Error::InvalidResourceId))
     );
 
     let overlong = String::from_str(&env, &"a".repeat(25));
     assert_eq!(
-        client.try_register(&creator, &overlong, &100i128, &metadata, &empty_tags(&env)),
+        client.try_register(&creator, &overlong, &10_000i128, &metadata, &empty_tags(&env)),
         Err(Ok(Error::InvalidResourceId))
     );
 
@@ -612,7 +612,7 @@ fn invalid_resource_id_rejected() {
         client.try_register(
             &creator,
             &invalid_chars,
-            &100i128,
+            &10_000i128,
             &metadata,
             &empty_tags(&env)
         ),
@@ -626,7 +626,7 @@ fn valid_resource_id_is_accepted() {
     let id = String::from_str(&env, "swcn98besxpp6t1u8e77fqz3");
     let metadata = String::from_str(&env, "ipfs://x");
 
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
     assert!(client.exists(&id));
 }
 
@@ -659,7 +659,7 @@ fn reserved_resource_ids_are_rejected() {
     for (lower, upper) in cases {
         let id_lower = String::from_str(&env, lower);
         assert_eq!(
-            client.try_register(&creator, &id_lower, &100i128, &meta, &tags),
+            client.try_register(&creator, &id_lower, &10_000i128, &meta, &tags),
             Err(Ok(Error::ReservedId)),
             "lowercase reserved word `{}` must be rejected with ReservedId",
             lower
@@ -669,7 +669,7 @@ fn reserved_resource_ids_are_rejected() {
         // uppercase variant is caught by InvalidResourceId before the reserved
         // check — this confirms the *format* guard fires first.
         let id_upper = String::from_str(&env, upper);
-        let res = client.try_register(&creator, &id_upper, &100i128, &meta, &tags);
+        let res = client.try_register(&creator, &id_upper, &10_000i128, &meta, &tags);
         assert!(
             res == Err(Ok(Error::ReservedId)) || res == Err(Ok(Error::InvalidResourceId)),
             "uppercase reserved word `{}` must be rejected (got {:?})",
@@ -698,7 +698,7 @@ fn resource_id_boundary_at_max_len() {
     client.register(
         &creator,
         &String::from_str(&env, &at_max),
-        &100i128,
+        &10_000i128,
         &meta,
         &empty_tags(&env),
     );
@@ -709,7 +709,7 @@ fn resource_id_boundary_at_max_len() {
         client.try_register(
             &creator,
             &String::from_str(&env, &over_max),
-            &100i128,
+            &10_000i128,
             &meta,
             &empty_tags(&env)
         ),
@@ -725,7 +725,7 @@ fn resource_id_at_max_length_is_accepted() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://x"),
         &empty_tags(&env),
     );
@@ -745,7 +745,7 @@ fn test_get_resource_state() {
     let id = String::from_str(&env, "stateres");
     let metadata = String::from_str(&env, "ipfs://meta");
 
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
 
     // Default state is Listed
     let state = client.get_resource_state(&id);
@@ -772,7 +772,7 @@ fn get_many_preserves_order_and_missing_slots() {
     client.register(
         &creator,
         &id_a,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://a"),
         &empty_tags(&env),
     );
@@ -1098,7 +1098,7 @@ fn set_price_many_updates_owned_resources() {
         client.register(
             &creator,
             &String::from_str(&env, id),
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "https://example.com/metadata"),
             &empty_tags(&env),
         );
@@ -1126,7 +1126,7 @@ fn set_price_many_validates_before_writing_any_resource() {
         client.register(
             &creator,
             &String::from_str(&env, id),
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "https://example.com/metadata"),
             &empty_tags(&env),
         );
@@ -1163,7 +1163,7 @@ fn set_price_many_rejects_resources_owned_by_another_creator() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "https://example.com/metadata"),
         &empty_tags(&env),
     );
@@ -1219,7 +1219,7 @@ fn update_metadata_changes_pointer() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "https://example.com/old"),
         &empty_tags(&env),
     );
@@ -1239,7 +1239,7 @@ fn register_with_hash_immutably_binds_metadata_pointer() {
     client.register_with_hash(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &metadata,
         &empty_tags(&env),
         &Some(content_hash.clone()),
@@ -1261,7 +1261,7 @@ fn register_with_hash_without_content_hash_keeps_metadata_mutable() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "hashoptional");
     let initial = String::from_str(&env, "ipfs://QmInitial");
-    client.register_with_hash(&creator, &id, &100i128, &initial, &empty_tags(&env), &None);
+    client.register_with_hash(&creator, &id, &10_000i128, &initial, &empty_tags(&env), &None);
 
     let updated = String::from_str(&env, "ipfs://QmUpdated");
     client.update_metadata(&id, &updated);
@@ -1275,7 +1275,7 @@ fn ownership_can_transfer() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1293,7 +1293,7 @@ fn transfer_ownership_event_contains_previous_and_new_owner() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1313,7 +1313,7 @@ fn propose_transfer_event_contains_owner_and_proposed() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1333,7 +1333,7 @@ fn accept_transfer_event_contains_previous_and_new_owner() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1355,7 +1355,7 @@ fn cancel_transfer_event_contains_owner() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1381,7 +1381,7 @@ fn cancel_after_accept_returns_no_pending_transfer() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1412,7 +1412,7 @@ fn original_owner_cannot_cancel_after_accept() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1443,7 +1443,7 @@ fn new_owner_can_propose_and_cancel_new_transfer_after_acceptance() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1465,7 +1465,7 @@ fn set_listed_toggles_listing_state() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1489,7 +1489,7 @@ fn delist_convenience_method() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1507,7 +1507,7 @@ fn set_price_preserves_other_fields() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "r7");
     let metadata = String::from_str(&env, "ipfs://QmPreserve");
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
 
     client.set_price(&id, &250i128);
     let resource = client.get(&id);
@@ -1526,7 +1526,7 @@ fn transfer_ownership_keeps_count_and_order() {
         client.register(
             &creator,
             &String::from_str(&env, id),
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "ipfs://m"),
             &empty_tags(&env),
         );
@@ -1572,7 +1572,7 @@ fn get_owner_returns_creator() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1595,7 +1595,7 @@ fn get_owner_after_transfer() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1617,7 +1617,7 @@ fn get_owner_many_preserves_order_and_missing_slots() {
     client.register(
         &creator,
         &id_a,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://a"),
         &empty_tags(&env),
     );
@@ -1663,7 +1663,7 @@ fn set_listed_requires_creator_auth() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1702,7 +1702,7 @@ fn set_listed_event_emits_old_and_new_state_delist() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1730,7 +1730,7 @@ fn set_listed_event_emits_old_and_new_state_relist() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1770,7 +1770,7 @@ fn set_listed_allows_no_op_same_state() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1786,7 +1786,7 @@ fn delist_convenience_method_emits_old_and_new_state() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1820,14 +1820,14 @@ fn set_listed_and_delist_events_are_consistent() {
     client.register(
         &creator,
         &id1,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
     client.register(
         &creator,
         &id2,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -1877,7 +1877,7 @@ fn list_returns_all_in_insertion_order() {
         client.register(
             &creator,
             &String::from_str(&env, id),
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "ipfs://m"),
             &empty_tags(&env),
         );
@@ -1904,7 +1904,7 @@ fn register_accepts_metadata_at_max_length() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "metamax");
     let metadata = metadata_of_len(&env, MAX_METADATA_POINTER_LEN);
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
     assert_eq!(client.get(&id).metadata.len(), MAX_METADATA_POINTER_LEN);
 }
 
@@ -1914,7 +1914,7 @@ fn register_rejects_metadata_over_max_length() {
     let id = String::from_str(&env, "metalong");
     let metadata = metadata_of_len(&env, MAX_METADATA_POINTER_LEN + 1);
     assert_eq!(
-        client.try_register(&creator, &id, &100i128, &metadata, &empty_tags(&env)),
+        client.try_register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env)),
         Err(Ok(Error::MetadataTooLong))
     );
     assert!(!client.exists(&id));
@@ -1927,7 +1927,7 @@ fn update_metadata_accepts_at_max_length() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://short"),
         &empty_tags(&env),
     );
@@ -1943,7 +1943,7 @@ fn update_metadata_rejects_over_max_length() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ar://short"),
         &empty_tags(&env),
     );
@@ -1969,7 +1969,7 @@ fn register_n(env: &Env, creator: &Address, client: &VaultRegistryClient<'_>, id
         client.register(
             creator,
             &String::from_str(env, id),
-            &100i128,
+            &10_000i128,
             &String::from_str(env, "ipfs://m"),
             &empty_tags(env),
         );
@@ -2004,7 +2004,7 @@ fn list_start_beyond_count_returns_empty() {
     client.register(
         &creator,
         &String::from_str(&env, "x"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -2020,7 +2020,7 @@ fn register_extends_resource_storage_ttl() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -2037,7 +2037,7 @@ fn set_price_reextends_resource_ttl() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -2062,7 +2062,7 @@ fn update_metadata_reextends_resource_ttl() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "https://example.com/old"),
         &empty_tags(&env),
     );
@@ -2083,7 +2083,7 @@ fn transfer_ownership_reextends_resource_ttl() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -2236,7 +2236,7 @@ fn list_page_cursor_past_end_is_empty_end_of_list() {
     client.register(
         &creator,
         &String::from_str(&env, "x"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -2289,7 +2289,7 @@ fn register_with_tags_stores_labels() {
     let metadata = String::from_str(&env, "ipfs://QmTagged");
     let resource_tags = tags(&env, &["dataset", "research"]);
 
-    client.register(&creator, &id, &100i128, &metadata, &resource_tags);
+    client.register(&creator, &id, &10_000i128, &metadata, &resource_tags);
 
     let r = client.get(&id);
     assert_eq!(r.metadata, metadata);
@@ -2303,7 +2303,7 @@ fn set_tags_updates_value_without_touching_metadata() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "tagupdate");
     let metadata = String::from_str(&env, "ipfs://QmKeepMeta");
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
 
     let new_tags = tags(&env, &["finance", "api"]);
     client.set_tags(&id, &new_tags);
@@ -2321,7 +2321,7 @@ fn set_royalty_recipient_overrides_for_resource() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "royal1");
     let metadata = String::from_str(&env, "ipfs://m");
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
 
     // Initially None
     let resource = client.get(&id);
@@ -2341,7 +2341,7 @@ fn set_royalty_recipient_can_clear_override() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "royal2");
     let metadata = String::from_str(&env, "ipfs://m");
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
 
     // Set a recipient
     let recipient = Address::generate(&env);
@@ -2358,7 +2358,7 @@ fn set_royalty_recipient_requires_creator_auth() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "royal3");
     let metadata = String::from_str(&env, "ipfs://m");
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
 
     // Without auth, should fail
     env.mock_auths(&[]);
@@ -2382,7 +2382,7 @@ fn set_royalty_recipient_emits_event() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "royal4");
     let metadata = String::from_str(&env, "ipfs://m");
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
 
     // Set recipient
     let recipient = Address::generate(&env);
@@ -2411,7 +2411,7 @@ fn set_royalty_recipient_fails_when_paused() {
     let (env, creator, admin, client) = setup_with_admin();
     let id = String::from_str(&env, "royal5");
     let metadata = String::from_str(&env, "ipfs://m");
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
 
     // Pause contract
     client.set_paused(&admin, &true);
@@ -2427,7 +2427,7 @@ fn set_royalty_recipient_fails_for_frozen_resource() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "royal6");
     let metadata = String::from_str(&env, "ipfs://m");
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
 
     // Freeze resource
     client.freeze_resource(&id);
@@ -2445,7 +2445,7 @@ fn invalid_metadata_pointer_rejected() {
     let metadata = String::from_str(&env, "not-a-supported-pointer");
 
     assert_eq!(
-        client.try_register(&creator, &id, &100i128, &metadata, &empty_tags(&env)),
+        client.try_register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env)),
         Err(Ok(Error::InvalidMetadataPointer))
     );
     assert!(!client.exists(&id));
@@ -2462,7 +2462,7 @@ fn sha256_pointer_rejects_short_hash() {
     );
 
     assert_eq!(
-        client.try_register(&creator, &id, &100i128, &metadata, &empty_tags(&env)),
+        client.try_register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env)),
         Err(Ok(Error::InvalidMetadataPointer))
     );
     assert!(!client.exists(&id));
@@ -2479,7 +2479,7 @@ fn sha256_pointer_rejects_long_hash() {
     );
 
     assert_eq!(
-        client.try_register(&creator, &id, &100i128, &metadata, &empty_tags(&env)),
+        client.try_register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env)),
         Err(Ok(Error::InvalidMetadataPointer))
     );
     assert!(!client.exists(&id));
@@ -2496,7 +2496,7 @@ fn sha256_pointer_rejects_non_hex_chars() {
     );
 
     assert_eq!(
-        client.try_register(&creator, &id, &100i128, &metadata, &empty_tags(&env)),
+        client.try_register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env)),
         Err(Ok(Error::InvalidMetadataPointer))
     );
     assert!(!client.exists(&id));
@@ -2511,7 +2511,7 @@ fn sha256_pointer_accepts_valid_64_hex_hash() {
         "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
     );
 
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
     let r = client.get(&id);
     assert_eq!(r.metadata, metadata);
 }
@@ -2527,7 +2527,7 @@ fn sha256_dash_prefix_pointer_rejects_short_hash() {
     );
 
     assert_eq!(
-        client.try_register(&creator, &id, &100i128, &metadata, &empty_tags(&env)),
+        client.try_register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env)),
         Err(Ok(Error::InvalidMetadataPointer))
     );
     assert!(!client.exists(&id));
@@ -2542,7 +2542,7 @@ fn sha256_dash_prefix_pointer_accepts_valid_64_hex_hash() {
         "sha-256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
     );
 
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
     let r = client.get(&id);
     assert_eq!(r.metadata, metadata);
 }
@@ -2557,7 +2557,7 @@ fn sha256_pointer_rejected_with_uppercase_hex() {
         "sha256:ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
     );
 
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
     let r = client.get(&id);
     assert_eq!(r.metadata, metadata);
 }
@@ -2572,12 +2572,12 @@ fn invalid_tag_rejected() {
     bad.push_back(empty);
 
     assert_eq!(
-        client.try_register(&creator, &id, &100i128, &metadata, &bad),
+        client.try_register(&creator, &id, &10_000i128, &metadata, &bad),
         Err(Ok(Error::InvalidTag))
     );
     assert!(!client.exists(&id));
 
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
     assert_eq!(client.try_set_tags(&id, &bad), Err(Ok(Error::InvalidTag)));
 }
 
@@ -2919,7 +2919,7 @@ fn register_rejects_empty_metadata() {
     let id = String::from_str(&env, "emptymeta");
     let metadata = String::from_str(&env, "");
     assert_eq!(
-        client.try_register(&creator, &id, &100i128, &metadata, &empty_tags(&env)),
+        client.try_register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env)),
         Err(Ok(Error::EmptyMetadata))
     );
     assert!(!client.exists(&id));
@@ -2932,7 +2932,7 @@ fn update_metadata_rejects_empty() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://QmOriginal"),
         &empty_tags(&env),
     );
@@ -2986,7 +2986,7 @@ fn update_metadata_emits_structured_event_with_old_and_new() {
     let old_meta = String::from_str(&env, "ipfs://QmOld");
     let new_meta = String::from_str(&env, "ipfs://QmNew");
 
-    client.register(&creator, &id, &100i128, &old_meta, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &old_meta, &empty_tags(&env));
     client.update_metadata(&id, &new_meta);
 
     let events = collect_updmeta_events(&env, &client.address);
@@ -3006,7 +3006,7 @@ fn update_metadata_event_old_metadata_matches_prior_state() {
     let meta_v2 = String::from_str(&env, "ipfs://QmV2");
     let meta_v3 = String::from_str(&env, "ipfs://QmV3");
 
-    client.register(&creator, &id, &100i128, &meta_v1, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &meta_v1, &empty_tags(&env));
 
     // First update: v1 → v2; check event immediately after this invocation.
     client.update_metadata(&id, &meta_v2);
@@ -3044,7 +3044,7 @@ fn update_metadata_event_id_matches_resource_id() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -3064,7 +3064,7 @@ fn update_metadata_failed_validation_emits_no_event() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://valid"),
         &empty_tags(&env),
     );
@@ -3094,7 +3094,7 @@ fn update_metadata_too_long_emits_no_event() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -3119,7 +3119,7 @@ fn update_metadata_state_not_mutated_on_failed_call() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "nostatechange");
     let original = String::from_str(&env, "ipfs://QmOriginal");
-    client.register(&creator, &id, &100i128, &original, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &original, &empty_tags(&env));
 
     // Attempt an invalid update (too long).
     let too_long = metadata_of_len(&env, MAX_METADATA_POINTER_LEN + 1);
@@ -3410,7 +3410,7 @@ fn creator_resource_count_increments_on_register() {
     client.register(
         &creator,
         &String::from_str(&env, "r1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -3419,7 +3419,7 @@ fn creator_resource_count_increments_on_register() {
     client.register(
         &creator,
         &String::from_str(&env, "r2"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -3431,7 +3431,7 @@ fn creator_resource_count_increments_on_register() {
         client.try_register(
             &creator,
             &dup,
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "ipfs://m"),
             &empty_tags(&env)
         ),
@@ -3448,14 +3448,14 @@ fn creator_resource_count_moves_on_transfer_ownership() {
     client.register(
         &creator,
         &String::from_str(&env, "r1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
     client.register(
         &creator,
         &String::from_str(&env, "r2"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -3480,7 +3480,7 @@ fn creator_resource_count_zero_for_unrelated_creator() {
     client.register(
         &creator_a,
         &String::from_str(&env, "r1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -3555,7 +3555,7 @@ fn set_tags_rejects_too_many_tags() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -3578,7 +3578,7 @@ fn set_tags_accepts_exactly_max_tags() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -3595,7 +3595,7 @@ fn set_tags_rejects_tag_exceeding_max_length() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -3619,7 +3619,7 @@ fn set_tags_accepts_tag_at_max_length() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -3652,7 +3652,7 @@ fn set_tags_event_includes_prev_and_next() {
 
     // Register with initial tags
     let initial_tags = tags(&env, &["data", "research"]);
-    client.register(&creator, &id, &100i128, &metadata, &initial_tags);
+    client.register(&creator, &id, &10_000i128, &metadata, &initial_tags);
 
     // Replace with new tags
     let new_tags = tags(&env, &["finance", "api"]);
@@ -3681,7 +3681,7 @@ fn set_tags_event_supports_tag_removal() {
 
     // Register with multiple tags then clear all tags
     let initial_tags = tags(&env, &["tag1", "tag2", "tag3"]);
-    client.register(&creator, &id, &100i128, &metadata, &initial_tags);
+    client.register(&creator, &id, &10_000i128, &metadata, &initial_tags);
     client.set_tags(&id, &empty_tags(&env));
 
     let (prev_tags, next_tags) =
@@ -3697,7 +3697,7 @@ fn set_tags_event_supports_tag_addition() {
     let metadata = String::from_str(&env, "ipfs://m");
 
     // Register with no tags then add some
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
     client.set_tags(&id, &tags(&env, &["first", "second"]));
 
     let (prev_tags, next_tags) =
@@ -3715,7 +3715,7 @@ fn set_tags_event_on_replacement() {
 
     // Register with initial tags then replace completely
     let initial_tags = tags(&env, &["old1", "old2"]);
-    client.register(&creator, &id, &100i128, &metadata, &initial_tags);
+    client.register(&creator, &id, &10_000i128, &metadata, &initial_tags);
     client.set_tags(&id, &tags(&env, &["new1", "new2", "new3"]));
 
     let (prev_tags, next_tags) =
@@ -3754,7 +3754,7 @@ fn register_tagged<'a>(
     client.register(
         creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(env, "ipfs://m"),
         &tags(env, tag_strs),
     );
@@ -3992,7 +3992,7 @@ fn register_rejects_duplicate_normalized_tags_with_case_variants() {
         client.try_register(
             &creator,
             &id,
-            &100i128,
+            &10_000i128,
             &metadata,
             &tags(&env, &["ML", "ml"])
         ),
@@ -4001,7 +4001,7 @@ fn register_rejects_duplicate_normalized_tags_with_case_variants() {
     assert!(!client.exists(&id), "rejected register must not persist");
 
     // A single spelling registers and lands in the index exactly once.
-    client.register(&creator, &id, &100i128, &metadata, &tags(&env, &["ML"]));
+    client.register(&creator, &id, &10_000i128, &metadata, &tags(&env, &["ML"]));
 
     let result = client.list_by_tag(&String::from_str(&env, "ml"), &0u32, &20u32);
     assert_eq!(
@@ -4440,7 +4440,7 @@ fn registry_info_is_stable_across_calls_and_registrations() {
     client.register(
         &creator,
         &String::from_str(&env, "infostability"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -4565,7 +4565,7 @@ fn contract_version_is_stable_across_calls_and_registrations() {
     client.register(
         &creator,
         &String::from_str(&env, "cvstability"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -4669,14 +4669,14 @@ fn register_then_settags_events_reconstruct_current_tags() {
     client.register(
         &creator,
         &id_a,
-        &100i128,
+        &10_000i128,
         &metadata,
         &tags(&env, &["alpha", "beta"]),
     );
     let (rid, _) = last_register_tags(&env);
     assert_eq!(rid, id_a);
 
-    client.register(&creator, &id_b, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id_b, &10_000i128, &metadata, &empty_tags(&env));
     let (rid, _) = last_register_tags(&env);
     assert_eq!(rid, id_b);
 
@@ -4738,7 +4738,7 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.register(
         &alice,
         &r0,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -4782,7 +4782,7 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.register(
         &alice,
         &r1,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -4795,7 +4795,7 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.register(
         &alice,
         &r1b,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://mterms"),
         &empty_tags(&env),
     );
@@ -4812,7 +4812,7 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.register(
         &alice,
         &r2,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -5051,8 +5051,8 @@ fn fee_amount_calculation_handles_zero_and_standard_rates() {
 
 #[test]
 fn fee_amount_calculation_truncates_fractional_stroops() {
-    assert_eq!(fee_amount(101, 100), 1);
-    assert_eq!(fee_amount(99, 100), 0);
+    assert_eq!(fee_amount(101, 10_000), 1);
+    assert_eq!(fee_amount(99, 10_000), 0);
 }
 
 #[test]
@@ -5187,7 +5187,7 @@ fn set_fee_recipient_updates_only_recipient() {
 
     // Verify recipient changed but rates stayed the same
     let config = client.get_fee_config().unwrap();
-    assert_eq!(config.platform_fee_bps, 100);
+    assert_eq!(config.platform_fee_bps, 10_000);
     assert_eq!(config.royalty_bps, 200);
     assert_eq!(config.fee_recipient, Some(new_recipient));
 }
@@ -5209,7 +5209,7 @@ fn set_fee_recipient_can_clear_recipient() {
 
     // Verify recipient is None but rates preserved
     let config = client.get_fee_config().unwrap();
-    assert_eq!(config.platform_fee_bps, 100);
+    assert_eq!(config.platform_fee_bps, 10_000);
     assert_eq!(config.royalty_bps, 50);
     assert_eq!(config.fee_recipient, None);
 }
@@ -5296,7 +5296,7 @@ fn set_fee_recipient_emits_setfee_event() {
     match event_data.old_config {
         OptFeeConfig::Some(old) => {
             assert_eq!(old.fee_recipient, Some(initial_recipient));
-            assert_eq!(old.platform_fee_bps, 100);
+            assert_eq!(old.platform_fee_bps, 10_000);
             assert_eq!(old.royalty_bps, 200);
         }
         OptFeeConfig::None => panic!("Expected old config to be Some"),
@@ -5304,7 +5304,7 @@ fn set_fee_recipient_emits_setfee_event() {
 
     // New config should have new recipient
     assert_eq!(event_data.new_config.fee_recipient, Some(new_recipient));
-    assert_eq!(event_data.new_config.platform_fee_bps, 100);
+    assert_eq!(event_data.new_config.platform_fee_bps, 10_000);
     assert_eq!(event_data.new_config.royalty_bps, 200);
 }
 
@@ -5577,7 +5577,7 @@ fn register_default<'a>(
     client.register(
         creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(env, "ipfs://m"),
         &empty_tags(env),
     );
@@ -5991,7 +5991,7 @@ fn tombstoned_resource_is_not_discoverable_by_tag_but_stays_auditable() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://audit"),
         &tags_before,
     );
@@ -6133,7 +6133,7 @@ fn tombstoned_resource_blocks_creator_mutations_deterministically() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://audit2"),
         &tags(&env, &["tag1"]),
     );
@@ -6654,7 +6654,7 @@ fn update_metadata_many_rejects_content_hash_resource() {
     client.register_with_hash(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://bound"),
         &empty_tags(&env),
         &Some(String::from_str(&env, "sha256:abcd1234")),
@@ -6819,7 +6819,7 @@ fn state_digest_paginates_with_next_cursor() {
     }
 
     let page = client.state_digest(&0, &2);
-    assert_eq!(page.total, 5);
+    assert_eq!(page.total, 500);
     assert_eq!(page.next_cursor, Some(2u32));
 
     let page2 = client.state_digest(&2, &2);
@@ -7043,7 +7043,7 @@ proptest! {
 
         // register must succeed
         let reg_result = client.try_register(
-            &creator, &id, &100i128, &metadata, &empty_tags(&env),
+            &creator, &id, &10_000i128, &metadata, &empty_tags(&env),
         );
         prop_assert!(reg_result.is_ok(), "register rejected valid metadata of len {}: {:?}", raw.len(), reg_result);
 
@@ -7078,7 +7078,7 @@ proptest! {
         let metadata = String::from_str(&env, &raw);
 
         let res = client.try_register(
-            &creator, &id, &100i128, &metadata, &empty_tags(&env),
+            &creator, &id, &10_000i128, &metadata, &empty_tags(&env),
         );
         prop_assert_eq!(
             res,
@@ -7093,7 +7093,7 @@ proptest! {
         let valid_meta = String::from_str(&env, "ipfs://seed");
         let id2 = String::from_str(&env, &alloc::format!("{}x", &id_str[..id_str.len().min(10)]));
         // id2 may collide across runs; skip if already exists via the try_ variant
-        if client.try_register(&creator, &id2, &100i128, &valid_meta, &empty_tags(&env)).is_ok() {
+        if client.try_register(&creator, &id2, &10_000i128, &valid_meta, &empty_tags(&env)).is_ok() {
             let upd = client.try_update_metadata(&id2, &metadata);
             prop_assert_eq!(
                 upd,
@@ -7123,7 +7123,7 @@ fn duplicate_register_fails_after_transfer_ownership() {
     let id = String::from_str(&env, "dupxfer");
     let meta = String::from_str(&env, "ipfs://m");
 
-    client.register(&alice, &id, &100i128, &meta, &empty_tags(&env));
+    client.register(&alice, &id, &10_000i128, &meta, &empty_tags(&env));
     client.transfer_ownership(&id, &bob);
 
     // Both the old and the new owner must be rejected on a fresh register.
@@ -7149,7 +7149,7 @@ fn duplicate_register_fails_after_propose_accept_transfer() {
     let id = String::from_str(&env, "dupaccept");
     let meta = String::from_str(&env, "ipfs://m");
 
-    client.register(&alice, &id, &100i128, &meta, &empty_tags(&env));
+    client.register(&alice, &id, &10_000i128, &meta, &empty_tags(&env));
     client.propose_transfer(&id, &bob);
     client.accept_transfer(&id);
 
@@ -7173,7 +7173,7 @@ fn duplicate_register_fails_across_delist_and_relist() {
     let id = String::from_str(&env, "dupdelist");
     let meta = String::from_str(&env, "ipfs://m");
 
-    client.register(&alice, &id, &100i128, &meta, &empty_tags(&env));
+    client.register(&alice, &id, &10_000i128, &meta, &empty_tags(&env));
 
     // After delist: id still occupied.
     client.delist(&id);
@@ -7209,7 +7209,7 @@ fn duplicate_detection_stable_after_mixed_lifecycle_ops() {
     let r1 = String::from_str(&env, "mxr1");
     let r2 = String::from_str(&env, "mxr2");
 
-    client.register(&alice, &r0, &100i128, &meta, &empty_tags(&env));
+    client.register(&alice, &r0, &10_000i128, &meta, &empty_tags(&env));
     client.register(&alice, &r1, &200i128, &meta, &empty_tags(&env));
     client.register(&alice, &r2, &300i128, &meta, &empty_tags(&env));
 
@@ -7254,7 +7254,7 @@ fn register_stamps_updated_at() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -7272,7 +7272,7 @@ fn register_stamps_created_at() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -7290,7 +7290,7 @@ fn set_price_updates_updated_at() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -7346,7 +7346,7 @@ fn update_metadata_updates_updated_at() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://old"),
         &empty_tags(&env),
     );
@@ -7367,7 +7367,7 @@ fn update_metadata_noop_skips_save_and_event() {
     env.ledger().set_sequence_number(7);
     let id = String::from_str(&env, "metanoop");
     let metadata = String::from_str(&env, "ipfs://same");
-    client.register(&creator, &id, &100i128, &metadata, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &metadata, &empty_tags(&env));
     assert_eq!(client.get(&id).updated_at, 7);
 
     env.ledger().set_sequence_number(99);
@@ -7396,7 +7396,7 @@ fn update_metadata_preserves_created_at() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://old"),
         &empty_tags(&env),
     );
@@ -7421,7 +7421,7 @@ fn transfer_ownership_updates_updated_at() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -7443,7 +7443,7 @@ fn transfer_ownership_preserves_created_at() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -7469,7 +7469,7 @@ fn updated_at_is_per_resource() {
     client.register(
         &creator,
         &id_a,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -7479,7 +7479,7 @@ fn updated_at_is_per_resource() {
     client.register(
         &creator,
         &id_b,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -7588,9 +7588,9 @@ fn exists_many_mixed_present_and_absent() {
     let id_c = String::from_str(&env, "ema3");
     let meta = String::from_str(&env, "ipfs://m");
 
-    client.register(&creator, &id_a, &100i128, &meta, &empty_tags(&env));
+    client.register(&creator, &id_a, &10_000i128, &meta, &empty_tags(&env));
     // id_b is NOT registered
-    client.register(&creator, &id_c, &100i128, &meta, &empty_tags(&env));
+    client.register(&creator, &id_c, &10_000i128, &meta, &empty_tags(&env));
 
     let mut ids: Vec<String> = Vec::new(&env);
     ids.push_back(id_a);
@@ -7620,7 +7620,7 @@ fn exists_many_all_present() {
         client.register(
             &creator,
             &String::from_str(&env, id_str),
-            &100i128,
+            &10_000i128,
             &meta,
             &empty_tags(&env),
         );
@@ -7671,7 +7671,7 @@ fn exists_many_bumps_ttl_for_found_ids() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -7722,7 +7722,7 @@ fn all_list_variants_honour_list_page_cap() {
         client.register(
             &creator,
             &String::from_str(&env, &id_str),
-            &100i128,
+            &10_000i128,
             &meta,
             &empty_tags(&env),
         );
@@ -7760,7 +7760,7 @@ fn list_bumps_ttl_for_returned_resources() {
         client.register(
             &creator,
             &String::from_str(&env, id_str),
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "ipfs://m"),
             &empty_tags(&env),
         );
@@ -7923,7 +7923,7 @@ fn anchor_purchase_receipt_round_trip_and_rejects_duplicates() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://anchor"),
         &empty_tags(&env),
     );
@@ -7958,7 +7958,7 @@ fn anchor_purchase_receipt_requires_verifier_role() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://anchor"),
         &empty_tags(&env),
     );
@@ -7987,7 +7987,7 @@ fn record_payment_stamps_ledger_sequence() {
         &String::from_str(&env, "rcptlgr"),
         &id,
         &payer,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "txhash777"),
     );
 
@@ -8046,7 +8046,7 @@ fn settle_payment_twice_fails() {
         &receipt_id,
         &id,
         &creator,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "0xtxtw"),
     );
     client.settle_payment(&settler, &receipt_id);
@@ -8093,7 +8093,7 @@ fn record_payment_nonexistent_resource_fails() {
         &String::from_str(&env, "rcptmiss"),
         &missing,
         &payer,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "0xtxmiss"),
     );
     assert_eq!(res, Err(Ok(Error::NotFound)));
@@ -8215,7 +8215,7 @@ fn record_payment_empty_tx_hash_fails() {
         &String::from_str(&env, "rcptnotx"),
         &id,
         &payer,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, ""),
     );
     assert_eq!(res, Err(Ok(Error::InvalidTxHash)));
@@ -8254,7 +8254,7 @@ fn record_payment_accepts_tx_hash_at_max_length() {
         &String::from_str(&env, "rcptmaxh"),
         &id,
         &payer,
-        &100i128,
+        &10_000i128,
         &max_hash,
     );
     assert_eq!(client.get_payment_receipt(&id, &payer).tx_hash, max_hash);
@@ -8478,7 +8478,7 @@ fn record_payment_sets_ttl_on_write() {
         &receipt_id,
         &id,
         &payer,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "tx"),
     );
 
@@ -8501,7 +8501,7 @@ fn get_payment_receipt_bumps_ttl_on_read() {
         &receipt_id,
         &id,
         &payer,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "tx"),
     );
 
@@ -8650,7 +8650,7 @@ fn set_paused_until_at_or_before_now_resumes_immediately() {
     let (env, _creator, admin, client) = setup_with_admin();
     env.ledger().set_timestamp(100);
 
-    client.set_paused_until(&admin, &100);
+    client.set_paused_until(&admin, &10_000);
     assert!(!client.is_paused());
     assert_eq!(client.pause_until(), None);
 
@@ -8671,7 +8671,7 @@ fn scheduled_pause_blocks_until_deadline_then_auto_resumes() {
         client.try_register(
             &creator,
             &String::from_str(&env, "scheduledpause"),
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "ipfs://m"),
             &empty_tags(&env),
         ),
@@ -8684,7 +8684,7 @@ fn scheduled_pause_blocks_until_deadline_then_auto_resumes() {
     client.register(
         &creator,
         &String::from_str(&env, "scheduledpause"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -8702,7 +8702,7 @@ fn explicit_unpause_clears_scheduled_deadline() {
     client.register(
         &creator,
         &String::from_str(&env, "clearpause"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -8761,7 +8761,7 @@ fn pause_blocks_register() {
     let res = client.try_register(
         &creator,
         &String::from_str(&env, "pausedreg"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -9269,7 +9269,7 @@ fn pause_allows_read_only_methods() {
         &String::from_str(&env, "rcptread"),
         &id,
         &payer,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "txhash"),
     );
     client.set_terms_hash(&creator, &String::from_str(&env, "termshash"));
@@ -9307,7 +9307,7 @@ fn unpause_restores_register() {
     client.register(
         &creator,
         &String::from_str(&env, "unpaused"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -9320,7 +9320,7 @@ fn resource_includes_schema_version() {
     let id = String::from_str(&env, "schemaverres");
     let meta = String::from_str(&env, "ipfs://schemaver");
 
-    client.register(&creator, &id, &100i128, &meta, &empty_tags(&env));
+    client.register(&creator, &id, &10_000i128, &meta, &empty_tags(&env));
 
     let r = client.get(&id);
     assert_eq!(
@@ -9370,7 +9370,7 @@ proptest! {
         for i in 0..num_resources {
             let id_str = format!("res{:04}", i);
             let id = String::from_str(&env, &id_str);
-            client.register(&creator, &id, &100i128, &meta, &empty_tags(&env));
+            client.register(&creator, &id, &10_000i128, &meta, &empty_tags(&env));
         }
 
         assert_eq!(client.count(), num_resources);
@@ -9450,7 +9450,7 @@ proptest! {
             is_valid = false;
         }
 
-        let result = client.try_register(&creator, &id, &100i128, &meta, &tags_vec);
+        let result = client.try_register(&creator, &id, &10_000i128, &meta, &tags_vec);
         if is_valid {
             assert!(result.is_ok(), "valid tag vector should succeed in register");
         } else {
@@ -9510,7 +9510,7 @@ fn resource_id_one_byte_over_max_is_rejected() {
     let res = client.try_register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -9524,7 +9524,7 @@ fn update_metadata_event_topic_holds_full_max_length_id() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -9543,7 +9543,7 @@ fn set_tags_event_topic_holds_full_max_length_id() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -9562,7 +9562,7 @@ fn freeze_metadata_event_topic_holds_full_max_length_id() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -9581,7 +9581,7 @@ fn set_listed_event_topic_holds_full_max_length_id() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -9600,7 +9600,7 @@ fn transfer_ownership_event_topic_holds_full_max_length_id() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -9620,7 +9620,7 @@ fn set_verification_status_event_topic_holds_full_max_length_id() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -9648,7 +9648,7 @@ fn listed_count_increments_on_register() {
     client.register(
         &creator,
         &String::from_str(&env, "res1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://a"),
         &empty_tags(&env),
     );
@@ -9669,7 +9669,7 @@ fn listed_count_decrements_on_set_listed_false() {
     client.register(
         &creator,
         &String::from_str(&env, "res1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://a"),
         &empty_tags(&env),
     );
@@ -9684,7 +9684,7 @@ fn listed_count_increments_when_relisted() {
     client.register(
         &creator,
         &String::from_str(&env, "res1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://a"),
         &empty_tags(&env),
     );
@@ -9701,7 +9701,7 @@ fn listed_count_noop_when_already_in_target_state() {
     client.register(
         &creator,
         &String::from_str(&env, "res1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://a"),
         &empty_tags(&env),
     );
@@ -9717,7 +9717,7 @@ fn listed_count_decrements_on_freeze() {
     client.register(
         &creator,
         &String::from_str(&env, "res1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://a"),
         &empty_tags(&env),
     );
@@ -9732,7 +9732,7 @@ fn listed_count_decrements_on_tombstone() {
     client.register(
         &creator,
         &String::from_str(&env, "res1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://a"),
         &empty_tags(&env),
     );
@@ -9747,7 +9747,7 @@ fn listed_count_increments_when_dispute_resolved_to_listed() {
     client.register(
         &creator,
         &String::from_str(&env, "res1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://a"),
         &empty_tags(&env),
     );
@@ -9794,7 +9794,7 @@ fn anchor_purchase_receipt_different_buyers_same_resource_are_independent() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://norm1"),
         &empty_tags(&env),
     );
@@ -9840,7 +9840,7 @@ fn anchor_purchase_receipt_same_buyer_different_resources_are_independent() {
     client.register(
         &creator,
         &id1,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://norm2a"),
         &empty_tags(&env),
     );
@@ -9882,7 +9882,7 @@ fn anchor_purchase_receipt_duplicate_with_different_hash_still_errors() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://norm3"),
         &empty_tags(&env),
     );
@@ -9915,7 +9915,7 @@ fn anchor_purchase_receipt_failed_duplicate_preserves_original() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://norm4"),
         &empty_tags(&env),
     );
@@ -9962,7 +9962,7 @@ fn get_purchase_receipt_returns_not_found_for_unknown_buyer() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://norm5"),
         &empty_tags(&env),
     );
@@ -9999,7 +9999,7 @@ fn anchor_purchase_receipt_duplicate_guard_is_per_buyer() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://norm6"),
         &empty_tags(&env),
     );
@@ -10423,7 +10423,7 @@ fn tag_popularity_starts_empty_for_pre_upgrade_resources() {
     client.register(
         &creator,
         &legacy_id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://legacy"),
         &tags(&env, &["legacy"]),
     );
@@ -10447,21 +10447,21 @@ fn tag_popularity_starts_empty_for_pre_upgrade_resources() {
     upgraded.register(
         &creator,
         &String::from_str(&env, "popnew1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://new1"),
         &tags(&env, &["legacy"]),
     );
     upgraded.register(
         &creator,
         &String::from_str(&env, "popnew2"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://new2"),
         &tags(&env, &["new"]),
     );
     upgraded.register(
         &creator,
         &String::from_str(&env, "popnew3"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://new3"),
         &tags(&env, &["new"]),
     );
@@ -10986,7 +10986,7 @@ proptest! {
         client.register(
             &creator,
             &id,
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "ipfs://lifeproj"),
             &tags(&env, &["proj"]),
         );
@@ -11132,7 +11132,7 @@ proptest! {
             let id = String::from_str(&env, &id_str);
             let already_registered = registered.contains(&id_str);
 
-            let res = client.try_register(&creator, &id, &100i128, &meta, &empty_tags(&env));
+            let res = client.try_register(&creator, &id, &10_000i128, &meta, &empty_tags(&env));
             if already_registered {
                 assert_eq!(res, Err(Ok(Error::AlreadyRegistered)));
             } else {
@@ -11250,7 +11250,7 @@ fn reactivate_requires_creator_authorization() {
     let meta = String::from_str(&env, "ipfs://auth");
     client
         .mock_all_auths()
-        .register(&creator, &id, &100i128, &meta, &empty_tags(&env));
+        .register(&creator, &id, &10_000i128, &meta, &empty_tags(&env));
     client.mock_all_auths().freeze_resource(&id);
     assert_eq!(client.get(&id).state, ResourceState::Frozen);
 
@@ -11418,7 +11418,7 @@ fn register_accepts_exactly_max_tags() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &eight,
     );
@@ -11434,7 +11434,7 @@ fn register_rejects_one_past_max_tag_count() {
         client.try_register(
             &creator,
             &id,
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "ipfs://m"),
             &nine,
         ),
@@ -11451,7 +11451,7 @@ fn set_tags_accepts_growth_at_the_boundary_then_rejects_boundary_plus_one() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -11478,7 +11478,7 @@ fn max_tag_count_with_an_empty_entry_is_rejected() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -11500,7 +11500,7 @@ fn max_tag_count_with_a_duplicate_normalized_entry_is_rejected() {
     client.register(
         &creator,
         &id,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -11606,21 +11606,21 @@ fn top_tags_counts_successful_registrations_by_normalized_tag() {
     client.register(
         &creator,
         &String::from_str(&env, "popr1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &tags(&env, &["DataSet", "common"]),
     );
     client.register(
         &creator,
         &String::from_str(&env, "popr2"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &tags(&env, &["dataset", "other"]),
     );
     client.register(
         &creator,
         &String::from_str(&env, "popr3"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &tags(&env, &["COMMON"]),
     );
@@ -11642,7 +11642,7 @@ fn whitespace_only_tags_are_rejected_before_counting() {
         client.try_register(
             &creator,
             &String::from_str(&env, "popblank"),
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "ipfs://m"),
             &tags(&env, &[" \t"]),
         ),
@@ -11657,13 +11657,13 @@ fn top_tags_ignores_failed_registrations_and_later_tag_replacements() {
     let id = String::from_str(&env, "popr4");
     let metadata = String::from_str(&env, "ipfs://m");
     let original = tags(&env, &["original"]);
-    client.register(&creator, &id, &100i128, &metadata, &original);
+    client.register(&creator, &id, &10_000i128, &metadata, &original);
 
     assert_eq!(
         client.try_register(
             &creator,
             &id,
-            &100i128,
+            &10_000i128,
             &metadata,
             &tags(&env, &["duplicate"]),
         ),
@@ -11686,7 +11686,7 @@ fn top_tags_caps_the_response_and_honors_zero_limit() {
         client.register(
             &creator,
             &String::from_str(&env, &id),
-            &100i128,
+            &10_000i128,
             &String::from_str(&env, "ipfs://m"),
             &tags(&env, &[tag.as_str()]),
         );
@@ -11701,7 +11701,7 @@ fn top_tags_caps_the_response_and_honors_zero_limit() {
     client.register(
         &creator,
         &String::from_str(&env, "popreenter"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &tags(&env, &["tag20"]),
     );
@@ -11723,7 +11723,7 @@ fn tag_popularity_counter_saturates_at_u32_max() {
     client.register(
         &creator,
         &String::from_str(&env, "popmax"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &tags(&env, &["maxed"]),
     );
@@ -11743,7 +11743,7 @@ fn register_surfaces_count_overflow_when_count_is_max() {
     let res = client.try_register(
         &creator,
         &String::from_str(&env, "ovf1"),
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://m"),
         &empty_tags(&env),
     );
@@ -11776,7 +11776,7 @@ fn differently_cased_tags_indexed_under_same_normalized_tag() {
     client.register(
         &creator,
         &r1,
-        &100i128,
+        &10_000i128,
         &String::from_str(&env, "ipfs://1"),
         &tags(&env, &["RustLang"]),
     );
@@ -11807,3 +11807,106 @@ include!("test/stellar_wave_970_971_975_976.rs");
 include!("test/stellar_wave_981_982_983_984.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
+
+
+#[test]
+fn interleaved_settle_and_refund_retries_preserve_balances_and_events() {
+    let (env, creator, admin, settler, client) = setup_with_settler();
+    let fee_recipient = Address::generate(&env);
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 500,
+        royalty_bps: 0,
+        fee_recipient: Some(fee_recipient),
+    });
+
+    let res_id = String::from_str(&env, "retryex1"); client.register(&creator, &res_id, &10_000, &String::from_str(&env, "ipfs://retryex1"), &Vec::new(&env));
+    let payer = Address::generate(&env);
+    let pay_id = String::from_str(&env, "pay-retry-1");
+    let pay_tx = String::from_str(&env, "tx-pay-retry-1");
+
+    client.record_payment(&settler, &pay_id, &res_id, &payer, &10_000, &pay_tx);
+
+    // 1. Refund before settlement is rejected with InvalidPaymentTransition.
+    assert_eq!(
+        client.try_record_creator_refund(
+            &creator,
+            &String::from_str(&env, "ref-early"),
+            &pay_id,
+            &payer,
+            &10_000,
+            &String::from_str(&env, "tx-ref-early"),
+        ),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+    assert_eq!(client.get_refunded_amount(&pay_id), 0);
+
+    // 2. First settlement succeeds and credits creator earnings + accrued fees once.
+    client.settle_payment(&settler, &pay_id);
+    assert_eq!(client.creator_earnings_estimate(&creator).total_settled, 10_000);
+    assert_eq!(client.creator_earnings_estimate(&creator).settled_count, 1);
+    assert_eq!(client.get_accrued_fees(), 500);
+
+    // 3. Retrying settle_payment before refund fails and does not double-credit balances.
+    assert_eq!(
+        client.try_settle_payment(&settler, &pay_id),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+    assert_eq!(client.creator_earnings_estimate(&creator).total_settled, 10_000);
+    assert_eq!(client.get_accrued_fees(), 500);
+
+    // 4. Full refund succeeds once.
+    let ref_id = String::from_str(&env, "ref-full-1");
+    let ref_tx = String::from_str(&env, "tx-ref-full-1");
+    client.record_creator_refund(&creator, &ref_id, &pay_id, &payer, &10_000, &ref_tx);
+    assert_eq!(client.get_refunded_amount(&pay_id), 10_000);
+    assert_eq!(client.get_remaining_refundable(&pay_id), 0);
+
+    // 5. Retrying the same refund_id, same tx_hash, or a second refund after full refund all fail.
+    assert_eq!(
+        client.try_record_creator_refund(&creator, &ref_id, &pay_id, &payer, &10_000, &ref_tx),
+        Err(Ok(Error::ReceiptAlreadyExists))
+    );
+    assert_eq!(
+        client.try_record_creator_refund(
+            &creator,
+            &String::from_str(&env, "ref-full-2"),
+            &pay_id,
+            &payer,
+            &10_000,
+            &ref_tx,
+        ),
+        Err(Ok(Error::DuplicateTxHash))
+    );
+    assert_eq!(
+        client.try_record_creator_refund(
+            &creator,
+            &String::from_str(&env, "ref-full-3"),
+            &pay_id,
+            &payer,
+            &1,
+            &String::from_str(&env, "tx-ref-full-3"),
+        ),
+        Err(Ok(Error::PaymentAmountMismatch))
+    );
+    assert_eq!(
+        client.try_record_admin_refund(
+            &admin,
+            &String::from_str(&env, "ref-admin-after-full"),
+            &pay_id,
+            &payer,
+            &1,
+            &String::from_str(&env, "tx-ref-admin-after-full"),
+        ),
+        Err(Ok(Error::PaymentAmountMismatch))
+    );
+
+    // 6. Retrying settle_payment after full refund is rejected and leaves balances intact.
+    assert_eq!(
+        client.try_settle_payment(&settler, &pay_id),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+    assert_eq!(client.get_refunded_amount(&pay_id), 10_000);
+    assert_eq!(client.get_remaining_refundable(&pay_id), 0);
+    assert_eq!(client.creator_earnings_estimate(&creator).total_settled, 10_000);
+    assert_eq!(client.get_accrued_fees(), 500);
+}

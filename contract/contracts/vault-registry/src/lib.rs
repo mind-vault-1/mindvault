@@ -4927,7 +4927,12 @@ impl VaultRegistry {
             .get(&receipt_key)
             .ok_or(Error::NotFound)?;
 
-        if receipt.state != PaymentState::Escrowed {
+        let refunded_so_far: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RefundedAmount(receipt_id.clone()))
+            .unwrap_or(0);
+        if receipt.state != PaymentState::Escrowed || refunded_so_far > 0 {
             return Err(Error::InvalidPaymentTransition);
         }
 
