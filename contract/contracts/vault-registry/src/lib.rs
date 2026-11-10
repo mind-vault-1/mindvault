@@ -71,6 +71,8 @@ pub const SUPPORTED_ATTESTATION_HASH_ALGORITHMS: [&str; 2] = ["sha256", "sha512"
 /// `set_flag_reason_hash`. Same bound as `MAX_TERMS_HASH_LEN` — both store a
 /// fixed-size digest of arbitrary off-chain content.
 pub const MAX_FLAG_REASON_HASH_LEN: u32 = 64;
+/// Max byte length for an optional off-chain refund reason digest attached to a [`RefundReceipt`].
+pub const MAX_REFUND_REASON_HASH_LEN: u32 = 64;
 
 /// Max length for a verifier's off-chain attestation revocation reason hash.
 /// Bounded to the same length as other hash fields for consistency and to
@@ -351,8 +353,11 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("set_refund_window", "admin"),
     ("refund_window", "—"),
     ("record_creator_refund", "creator"),
+    ("record_creator_refund_reason", "creator"),
     ("record_admin_refund", "admin override"),
+    ("record_admin_refund_reason", "admin override"),
     ("get_refund", "—"),
+    ("get_refund_reason_hash", "—"),
     ("get_refunded_amount", "—"),
     ("get_remaining_refundable", "—"),
     ("get_refund_deadline", "—"),
@@ -1409,6 +1414,8 @@ pub struct RefundReceipt {
     /// Remaining refundable balance after this refund is applied.
     /// Calculated as: original payment amount - cumulative refunds (including this one).
     pub remaining_balance: i128,
+    /// Optional bounded digest (1..=64 bytes) of the off-chain refund or dispute rationale.
+    pub reason_hash: Option<String>,
 }
 
 /// Immutable on-chain anchor for a purchase receipt hash.
@@ -5037,6 +5044,33 @@ impl VaultRegistry {
             recipient,
             amount,
             tx_hash,
+            None,
+            false,
+        )
+    }
+
+    /// Record a creator-initiated refund with an optional bounded reason hash
+    /// (1..=64 bytes) for off-chain dispute review.
+    pub fn record_creator_refund_reason(
+        env: Env,
+        creator: Address,
+        refund_id: String,
+        payment_receipt_id: String,
+        recipient: Address,
+        amount: i128,
+        tx_hash: String,
+        reason_hash: Option<String>,
+    ) -> Result<(), Error> {
+        creator.require_auth();
+        Self::record_refund(
+            &env,
+            creator,
+            refund_id,
+            payment_receipt_id,
+            recipient,
+            amount,
+            tx_hash,
+            reason_hash,
             false,
         )
     }
@@ -5061,6 +5095,33 @@ impl VaultRegistry {
             recipient,
             amount,
             tx_hash,
+            None,
+            true,
+        )
+    }
+
+    /// Record an admin-override refund with an optional bounded reason hash
+    /// (1..=64 bytes) for off-chain dispute review.
+    pub fn record_admin_refund_reason(
+        env: Env,
+        admin: Address,
+        refund_id: String,
+        payment_receipt_id: String,
+        recipient: Address,
+        amount: i128,
+        tx_hash: String,
+        reason_hash: Option<String>,
+    ) -> Result<(), Error> {
+        Self::require_current_admin(&env, &admin)?;
+        Self::record_refund(
+            &env,
+            admin,
+            refund_id,
+            payment_receipt_id,
+            recipient,
+            amount,
+            tx_hash,
+            reason_hash,
             true,
         )
     }
@@ -5076,6 +5137,11 @@ impl VaultRegistry {
             .ok_or(Error::NotFound)?;
         Self::bump_persistent(&env, &key);
         Ok(refund)
+    }
+
+    /// Read the optional reason hash attached to a refund receipt.
+    pub fn get_refund_reason_hash(env: Env, refund_id: String) -> Result<Option<String>, Error> {
+        Ok(Self::get_refund(env, refund_id)?.reason_hash)
     }
 
     /// Total amount recorded as refunded for a payment receipt.
@@ -6173,6 +6239,7 @@ impl VaultRegistry {
         recipient: Address,
         amount: i128,
         tx_hash: String,
+        reason_hash: Option<String>,
         admin_override: bool,
     ) -> Result<(), Error> {
         Self::require_not_paused(env)?;
@@ -6181,6 +6248,15 @@ impl VaultRegistry {
         Self::validate_receipt_id(&payment_receipt_id)?;
         Self::validate_payment_amount(amount)?;
         Self::validate_tx_hash(&tx_hash)?;
+        if let Some(ref hash) = reason_hash {
+            Self::validate_bounded_string(
+                hash,
+                1,
+                MAX_REFUND_REASON_HASH_LEN,
+                Error::FlagReasonHashTooLong,
+                Error::FlagReasonHashTooLong,
+            )?;
+        }
 
         let refund_key = DataKey::RefundReceipt(refund_id.clone());
         if env.storage().persistent().has(&refund_key) {
@@ -6257,6 +6333,7 @@ impl VaultRegistry {
             recorded_at: env.ledger().sequence(),
             admin_override,
             remaining_balance,
+            reason_hash,
         };
         env.storage().persistent().set(&refund_key, &refund);
         Self::bump_persistent(env, &refund_key);

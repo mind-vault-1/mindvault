@@ -11807,3 +11807,103 @@ include!("test/stellar_wave_970_971_975_976.rs");
 include!("test/stellar_wave_981_982_983_984.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
+
+
+#[test]
+fn refund_reason_hash_validated_persisted_emitted_and_optional_compatible() {
+    let (env, creator, admin, settler, client) = setup_with_settler();
+    let res_id = register_default(&env, &creator, &client, "refhash1");
+    let payer = Address::generate(&env);
+
+    let pay_id = String::from_str(&env, "pay-reason-1");
+    client.record_payment(
+        &settler,
+        &pay_id,
+        &res_id,
+        &payer,
+        &100,
+        &String::from_str(&env, "tx-pay-reason-1"),
+    );
+    client.settle_payment(&settler, &pay_id);
+
+    // 1. Legacy record_creator_refund stores reason_hash = None for compatibility.
+    let ref_legacy = String::from_str(&env, "ref-legacy-1");
+    client.record_creator_refund(
+        &creator,
+        &ref_legacy,
+        &pay_id,
+        &payer,
+        &25,
+        &String::from_str(&env, "tx-ref-legacy-1"),
+    );
+    assert_eq!(client.get_refund(&ref_legacy).reason_hash, None);
+    assert_eq!(client.get_refund_reason_hash(&ref_legacy), None);
+
+    // 2. Empty or overlong reason_hash is rejected before writing storage.
+    let empty_hash = Some(String::from_str(&env, ""));
+    let too_long_hash = Some(String::from_str(
+        &env,
+        &"a".repeat((MAX_REFUND_REASON_HASH_LEN + 1) as usize),
+    ));
+    assert_eq!(
+        client.try_record_creator_refund_reason(
+            &creator,
+            &String::from_str(&env, "ref-bad-empty"),
+            &pay_id,
+            &payer,
+            &25,
+            &String::from_str(&env, "tx-ref-bad-empty"),
+            &empty_hash,
+        ),
+        Err(Ok(Error::FlagReasonHashTooLong))
+    );
+    assert_eq!(
+        client.try_record_admin_refund_reason(
+            &admin,
+            &String::from_str(&env, "ref-bad-long"),
+            &pay_id,
+            &payer,
+            &25,
+            &String::from_str(&env, "tx-ref-bad-long"),
+            &too_long_hash,
+        ),
+        Err(Ok(Error::FlagReasonHashTooLong))
+    );
+
+    // 3. Valid creator and admin reason hashes (including exact 64-byte boundary) are stored, returned, and emitted.
+    let creator_reason = String::from_str(&env, &"c".repeat(MAX_REFUND_REASON_HASH_LEN as usize));
+    let ref_creator = String::from_str(&env, "ref-creator-rsn");
+    client.record_creator_refund_reason(
+        &creator,
+        &ref_creator,
+        &pay_id,
+        &payer,
+        &25,
+        &String::from_str(&env, "tx-ref-creator-rsn"),
+        &Some(creator_reason.clone()),
+    );
+    let stored_creator_ref = client.get_refund(&ref_creator);
+    assert_eq!(stored_creator_ref.reason_hash, Some(creator_reason.clone()));
+    assert_eq!(
+        client.get_refund_reason_hash(&ref_creator),
+        Some(creator_reason)
+    );
+
+    let admin_reason = String::from_str(&env, "sha256:dispute-ticket-42");
+    let ref_admin = String::from_str(&env, "ref-admin-rsn");
+    client.record_admin_refund_reason(
+        &admin,
+        &ref_admin,
+        &pay_id,
+        &payer,
+        &50,
+        &String::from_str(&env, "tx-ref-admin-rsn"),
+        &Some(admin_reason.clone()),
+    );
+    let stored_admin_ref = client.get_refund(&ref_admin);
+    assert_eq!(stored_admin_ref.reason_hash, Some(admin_reason.clone()));
+    assert_eq!(
+        client.get_refund_reason_hash(&ref_admin),
+        Some(admin_reason)
+    );
+}
