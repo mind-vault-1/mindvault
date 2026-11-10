@@ -11824,6 +11824,92 @@ fn differently_cased_tags_indexed_under_same_normalized_tag() {
     assert_eq!(results.len(), 2);
 }
 
+#[test]
+fn list_holder_leases_page_filters_active_vs_all_and_paginates_deterministically() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let settler = Address::generate(&env);
+    client.add_settler(&settler);
+
+    let holder = Address::generate(&env);
+    let other_holder = Address::generate(&env);
+
+    let r0 = register_priced(&env, &creator, &client, "hlease0", 100i128);
+    let r1 = register_priced(&env, &creator, &client, "hlease1", 100i128);
+    let r2 = register_priced(&env, &creator, &client, "hlease2", 100i128);
+    let r3 = register_priced(&env, &creator, &client, "hlease3", 100i128);
+
+    env.ledger().set_sequence_number(100);
+    // r0: Hour lease (expires at 820)
+    client.record_lease(
+        &settler,
+        &holder,
+        &r0,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "tx0"),
+    );
+    // r1: Day lease (revoked at ledger 100)
+    client.record_lease(
+        &settler,
+        &holder,
+        &r1,
+        &LeaseTier::Day,
+        &300i128,
+        &String::from_str(&env, "tx1"),
+    );
+    client.revoke_lease(&r1, &holder);
+    // r2: Day lease (remains active after ledger 820)
+    client.record_lease(
+        &settler,
+        &holder,
+        &r2,
+        &LeaseTier::Day,
+        &300i128,
+        &String::from_str(&env, "tx2"),
+    );
+    // r3: Week lease (remains active after ledger 820)
+    client.record_lease(
+        &settler,
+        &holder,
+        &r3,
+        &LeaseTier::Week,
+        &700i128,
+        &String::from_str(&env, "tx3"),
+    );
+
+    // Advance past r0's Hour expiry (820) so r0 is expired, r1 is revoked, and r2 + r3 are active.
+    env.ledger().set_sequence_number(100 + LEASE_HOUR_LEDGERS);
+
+    // 1. `active_only = true` returns only r2 and r3, paginating cleanly with limit=1.
+    let active_p1 = client.list_holder_leases_page(&holder, &true, &0u32, &1u32);
+    assert_eq!(active_p1.items.len(), 1u32);
+    assert_eq!(active_p1.items.get(0).unwrap().resource_id, r2);
+    assert_eq!(active_p1.next_cursor, Some(3u32));
+
+    let active_p2 = client.list_holder_leases_page(&holder, &true, &3u32, &1u32);
+    assert_eq!(active_p2.items.len(), 1u32);
+    assert_eq!(active_p2.items.get(0).unwrap().resource_id, r3);
+    assert_eq!(active_p2.next_cursor, None);
+
+    // 2. `active_only = false` returns all 4 leases (expired r0, revoked r1, active r2, active r3).
+    let all_p1 = client.list_holder_leases_page(&holder, &false, &0u32, &2u32);
+    assert_eq!(all_p1.items.len(), 2u32);
+    assert_eq!(all_p1.items.get(0).unwrap().resource_id, r0);
+    assert_eq!(all_p1.items.get(1).unwrap().resource_id, r1);
+    assert_eq!(all_p1.next_cursor, Some(2u32));
+
+    let all_p2 = client.list_holder_leases_page(&holder, &false, &2u32, &2u32);
+    assert_eq!(all_p2.items.len(), 2u32);
+    assert_eq!(all_p2.items.get(0).unwrap().resource_id, r2);
+    assert_eq!(all_p2.items.get(1).unwrap().resource_id, r3);
+    assert_eq!(all_p2.next_cursor, None);
+
+    // 3. Holder with no leases gets an empty page.
+    let empty = client.list_holder_leases_page(&other_holder, &false, &0u32, &20u32);
+    assert_eq!(empty.items.len(), 0u32);
+    assert_eq!(empty.next_cursor, None);
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 

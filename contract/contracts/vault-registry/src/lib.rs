@@ -370,6 +370,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("revoke_lease", "creator"),
     ("get_lease", "—"),
     ("lease_is_active", "—"),
+    ("list_holder_leases_page", "—"),
     ("lease_price", "—"),
     // ── TTL ───────────────────────────────────────────────────────────────
     ("extend_resource_ttl", "creator"),
@@ -1024,6 +1025,14 @@ pub struct VerifierStatusEntry {
 #[derive(Clone, Debug, PartialEq)]
 pub struct VerifierStatusPage {
     pub items: Vec<VerifierStatusEntry>,
+    pub next_cursor: Option<u32>,
+}
+
+/// One page of access leases for a holder with a cursor for the next page.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeasePage {
+    pub items: Vec<Lease>,
     pub next_cursor: Option<u32>,
 }
 
@@ -6001,6 +6010,75 @@ impl VaultRegistry {
             Some(lease) => Self::lease_grants_access(&env, &lease),
             None => false,
         }
+    }
+
+    /// Return a bounded page of access leases recorded for `holder`, in
+    /// deterministic catalog registration order.
+    ///
+    /// - When `active_only` is `true`, only leases that currently grant access
+    ///   (`Active` and `ledger < expiry_ledger`) are returned; when `false`,
+    ///   all leases for `holder` (`Pending`, `Active`, expired, or `Revoked`)
+    ///   are returned.
+    /// - `cursor` is a 0-based catalog index.
+    /// - `limit` is capped at [`LIST_PAGE_CAP`] (20).
+    /// - `next_cursor` is `Some(next_index)` when more matching leases exist
+    ///   after this page, or `None` at end-of-list.
+    pub fn list_holder_leases_page(
+        env: Env,
+        holder: Address,
+        active_only: bool,
+        cursor: u32,
+        limit: u32,
+    ) -> LeasePage {
+        let total: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
+        let page_size = limit.min(LIST_PAGE_CAP);
+        if page_size == 0 {
+            return LeasePage {
+                items: Vec::new(&env),
+                next_cursor: None,
+            };
+        }
+
+        let mut items: Vec<Lease> = Vec::new(&env);
+        let mut i = cursor;
+
+        let load_matching_lease = |idx: u32| -> Option<Lease> {
+            let idx_key = DataKey::Index(idx);
+            let id = env
+                .storage()
+                .persistent()
+                .get::<DataKey, String>(&idx_key)?;
+            let lease_key = DataKey::Lease(id, holder.clone());
+            let lease = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Lease>(&lease_key)?;
+            if !active_only || Self::lease_grants_access(&env, &lease) {
+                Self::bump_persistent(&env, &lease_key);
+                Some(lease)
+            } else {
+                None
+            }
+        };
+
+        while i < total && items.len() < page_size {
+            if let Some(lease) = load_matching_lease(i) {
+                items.push_back(lease);
+            }
+            i += 1;
+        }
+
+        let mut next_cursor = None;
+        let mut probe = i;
+        while probe < total {
+            if load_matching_lease(probe).is_some() {
+                next_cursor = Some(probe);
+                break;
+            }
+            probe += 1;
+        }
+
+        LeasePage { items, next_cursor }
     }
 
     /// Extend the TTL of a resource's persistent storage entry.
