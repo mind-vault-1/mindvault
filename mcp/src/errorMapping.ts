@@ -56,6 +56,11 @@ export interface MappedError {
    * the request id without the caller having to parse it back out of prose.
    */
   malformed?: MalformedResponseBody;
+  /**
+   * Optional upstream `Retry-After` wait in milliseconds when present on a
+   * retryable response (#1066).
+   */
+  retryAfterMs?: number;
 }
 
 /**

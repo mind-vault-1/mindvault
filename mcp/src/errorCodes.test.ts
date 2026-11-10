@@ -14,12 +14,15 @@ import { fileURLToPath } from "node:url";
 import {
   ALL_ERROR_CODES,
   ERROR_CODES,
+  MAX_SUGGESTED_RETRY_DELAY_MS,
   codeForMappedError,
   errorCodeFor,
   formatCodeSuffix,
   isErrorCode,
   isRetrySafe,
   localErrorCode,
+  retryHintFor,
+  safeUserErrorMessage,
   specFor,
   toolErrorPayload,
   type ErrorCode,
@@ -97,6 +100,29 @@ describe("the catalog", () => {
     // An identical retry fails identically; saying "retry" wastes a call.
     expect(ERROR_CODES.MV_ARGUMENT_INVALID.retry).toBe("unsafe");
     expect(ERROR_CODES.MV_NOT_FOUND.retry).toBe("unsafe");
+  });
+
+  it("aligns retryable and suggestedDelayMs with retry classification for every code", () => {
+    for (const code of ALL_ERROR_CODES) {
+      const spec = ERROR_CODES[code];
+      if (spec.retry === "safe") {
+        expect(spec.retryable, `${code} should be retryable`).toBe(true);
+        expect(typeof spec.suggestedDelayMs, `${code} should have numeric delay`).toBe("number");
+        expect(spec.suggestedDelayMs!, `${code} delay must be non-negative`).toBeGreaterThanOrEqual(
+          0,
+        );
+      } else {
+        expect(spec.retryable, `${code} must not be retryable`).toBe(false);
+        expect(spec.suggestedDelayMs, `${code} must have null delay`).toBeNull();
+      }
+    }
+  });
+
+  it("keeps MV_UNKNOWN and MV_PAYMENT_REJECTED non-retryable by default", () => {
+    expect(ERROR_CODES.MV_UNKNOWN.retryable).toBe(false);
+    expect(ERROR_CODES.MV_UNKNOWN.suggestedDelayMs).toBeNull();
+    expect(ERROR_CODES.MV_PAYMENT_REJECTED.retryable).toBe(false);
+    expect(ERROR_CODES.MV_PAYMENT_REJECTED.suggestedDelayMs).toBeNull();
   });
 });
 
@@ -326,6 +352,62 @@ describe("toolErrorPayload", () => {
       const payload = toolErrorPayload({ error, summary: "Failed" });
       expect(isErrorCode(payload.code), `no code for ${String(error)}`).toBe(true);
     }
+  });
+
+  it("includes retryable, suggestedDelayMs, and userMessage matching classification", () => {
+    const retryablePayload = toolErrorPayload({
+      error: new Error("throttled"),
+      mapped: mapped({ category: "rate_limit", source: "api", status: 429 }),
+      summary: "Browse failed: too many requests",
+    });
+    expect(retryablePayload.code).toBe("MV_RATE_LIMITED");
+    expect(retryablePayload.retryable).toBe(true);
+    expect(retryablePayload.suggestedDelayMs).toBe(5_000);
+    expect(retryablePayload.userMessage).toBe("Browse failed: too many requests");
+
+    const unknownPayload = toolErrorPayload({
+      error: new Error("unclassified failure"),
+      summary: "Something went wrong",
+      retryAfterMs: 3_000,
+    });
+    expect(unknownPayload.code).toBe("MV_UNKNOWN");
+    expect(unknownPayload.retryable).toBe(false);
+    expect(unknownPayload.suggestedDelayMs).toBeNull();
+  });
+
+  it("clamps retryAfterMs overrides for retryable codes and ignores them for non-retryable codes", () => {
+    const clampedHigh = retryHintFor("MV_RATE_LIMITED", null, 999_999);
+    expect(clampedHigh.retryable).toBe(true);
+    expect(clampedHigh.suggestedDelayMs).toBe(MAX_SUGGESTED_RETRY_DELAY_MS);
+
+    const clampedLow = retryHintFor("MV_TIMEOUT", null, -50);
+    expect(clampedLow.retryable).toBe(true);
+    expect(clampedLow.suggestedDelayMs).toBe(0);
+
+    const mappedOverride = retryHintFor(
+      new Error("throttled"),
+      mapped({ category: "rate_limit", retryAfterMs: 12_500 }),
+    );
+    expect(mappedOverride.suggestedDelayMs).toBe(12_500);
+
+    const nonRetryable = retryHintFor("MV_ARGUMENT_INVALID", null, 1_500);
+    expect(nonRetryable.retryable).toBe(false);
+    expect(nonRetryable.suggestedDelayMs).toBeNull();
+  });
+
+  it("redacts secrets and strips multiline noise in userMessage", () => {
+    const stellarKey = "S" + "A".repeat(55);
+    const payload = toolErrorPayload({
+      error: new Error("auth error"),
+      summary: `Publish failed with key ${stellarKey} and Authorization: Bearer supersecrettokenvalue123456\nSource: api`,
+    });
+    expect(payload.userMessage).not.toContain(stellarKey);
+    expect(payload.userMessage).not.toContain("supersecrettokenvalue123456");
+    expect(payload.userMessage).not.toContain("\n");
+    expect(payload.userMessage).toContain("[REDACTED]");
+    expect(safeUserErrorMessage("   ", ERROR_CODES.MV_TIMEOUT.description)).toBe(
+      ERROR_CODES.MV_TIMEOUT.description,
+    );
   });
 });
 

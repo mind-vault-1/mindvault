@@ -22,6 +22,7 @@
  */
 
 import type { ErrorCategory, ErrorSource, MappedError } from "./errorMapping.js";
+import { redactSecrets } from "./redaction.js";
 import { Errors as RegistryErrors } from "@mindvault/registry-client";
 
 /**
@@ -87,18 +88,45 @@ export interface ErrorCodeSpec {
   /** One sentence: what this code means. */
   description: string;
   retry: RetrySafety;
+  /**
+   * True iff repeating the call is safe without manual state inspection
+   * (`retry === "safe"`). Unknown and conditional failures are non-retryable
+   * (`false`) by default (#1066).
+   */
+  retryable: boolean;
+  /**
+   * Default wait in milliseconds before retrying when `retryable` is `true`, or
+   * `null` when `retryable` is `false` (#1066).
+   */
+  suggestedDelayMs: number | null;
   /** What to do about it, imperative. */
   action: string;
 }
+
+/**
+ * Upper bound (5 minutes) applied to caller- or header-supplied `retryAfterMs`
+ * overrides in {@link retryHintFor} and {@link toolErrorPayload}.
+ */
+export const MAX_SUGGESTED_RETRY_DELAY_MS = 300_000;
 
 function spec(
   code: ErrorCode,
   category: ErrorCategory,
   retry: RetrySafety,
+  suggestedDelayMs: number | null,
   description: string,
   action: string,
 ): ErrorCodeSpec {
-  return { code, category, retry, description, action };
+  const retryable = retry === "safe";
+  return {
+    code,
+    category,
+    retry,
+    retryable,
+    suggestedDelayMs: retryable ? (suggestedDelayMs ?? 0) : null,
+    description,
+    action,
+  };
 }
 
 /**
@@ -110,6 +138,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_NETWORK_UNREACHABLE",
     "network",
     "safe",
+    1_000,
     "The service could not be reached — DNS failure, refused connection, or a dropped socket.",
     "Check connectivity and retry. Idempotent reads already retry automatically.",
   ),
@@ -117,6 +146,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_TIMEOUT",
     "timeout",
     "safe",
+    1_000,
     "The request exceeded its configured deadline.",
     "Retry, or raise the relevant MINDVAULT_*_TIMEOUT_MS for a legitimately slow endpoint.",
   ),
@@ -124,6 +154,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_RATE_LIMITED",
     "rate_limit",
     "safe",
+    5_000,
     "The upstream service is throttling this client.",
     "Wait for the window to pass before retrying. Retrying immediately extends the throttle.",
   ),
@@ -131,6 +162,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_UPSTREAM_ERROR",
     "server",
     "safe",
+    2_000,
     "The upstream service returned a 5xx.",
     "Retry shortly. If it persists, the service is down and no client change will help.",
   ),
@@ -138,6 +170,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_MALFORMED_RESPONSE",
     "server",
     "safe",
+    1_000,
     "The upstream answered with a body that was not JSON — a proxy, gateway or load balancer usually does this, and the request may never have reached the service.",
     "Retry once. If it persists, quote the request id from the error when reporting the failure.",
   ),
@@ -145,6 +178,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_ARGUMENT_INVALID",
     "validation",
     "unsafe",
+    null,
     "The arguments failed validation, locally or at the server.",
     "Fix the arguments and call again. An identical retry fails identically.",
   ),
@@ -152,6 +186,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_TOOL_UNKNOWN",
     "validation",
     "unsafe",
+    null,
     "No tool by that name is exposed by this server.",
     "List the available tools and call one of them.",
   ),
@@ -159,6 +194,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_NOT_FOUND",
     "not_found",
     "unsafe",
+    null,
     "The referenced resource does not exist.",
     "Confirm the id with mindvault_browse or mindvault_search before retrying.",
   ),
@@ -166,6 +202,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_CONFLICT",
     "conflict",
     "unsafe",
+    null,
     "The resource is already in the requested state.",
     "No action needed — the desired outcome already holds.",
   ),
@@ -173,6 +210,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_AUTH_REQUIRED",
     "auth",
     "unsafe",
+    null,
     "The call needs a credential and none was presented.",
     "Run mindvault_register, or switch to a profile that holds a credential.",
   ),
@@ -180,6 +218,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_AUTH_REJECTED",
     "auth",
     "unsafe",
+    null,
     "A credential was presented and the operation was denied.",
     "Switch to the profile that owns this resource.",
   ),
@@ -187,6 +226,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_API_KEY_REVOKED",
     "auth",
     "unsafe",
+    null,
     "The stored publisher API key is no longer accepted — revoked, rotated elsewhere, or its publisher record was removed.",
     "The stored key cannot be revived: run mindvault_register for a new one, or restore a backup that holds a valid key.",
   ),
@@ -194,6 +234,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_CLOCK_SKEW",
     "auth",
     "safe",
+    0,
     "A request signature was rejected because this machine's clock is outside the accepted window.",
     "Correct the system clock, then retry. Retrying without fixing it fails the same way.",
   ),
@@ -201,6 +242,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_WALLET_MISSING",
     "payment",
     "unsafe",
+    null,
     "The active profile has no wallet configured.",
     "Run mindvault_setup_wallet or mindvault_import_wallet, then retry.",
   ),
@@ -208,6 +250,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_PAYMENT_REQUIRED",
     "payment",
     "safe",
+    0,
     "The resource returned an x402 challenge and no payment has been attempted yet.",
     "No funds moved. Retry with payment enabled, or raise the auto-pay ceiling.",
   ),
@@ -215,6 +258,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_PAYMENT_REJECTED",
     "payment",
     "conditional",
+    null,
     "A payment was attempted and did not complete successfully.",
     "Do NOT blindly retry — check mindvault_purchase_history and mindvault_tx_status first; the payment may have settled.",
   ),
@@ -222,6 +266,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_PAYMENT_CEILING_EXCEEDED",
     "payment",
     "safe",
+    0,
     "The price exceeds the configured auto-pay ceiling, so no payment was attempted.",
     "No funds moved. Pass maxAutoPayUsdc at least as large as the price, or raise MINDVAULT_MAX_AUTO_PAY_USDC.",
   ),
@@ -229,6 +274,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_INSUFFICIENT_FUNDS",
     "payment",
     "safe",
+    0,
     "The wallet lacks the USDC or the native XLM reserve needed to pay.",
     "No funds moved. Fund the wallet and retry.",
   ),
@@ -236,6 +282,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_MAINNET_UNCONFIRMED",
     "validation",
     "unsafe",
+    null,
     "A mainnet mutation or payment was attempted without explicit confirmation.",
     "Pass confirmMainnet: true, or set MINDVAULT_ALLOW_MAINNET=1 for the session.",
   ),
@@ -243,6 +290,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_CONTRACT_ERROR",
     "contract",
     "unsafe",
+    null,
     "The vault-registry contract rejected the call or is not the expected contract.",
     "Verify the contract id and network with mindvault_registry_info, then retry.",
   ),
@@ -250,6 +298,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_STATE_CORRUPT",
     "unknown",
     "unsafe",
+    null,
     "The local state file could not be read as valid state.",
     "The corrupt file is quarantined. Restore with mindvault_restore_state, or set up the wallet again.",
   ),
@@ -257,6 +306,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_STATE_LOCKED",
     "conflict",
     "safe",
+    250,
     "Another state-mutating tool call holds the state lock.",
     "Retry once the in-flight call completes; concurrent mutations are serialised deliberately.",
   ),
@@ -264,6 +314,7 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "MV_UNKNOWN",
     "unknown",
     "conditional",
+    null,
     "The failure did not match any known classification.",
     "Retry once. If it persists, report the summary and correlation id with the tool name.",
   ),
@@ -404,6 +455,64 @@ export function errorCodeFor(error: unknown, mapped?: MappedError | null): Error
 }
 
 /**
+ * Machine-readable retry guidance derived from an error code and optional
+ * upstream `Retry-After` hint (#1066).
+ */
+export interface RetryHint {
+  code: ErrorCode;
+  retry: RetrySafety;
+  retryable: boolean;
+  suggestedDelayMs: number | null;
+}
+
+function resolveSuggestedDelayMs(
+  meta: ErrorCodeSpec,
+  overrideMs?: number | null,
+): number | null {
+  if (!meta.retryable) return null;
+  if (typeof overrideMs === "number" && Number.isFinite(overrideMs)) {
+    return Math.min(MAX_SUGGESTED_RETRY_DELAY_MS, Math.max(0, Math.floor(overrideMs)));
+  }
+  return meta.suggestedDelayMs;
+}
+
+/**
+ * Compute the machine-readable retry hint for an error code or thrown failure (#1066).
+ *
+ * Unknown (`MV_UNKNOWN`) and conditional (`MV_PAYMENT_REJECTED`) failures are
+ * never marked retryable, even when a `retryAfterMs` override is supplied.
+ */
+export function retryHintFor(
+  errorOrCode: unknown,
+  mapped?: MappedError | null,
+  retryAfterMs?: number | null,
+): RetryHint {
+  const code = isErrorCode(errorOrCode) ? errorOrCode : errorCodeFor(errorOrCode, mapped);
+  const meta = specFor(code);
+  const effectiveOverride = retryAfterMs ?? mapped?.retryAfterMs ?? null;
+  return {
+    code,
+    retry: meta.retry,
+    retryable: meta.retryable,
+    suggestedDelayMs: resolveSuggestedDelayMs(meta, effectiveOverride),
+  };
+}
+
+/**
+ * Build a safe, single-line user-facing error message with secrets redacted
+ * and multiline stack/classification noise removed (#1066).
+ */
+export function safeUserErrorMessage(
+  summary: string | null | undefined,
+  fallbackDescription: string,
+): string {
+  const raw = typeof summary === "string" ? summary.trim() : "";
+  const firstLine = (raw.split(/\r?\n/)[0] ?? "").trim();
+  const candidate = firstLine.length > 0 ? firstLine : fallbackDescription;
+  return redactSecrets(candidate);
+}
+
+/**
  * Stable payload attached to every tool failure.
  *
  * Versioned schema, so a client can tell which fields to expect. Extends the
@@ -417,6 +526,17 @@ export interface ToolErrorPayload {
   source: ErrorSource | null;
   status: number | null;
   retry: RetrySafety;
+  /** True iff repeating the call is safe without manual state inspection (#1066). */
+  retryable: boolean;
+  /**
+   * Suggested wait in milliseconds before retrying when `retryable` is `true`,
+   * or `null` when the failure is not retryable (#1066).
+   */
+  suggestedDelayMs: number | null;
+  /**
+   * Safe, single-line user-facing message with secrets redacted (#1066).
+   */
+  userMessage: string;
   summary: string;
   detail: string | null;
   action: string;
@@ -437,9 +557,11 @@ export function toolErrorPayload(input: {
   mapped?: MappedError | null;
   summary: string;
   correlationId?: string;
+  retryAfterMs?: number | null;
 }): ToolErrorPayload {
   const code = errorCodeFor(input.error, input.mapped);
   const meta = specFor(code);
+  const hint = retryHintFor(code, input.mapped, input.retryAfterMs);
 
   return {
     schema: "mindvault.error/v1",
@@ -448,6 +570,9 @@ export function toolErrorPayload(input: {
     source: input.mapped?.source ?? null,
     status: input.mapped?.status ?? null,
     retry: meta.retry,
+    retryable: hint.retryable,
+    suggestedDelayMs: hint.suggestedDelayMs,
+    userMessage: safeUserErrorMessage(input.summary, meta.description),
     summary: input.summary,
     detail: input.mapped?.detail ?? null,
     // The mapper's action is more specific when it has one (it can name a

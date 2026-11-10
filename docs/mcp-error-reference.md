@@ -313,7 +313,10 @@ handler owns the envelope (see
 a thrown tool error becomes `isError: true` with the text prefixed `Error:`, and
 the message passes through `safeErrorMessage` so no wallet secret or API key can
 appear in it. Mapped errors add `structuredContent.troubleshooting`; unmapped
-errors retain the existing text-only envelope.
+errors retain the existing text-only envelope. For explicit `MV_*` error codes,
+machine-readable `retryable` / `suggestedDelayMs` retry hints, and redacted
+`userMessage` payloads (`mindvault.error/v1`), see
+[mcp-error-codes.md](mcp-error-codes.md).
 
 ## Coverage
 

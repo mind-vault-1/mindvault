@@ -27,6 +27,9 @@ Failures return `structuredContent` alongside the human-readable text:
   "source": "x402",
   "status": null,
   "retry": "safe",
+  "retryable": true,
+  "suggestedDelayMs": 0,
+  "userMessage": "Purchase failed: price 25 USDC exceeds the auto-pay ceiling",
   "summary": "Purchase failed: price 25 USDC exceeds the auto-pay ceiling",
   "detail": null,
   "action": "No funds moved. Pass maxAutoPayUsdc at least as large as the price, or raise MINDVAULT_MAX_AUTO_PAY_USDC.",
@@ -36,6 +39,19 @@ Failures return `structuredContent` alongside the human-readable text:
 
 `category` and `action` stay exactly where clients already look for them — this
 extends the existing troubleshooting hint rather than replacing it.
+
+- `retryable` (`boolean`) is `true` iff `retry === "safe"` (`false` for
+  `"unsafe"` and `"conditional"`, so `MV_UNKNOWN` and `MV_PAYMENT_REJECTED`
+  remain non-retryable by default).
+- `suggestedDelayMs` (`number | null`) gives the default wait in milliseconds
+  before retrying (`1000` for network/timeout/malformed responses, `2000` for
+  upstream 5xx, `5000` for rate limits, `250` for state-lock contention, `0` for
+  pre-payment/clock-skew checks, and `null` whenever `retryable` is `false`).
+  When an upstream `Retry-After` override is supplied, it is clamped to
+  `0..300_000` ms for retryable codes and ignored (`null`) for non-retryable
+  codes.
+- `userMessage` (`string`) provides a single-line, secret-redacted message safe
+  for direct presentation to end users.
 
 The `correlationId` ties the failure to its audit-log lines
 ([mcp-correlation-ids.md](mcp-correlation-ids.md)).
