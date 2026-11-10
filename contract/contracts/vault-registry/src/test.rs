@@ -11824,6 +11824,80 @@ fn differently_cased_tags_indexed_under_same_normalized_tag() {
     assert_eq!(results.len(), 2);
 }
 
+#[test]
+fn duplicate_purchase_anchors_never_overwrite_different_receipt_across_verifier_or_settler_paths() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    let settler = Address::generate(&env);
+    client.add_verifier(&verifier);
+    client.add_settler(&settler);
+
+    let buyer1 = Address::generate(&env);
+    let buyer2 = Address::generate(&env);
+    let r1 = register_priced(&env, &creator, &client, "ancdup1", 100i128);
+    let r2 = register_priced(&env, &creator, &client, "ancdup2", 100i128);
+
+    env.ledger().set_sequence_number(300);
+    let hash1 = String::from_str(&env, "tx-receipt-one");
+    let hash2 = String::from_str(&env, "tx-receipt-two");
+
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "pay1"),
+        &r1,
+        &buyer1,
+        &100i128,
+        &hash1,
+    );
+    client.anchor_purchase_receipt(&verifier, &r1, &buyer1, &hash1);
+
+    // 1. Reusing `hash1` for a different buyer or different resource is rejected as DuplicateReceipt.
+    assert_eq!(
+        client.try_anchor_purchase_receipt(&verifier, &r1, &buyer2, &hash1),
+        Err(Ok(Error::DuplicateReceipt))
+    );
+    assert_eq!(
+        client.try_anchor_purchase_receipt(&verifier, &r2, &buyer1, &hash1),
+        Err(Ok(Error::DuplicateReceipt))
+    );
+    assert!(!client.attempt_anchor_purchase_receipt(&verifier, &r1, &buyer2, &hash1));
+
+    // 2. When a second payment is recorded for (r1, buyer1) with `hash2`,
+    // `retry_anchor_purchase_receipt` with `hash2` must reject with DuplicateReceipt,
+    // preserve the original `hash1` anchor intact, and NOT leave an AnchorFailure record.
+    env.ledger().set_sequence_number(400);
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "pay2"),
+        &r1,
+        &buyer1,
+        &100i128,
+        &hash2,
+    );
+    assert!(!client.retry_anchor_purchase_receipt(&settler, &r1, &buyer1, &hash2));
+    let preserved = client.get_purchase_receipt(&r1, &buyer1);
+    assert_eq!(preserved.receipt_hash, hash1);
+    assert_eq!(preserved.ledger, 300);
+    assert_eq!(
+        client.try_get_anchor_failure(&r1, &buyer1),
+        Err(Ok(Error::NotFound))
+    );
+
+    // Idempotent retry with the original anchored `hash1` still returns true even after PaymentIndex advanced.
+    assert!(client.retry_anchor_purchase_receipt(&settler, &r1, &buyer1, &hash1));
+
+    // 3. Admin override to a hash already bound to another purchase is also rejected.
+    client.anchor_purchase_receipt(&verifier, &r2, &buyer2, &hash2);
+    assert_eq!(
+        client.try_override_purchase_receipt_anchor(&admin, &r2, &buyer2, &hash1),
+        Err(Ok(Error::DuplicateReceipt))
+    );
+    assert_eq!(
+        client.get_purchase_receipt(&r2, &buyer2).receipt_hash,
+        hash2
+    );
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 
