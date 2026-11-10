@@ -11824,6 +11824,102 @@ fn differently_cased_tags_indexed_under_same_normalized_tag() {
     assert_eq!(results.len(), 2);
 }
 
+#[test]
+fn extend_lease_preserves_original_holder_and_resource_binding_after_ownership_transfer() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let settler = Address::generate(&env);
+    client.add_settler(&settler);
+    let holder = Address::generate(&env);
+    let new_owner = Address::generate(&env);
+    let other_holder = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "leasebind", 100i128);
+    env.ledger().set_sequence_number(200);
+
+    let initial = client.record_lease(
+        &settler,
+        &holder,
+        &id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "tx1"),
+    );
+    assert_eq!(initial.holder, holder);
+    assert_eq!(initial.resource_id, id);
+
+    // Transfer resource ownership to `new_owner` before extending the lease.
+    client.transfer_ownership(&id, &new_owner);
+    assert_eq!(client.get(&id).creator, new_owner);
+
+    env.ledger().set_sequence_number(300);
+    let extended = client.extend_lease(
+        &holder,
+        &id,
+        &LeaseTier::Day,
+        &300i128,
+        &String::from_str(&env, "tx2"),
+    );
+    assert_eq!(extended.holder, holder);
+    assert_eq!(extended.resource_id, id);
+    assert_eq!(extended.start_ledger, 200);
+    assert_eq!(
+        extended.expiry_ledger,
+        200 + LEASE_HOUR_LEDGERS + LEASE_DAY_LEDGERS
+    );
+    assert_eq!(extended.amount, 400i128);
+
+    // Another address with no lease cannot extend it.
+    assert_eq!(
+        client.try_extend_lease(
+            &other_holder,
+            &id,
+            &LeaseTier::Hour,
+            &100i128,
+            &String::from_str(&env, "tx3"),
+        ),
+        Err(Ok(Error::NotFound))
+    );
+
+    // If a stored lease record's holder/resource binding is mismatched, extend_lease rejects with Unauthorized.
+    env.as_contract(&client.address, || {
+        let key = DataKey::Lease(id.clone(), other_holder.clone());
+        let mutbad = Lease {
+            resource_id: id.clone(),
+            holder: holder.clone(),
+            tier: LeaseTier::Hour,
+            start_ledger: 200,
+            expiry_ledger: 900,
+            amount: 100,
+            tx_hash: String::from_str(&env, "txbad"),
+            state: LeaseState::Active,
+            recorded_at: 200,
+        };
+        env.storage().persistent().set(&key, &mutbad);
+    });
+    assert_eq!(
+        client.try_extend_lease(
+            &other_holder,
+            &id,
+            &LeaseTier::Hour,
+            &100i128,
+            &String::from_str(&env, "tx4"),
+        ),
+        Err(Ok(Error::Unauthorized))
+    );
+
+    // Revoking via the new owner terminates the lease and blocks further extensions.
+    client.revoke_lease(&id, &holder);
+    assert_eq!(
+        client.try_extend_lease(
+            &holder,
+            &id,
+            &LeaseTier::Hour,
+            &100i128,
+            &String::from_str(&env, "tx5"),
+        ),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 

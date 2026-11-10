@@ -366,6 +366,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Access leases ─────────────────────────────────────────────────────
     ("buy_lease", "holder"),
     ("record_lease", "settler + holder"),
+    ("extend_lease", "holder"),
     ("settle_lease", "settler"),
     ("revoke_lease", "creator"),
     ("get_lease", "—"),
@@ -5909,6 +5910,77 @@ impl VaultRegistry {
         )
     }
 
+    /// Extend an existing `Active` lease for `(resource_id, holder)` while
+    /// strictly preserving the original `holder` and `resource_id` binding,
+    /// even if the underlying resource's ownership was transferred after the
+    /// lease was first issued.
+    ///
+    /// - Requires `holder` authorization and verifies `existing.holder == holder`
+    ///   and `existing.resource_id == resource_id` (`Unauthorized` on mismatch).
+    /// - Rejects `Pending` or `Revoked` leases (`InvalidPaymentTransition`) and
+    ///   reused `tx_hash` (`DuplicateTxHash`). Emits `lease`.
+    pub fn extend_lease(
+        env: Env,
+        holder: Address,
+        resource_id: String,
+        tier: LeaseTier,
+        amount: i128,
+        tx_hash: String,
+    ) -> Result<Lease, Error> {
+        holder.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::require_payment_not_paused(&env)?;
+        Self::validate_resource_id(&resource_id)?;
+        Self::validate_payment_amount(amount)?;
+        Self::validate_tx_hash(&tx_hash)?;
+
+        let resource = Self::load(&env, &resource_id)?;
+        if resource.state != ResourceState::Listed {
+            return Err(Error::ResourceNotMutable);
+        }
+        if amount != Self::tier_price(resource.price, tier)? {
+            return Err(Error::PaymentAmountMismatch);
+        }
+
+        let key = DataKey::Lease(resource_id.clone(), holder.clone());
+        let existing: Lease = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::NotFound)?;
+        if existing.holder != holder || existing.resource_id != resource_id {
+            return Err(Error::Unauthorized);
+        }
+        if existing.state != LeaseState::Active {
+            return Err(Error::InvalidPaymentTransition);
+        }
+        if existing.tx_hash == tx_hash {
+            return Err(Error::DuplicateTxHash);
+        }
+
+        let now = env.ledger().sequence();
+        let base_ledger = existing.expiry_ledger.max(now);
+        let extended = Lease {
+            resource_id: existing.resource_id,
+            holder: existing.holder,
+            tier,
+            start_ledger: existing.start_ledger,
+            expiry_ledger: base_ledger.saturating_add(Self::tier_ledgers(tier)),
+            amount: existing.amount.saturating_add(amount),
+            tx_hash,
+            state: LeaseState::Active,
+            recorded_at: now,
+        };
+        env.storage().persistent().set(&key, &extended);
+        Self::bump_persistent(&env, &key);
+        env.storage()
+            .temporary()
+            .set(&symbol_short!("has_lease"), &true);
+        env.events()
+            .publish((symbol_short!("lease"), resource_id), extended.clone());
+        Ok(extended)
+    }
+
     /// Advance a `Pending` lease to `Active` once its payment is confirmed.
     /// Requires the settler role. Errors `NotFound` if no lease exists for
     /// the pair and `InvalidLeaseTransition` if it is not `Pending`. Emits
@@ -5926,12 +5998,15 @@ impl VaultRegistry {
         Self::require_not_paused(&env)?;
         Self::require_payment_not_paused(&env)?;
         Self::validate_resource_id(&resource_id)?;
-        let key = DataKey::Lease(resource_id.clone(), holder);
+        let key = DataKey::Lease(resource_id.clone(), holder.clone());
         let mut lease: Lease = env
             .storage()
             .persistent()
             .get(&key)
             .ok_or(Error::NotFound)?;
+        if lease.holder != holder || lease.resource_id != resource_id {
+            return Err(Error::Unauthorized);
+        }
         if lease.state != LeaseState::Pending {
             return Err(Error::InvalidPaymentTransition);
         }
