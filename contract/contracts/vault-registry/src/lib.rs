@@ -362,6 +362,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("attempt_anchor_purchase_receipt", "verifier"),
     ("override_purchase_receipt_anchor", "admin"),
     ("get_purchase_receipt", "—"),
+    ("get_anchor_status", "—"),
     ("get_anchor_attempts", "—"),
     // ── Access leases ─────────────────────────────────────────────────────
     ("buy_lease", "holder"),
@@ -1494,6 +1495,19 @@ pub struct AnchorAttempts {
     pub attempts: u32,
     /// Ledger sequence of the most recent rejected attempt.
     pub last_attempt_ledger: u32,
+}
+
+/// Lifecycle status of a purchase receipt anchor for `(resource_id, buyer)`.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum AnchorStatus {
+    /// No confirmed anchor and no outstanding failure record exist yet.
+    Pending = 0,
+    /// A canonical [`PurchaseReceiptAnchor`] has been written (monotonic).
+    Confirmed = 1,
+    /// An [`AnchorFailure`] or rejected [`AnchorAttempts`] record is active
+    /// and no confirmed anchor has been written yet.
+    Failed = 2,
 }
 
 /// Duration tier of a time-limited access lease. Each tier maps to a fixed
@@ -5361,6 +5375,38 @@ impl VaultRegistry {
             .ok_or(Error::NotFound)?;
         Self::bump_persistent(&env, &key);
         Ok(anchor)
+    }
+
+    /// Return the explicit [`AnchorStatus`] (`Pending`, `Confirmed`, or
+    /// `Failed`) for `(resource_id, buyer)`.
+    ///
+    /// - `Confirmed` when a canonical [`PurchaseReceiptAnchor`] exists. Once
+    ///   `Confirmed`, the status is monotonic and never regresses to `Failed`
+    ///   or `Pending`.
+    /// - `Failed` when an [`AnchorFailure`] record or rejected
+    ///   [`AnchorAttempts`] entry exists and no anchor has been written yet.
+    /// - `Pending` otherwise.
+    pub fn get_anchor_status(
+        env: Env,
+        resource_id: String,
+        buyer: Address,
+    ) -> Result<AnchorStatus, Error> {
+        Self::validate_resource_id(&resource_id)?;
+        let anchor_key = DataKey::PurchaseReceipt(resource_id.clone(), buyer.clone());
+        if env.storage().persistent().has(&anchor_key) {
+            Self::bump_persistent(&env, &anchor_key);
+            return Ok(AnchorStatus::Confirmed);
+        }
+        let failure_key = DataKey::AnchorFailure(resource_id.clone(), buyer.clone());
+        if env.storage().persistent().has(&failure_key) {
+            Self::bump_persistent(&env, &failure_key);
+            return Ok(AnchorStatus::Failed);
+        }
+        let attempts_key = DataKey::AnchorAttempts(resource_id, buyer);
+        if Self::anchor_attempts_state(&env, &attempts_key).attempts > 0 {
+            return Ok(AnchorStatus::Failed);
+        }
+        Ok(AnchorStatus::Pending)
     }
 
     /// Durably record that `(resource_id, buyer)` could not be anchored, so the

@@ -11824,6 +11824,86 @@ fn differently_cased_tags_indexed_under_same_normalized_tag() {
     assert_eq!(results.len(), 2);
 }
 
+#[test]
+fn get_anchor_status_distinguishes_pending_failed_and_confirmed_monotonically() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    let settler = Address::generate(&env);
+    client.add_verifier(&verifier);
+    client.add_settler(&settler);
+
+    let buyer1 = Address::generate(&env);
+    let buyer2 = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "ancstatus", 100i128);
+
+    // 1. Initially Pending before any failure or anchor is recorded.
+    assert_eq!(
+        client.get_anchor_status(&id, &buyer1),
+        AnchorStatus::Pending
+    );
+    assert_eq!(
+        client.get_anchor_status(&id, &buyer2),
+        AnchorStatus::Pending
+    );
+
+    // 2. Rejected verifier attempt transitions buyer1 from Pending -> Failed.
+    env.ledger().set_sequence_number(100);
+    assert!(!client.attempt_anchor_purchase_receipt(
+        &verifier,
+        &id,
+        &buyer1,
+        &String::from_str(&env, "")
+    ));
+    assert_eq!(client.get_anchor_status(&id, &buyer1), AnchorStatus::Failed);
+
+    // Settler `record_anchor_failure` also transitions buyer2 from Pending -> Failed.
+    client.record_anchor_failure(&settler, &id, &buyer2, &String::from_str(&env, "tx-buyer2"));
+    assert_eq!(client.get_anchor_status(&id, &buyer2), AnchorStatus::Failed);
+
+    // 3. Successful anchoring transitions Failed -> Confirmed.
+    env.ledger()
+        .set_sequence_number(100 + ANCHOR_RETRY_BACKOFF_LEDGERS);
+    assert!(client.attempt_anchor_purchase_receipt(
+        &verifier,
+        &id,
+        &buyer1,
+        &String::from_str(&env, "tx-buyer1-confirmed")
+    ));
+    assert_eq!(
+        client.get_anchor_status(&id, &buyer1),
+        AnchorStatus::Confirmed
+    );
+
+    client.anchor_purchase_receipt(
+        &verifier,
+        &id,
+        &buyer2,
+        &String::from_str(&env, "tx-buyer2"),
+    );
+    assert_eq!(
+        client.get_anchor_status(&id, &buyer2),
+        AnchorStatus::Confirmed
+    );
+
+    // 4. Once Confirmed, subsequent rejected attempts or failure reports never regress status.
+    assert!(!client.attempt_anchor_purchase_receipt(
+        &verifier,
+        &id,
+        &buyer1,
+        &String::from_str(&env, "tx-duplicate")
+    ));
+    client.record_anchor_failure(
+        &settler,
+        &id,
+        &buyer1,
+        &String::from_str(&env, "tx-stale-fail"),
+    );
+    assert_eq!(
+        client.get_anchor_status(&id, &buyer1),
+        AnchorStatus::Confirmed
+    );
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 
