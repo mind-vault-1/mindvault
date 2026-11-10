@@ -5476,6 +5476,52 @@ impl VaultRegistry {
         Self::require_not_paused(&env)?;
         Self::validate_resource_id(&resource_id)?;
 
+        let attempts_key = DataKey::AnchorAttempts(resource_id.clone(), buyer.clone());
+        let mut attempts = Self::anchor_attempts_state(&env, &attempts_key);
+        let now = env.ledger().sequence();
+        let throttled = if attempts.attempts >= MAX_ANCHOR_ATTEMPTS {
+            Some(AnchorFailureReason::AttemptsExhausted)
+        } else if attempts.attempts > 0
+            && now
+                < attempts
+                    .last_attempt_ledger
+                    .saturating_add(ANCHOR_RETRY_BACKOFF_LEDGERS)
+        {
+            Some(AnchorFailureReason::RetryTooSoon)
+        } else {
+            None
+        };
+        if let Some(reason) = throttled {
+            return Self::report_anchor_failure(&env, resource_id, buyer, receipt_hash, reason);
+        }
+
+        let record_rejection = |env: &Env,
+                                attempts: &mut AnchorAttempts,
+                                resource_id: String,
+                                buyer: Address,
+                                receipt_hash: String,
+                                reason: AnchorFailureReason|
+         -> Result<bool, Error> {
+            attempts.attempts += 1;
+            attempts.last_attempt_ledger = now;
+            env.storage().persistent().set(&attempts_key, attempts);
+            Self::bump_persistent(env, &attempts_key);
+            let res = Self::report_anchor_failure(
+                env,
+                resource_id.clone(),
+                buyer.clone(),
+                receipt_hash,
+                reason,
+            );
+            if attempts.attempts >= MAX_ANCHOR_ATTEMPTS {
+                env.events().publish(
+                    (symbol_short!("anchrxhst"), resource_id, buyer),
+                    attempts.clone(),
+                );
+            }
+            res
+        };
+
         // Resolve the payment this anchor must correspond to.
         let receipt_id: String = match env
             .storage()
@@ -5484,8 +5530,9 @@ impl VaultRegistry {
         {
             Some(id) => id,
             None => {
-                return Self::report_anchor_failure(
+                return record_rejection(
                     &env,
+                    &mut attempts,
                     resource_id,
                     buyer,
                     receipt_hash,
@@ -5500,8 +5547,9 @@ impl VaultRegistry {
         {
             Some(receipt) => receipt,
             None => {
-                return Self::report_anchor_failure(
+                return record_rejection(
                     &env,
+                    &mut attempts,
                     resource_id,
                     buyer,
                     receipt_hash,
@@ -5511,8 +5559,9 @@ impl VaultRegistry {
         };
 
         if receipt_hash.is_empty() || receipt_hash.len() > MAX_TX_HASH_LEN {
-            return Self::report_anchor_failure(
+            return record_rejection(
                 &env,
+                &mut attempts,
                 resource_id,
                 buyer,
                 receipt_hash,
@@ -5520,8 +5569,9 @@ impl VaultRegistry {
             );
         }
         if receipt_hash != receipt.tx_hash {
-            return Self::report_anchor_failure(
+            return record_rejection(
                 &env,
+                &mut attempts,
                 resource_id,
                 buyer,
                 receipt_hash,
@@ -5537,8 +5587,9 @@ impl VaultRegistry {
             if existing.receipt_hash == receipt_hash {
                 return Ok(true);
             }
-            return Self::report_anchor_failure(
+            return record_rejection(
                 &env,
+                &mut attempts,
                 resource_id,
                 buyer,
                 receipt_hash,

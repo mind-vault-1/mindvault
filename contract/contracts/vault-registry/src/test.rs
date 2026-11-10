@@ -11824,6 +11824,81 @@ fn differently_cased_tags_indexed_under_same_normalized_tag() {
     assert_eq!(results.len(), 2);
 }
 
+#[test]
+fn retry_anchor_purchase_receipt_enforces_cooldown_window_and_max_attempts_cap() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let settler = Address::generate(&env);
+    let verifier = Address::generate(&env);
+    client.add_settler(&settler);
+    client.add_verifier(&verifier);
+
+    let buyer = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "ancretrywin", 100i128);
+    let good_hash = String::from_str(&env, "tx-good-anchor");
+    let bad_hash = String::from_str(&env, "tx-wrong-anchor");
+
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "rcpt-win"),
+        &id,
+        &buyer,
+        &100i128,
+        &good_hash,
+    );
+
+    env.ledger().set_sequence_number(1_000);
+    // Attempt 1 (rejected due to ReceiptHashMismatch).
+    assert!(!client.retry_anchor_purchase_receipt(&settler, &id, &buyer, &bad_hash));
+    assert_eq!(
+        client.get_anchor_failure(&id, &buyer).reason,
+        AnchorFailureReason::ReceiptHashMismatch
+    );
+    assert_eq!(client.get_anchor_attempts(&id, &buyer).attempts, 1);
+
+    // Retry before cooldown window (`1_000 + ANCHOR_RETRY_BACKOFF_LEDGERS - 1`) is rejected with RetryTooSoon
+    // even if the caller passes the valid `good_hash`.
+    env.ledger()
+        .set_sequence_number(1_000 + ANCHOR_RETRY_BACKOFF_LEDGERS - 1);
+    assert!(!client.retry_anchor_purchase_receipt(&settler, &id, &buyer, &good_hash));
+    assert_eq!(
+        client.get_anchor_failure(&id, &buyer).reason,
+        AnchorFailureReason::RetryTooSoon
+    );
+    // Throttled calls do not increment the attempts counter.
+    assert_eq!(client.get_anchor_attempts(&id, &buyer).attempts, 1);
+
+    // Exhaust remaining attempts (2..=MAX_ANCHOR_ATTEMPTS) at exact cooldown boundaries,
+    // mixing verifier `attempt_anchor_purchase_receipt` and settler `retry_anchor_purchase_receipt`.
+    let mut ledger = 1_000;
+    for expected_attempt in 2..=MAX_ANCHOR_ATTEMPTS {
+        ledger += ANCHOR_RETRY_BACKOFF_LEDGERS;
+        env.ledger().set_sequence_number(ledger);
+        if expected_attempt % 2 == 0 {
+            assert!(!client.attempt_anchor_purchase_receipt(
+                &verifier,
+                &id,
+                &buyer,
+                &String::from_str(&env, "")
+            ));
+        } else {
+            assert!(!client.retry_anchor_purchase_receipt(&settler, &id, &buyer, &bad_hash));
+        }
+        assert_eq!(
+            client.get_anchor_attempts(&id, &buyer).attempts,
+            expected_attempt
+        );
+    }
+
+    // After MAX_ANCHOR_ATTEMPTS, even waiting past the cooldown window with `good_hash` fails with AttemptsExhausted.
+    env.ledger()
+        .set_sequence_number(ledger + ANCHOR_RETRY_BACKOFF_LEDGERS * 2);
+    assert!(!client.retry_anchor_purchase_receipt(&settler, &id, &buyer, &good_hash));
+    assert_eq!(
+        client.get_anchor_failure(&id, &buyer).reason,
+        AnchorFailureReason::AttemptsExhausted
+    );
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 
