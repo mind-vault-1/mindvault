@@ -298,10 +298,6 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("set_paused_until", "admin"),
     ("is_paused", "—"),
     ("pause_until", "—"),
-    ("set_payment_paused", "admin"),
-    ("set_payment_paused_until", "admin"),
-    ("is_payment_paused", "—"),
-    ("payment_pause_until", "—"),
     // ── Settler role ──────────────────────────────────────────────────────
     ("add_settler", "admin"),
     ("record_payment_with_memo", "settler + payer"),
@@ -340,8 +336,8 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("repair_index", "admin"),
     ("repair_tag_index", "admin"),
     ("check_tag_index", "—"),
-    // ── Simulation and validation ──────────────────────────────────────────
-    ("simulate_record_payment", "—"),
+    // ── Resource mutation simulation ───────────────────────────────────────
+    ("simulate_resource_mutation", "—"),
     // ── Payment receipts ──────────────────────────────────────────────────
     ("record_payment", "settler + payer"),
     ("record_payment_idempotent", "settler + payer"),
@@ -445,16 +441,7 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (54, "UnsupportedResourceSchema", "A resource uses a schema version this deployment cannot safely read or upgrade."),
     (55, "RevisionOverflow", "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state."),
     (56, "RoleCapacityReached", "A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role."),
-    (47, "RevocationReasonHashTooLong", "`revocation_reason_hash` exceeds `MAX_REVOCATION_REASON_HASH_LEN` (64 bytes)."),
-    (48, "PaymentAmountMismatch", "Payment amount differs from the resource price or cumulative refunds exceed the original payment."),
-    (49, "DuplicateTxHash", "A payment or refund receipt already uses the supplied transaction hash (`tx_hash`)."),
-    (50, "FeeConfigNotSet", "`set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`."),
-    (51, "AdminNominationExpired", "The pending admin nomination is missing or has expired."),
-    (52, "InvalidMetadataPointers", "`set_metadata_pointers` received zero, more than `MAX_METADATA_POINTERS`, or duplicate pointers, or an out-of-range `primary` index."),
-    (53, "AdminAlreadySet", "`bootstrap_dual_admin` was called after an admin was already set."),
-    (54, "RecoveryAdminNotSet", "`recover_admin` was called but no recovery admin is configured."),
-    (55, "UnsupportedResourceSchema", "A resource uses a schema version this deployment cannot safely read or upgrade."),
-    (56, "RevisionOverflow", "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state."),
+    (57, "UnclaimedFees", "A fee-recipient or fee-destination change was attempted while accrued fees remain unclaimed. Call `claim_fees` first, then retry."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -522,12 +509,6 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("rmsettlr", "RoleChange { admin, target, granted: false }"),
     ("pause", "(paused: bool, admin: Address)"),
     ("pause_until", "(pause_until: u64, admin: Address)"),
-    ("payment_pause", "(paused: bool, admin: Address)"),
-    ("payment_pause_until", "(pause_until: u64, admin: Address)"),
-    (
-        "mntstat",
-        "MaintenanceStatusEvent { kind, reason_code, admin }",
-    ),
     (
         "anchor",
         "PurchaseReceiptAnchor { resource_id, buyer, receipt_hash, ledger }",
@@ -563,7 +544,6 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ),
     ("lease", "(resource_id: String, lease: Lease)"),
     ("leasesetl", "(resource_id: String, lease: Lease)"),
-    ("simvalid", "(passed: bool, error_code: Option<u32>)"),
     ("leaserevk", "(resource_id: String, lease: Lease)"),
 ];
 
@@ -658,6 +638,8 @@ pub enum RoleKind {
     Moderator = 2,
     /// Multi-member settler role (`is_settler`).
     Settler = 3,
+}
+
 /// Registry-level maintenance posture: which kind of pause is in effect.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -886,6 +868,18 @@ pub struct BatchMetadataUpdate {
     pub metadata: String,
 }
 
+/// Proposed resource mutation validated by [`VaultRegistry::simulate_resource_mutation`].
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ProposedResourceMutation {
+    /// Propose updating `Resource.price` via `set_price`.
+    SetPrice(i128),
+    /// Propose updating `Resource.metadata` via `update_metadata`.
+    UpdateMetadata(String),
+    /// Propose transferring ownership via `transfer_ownership` / `propose_transfer`.
+    TransferOwnership(Address),
+}
+
 /// Result of a batch registration attempt. Contains successfully registered
 /// resource IDs and any errors encountered (with their indices).
 #[contracttype]
@@ -1075,7 +1069,7 @@ pub struct TransferWithTermsEvent {
     pub attestation_reset: bool,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone)]
 pub enum DataKey {
     Resource(String),
@@ -1117,12 +1111,8 @@ pub enum DataKey {
     RefundedAmount(String),
     /// Configured creator-refund window length, in ledgers.
     RefundWindow,
-    /// Ordered history of verification status changes for a verifier address.
-    VerifierHistory(Address),
     /// Aggregated settled-payment earnings for a creator wallet address.
     CreatorEarnings(Address),
-    /// Moderator who last set a resource's dispute flag or reason hash.
-    FlagModerator(String),
     /// Active lease held by `holder` on a resource.
     Lease(String, Address),
     /// Anchor attempt counter for `(resource_id, buyer)`.
@@ -1650,7 +1640,12 @@ pub enum Error {
     /// A fee-recipient or fee-destination change was attempted while accrued
     /// fees remain unclaimed. Call `claim_fees` first to acknowledge receipt
     /// of outstanding fees, then retry the change.
-    UnclaimedFees = 56,
+    UnclaimedFees = 57,
+    /// `set_fee_config` was called with a combined `platform_fee_bps +
+    /// royalty_bps` that is ≥ the price of a resource with one or more
+    /// active leases. The fee change is rejected to prevent invalidating
+    /// the price terms under which those leases were sold.
+    LeaseFeeConfigConflict = 58,
 }
 
 #[contract]
@@ -1868,6 +1863,82 @@ impl VaultRegistry {
             },
         );
         Ok(())
+    }
+
+    /// Read-only simulation entry point for proposed resource mutations
+    /// (price change, metadata update, or ownership transfer).
+    ///
+    /// Applies the exact validation rules enforced by `set_price`,
+    /// `update_metadata`, and `transfer_ownership` / `propose_transfer`
+    /// (`require_not_paused`, `validate_resource_id`, `load` + schema check,
+    /// `caller == resource.creator`, `ensure_mutable`, and mutation-specific
+    /// invariants including fee-ceiling price checks, metadata pointer format
+    /// and freeze/content-hash guards, revision-overflow checks, and
+    /// `AlreadyOwner` transfer checks) and returns the projected [`Resource`]
+    /// without modifying storage or emitting events.
+    pub fn simulate_resource_mutation(
+        env: Env,
+        caller: Address,
+        id: String,
+        mutation: ProposedResourceMutation,
+    ) -> Result<Resource, Error> {
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&id)?;
+        if let ProposedResourceMutation::SetPrice(new_price) = &mutation {
+            Self::validate_price(&env, *new_price)?;
+        }
+        let mut resource = Self::load(&env, &id)?;
+        if resource.creator != caller {
+            return Err(Error::Unauthorized);
+        }
+        Self::ensure_mutable(&resource)?;
+
+        match mutation {
+            ProposedResourceMutation::SetPrice(new_price) => {
+                if resource.price != new_price {
+                    let current_rev: u32 = env
+                        .storage()
+                        .persistent()
+                        .get(&DataKey::Revision(id))
+                        .unwrap_or(0);
+                    if current_rev == u32::MAX {
+                        return Err(Error::RevisionOverflow);
+                    }
+                    resource.price = new_price;
+                    resource.schema_version = RESOURCE_SCHEMA_VERSION;
+                }
+            }
+            ProposedResourceMutation::UpdateMetadata(metadata) => {
+                if resource.frozen {
+                    return Err(Error::MetadataFrozen);
+                }
+                if resource.metadata != metadata {
+                    if resource.content_hash.is_some() {
+                        return Err(Error::MetadataFrozen);
+                    }
+                    Self::validate_metadata_pointer(&metadata)?;
+                    let current_rev: u32 = env
+                        .storage()
+                        .persistent()
+                        .get(&DataKey::Revision(id))
+                        .unwrap_or(0);
+                    if current_rev == u32::MAX {
+                        return Err(Error::RevisionOverflow);
+                    }
+                    resource.metadata = metadata;
+                    resource.schema_version = RESOURCE_SCHEMA_VERSION;
+                }
+            }
+            ProposedResourceMutation::TransferOwnership(new_creator) => {
+                if resource.creator == new_creator {
+                    return Err(Error::AlreadyOwner);
+                }
+                resource.creator = new_creator;
+                resource.schema_version = RESOURCE_SCHEMA_VERSION;
+            }
+        }
+
+        Ok(resource)
     }
 
     /// Update prices for multiple resources owned by `creator` in one call.
@@ -3265,6 +3336,8 @@ impl VaultRegistry {
     /// Errors deterministically:
     /// - [`Error::BatchTooLarge`] — more than [`MAX_TAG_INDEX_REPAIR`] ids,
     ///   rejected before any storage is read or written
+    /// - [`Error::InvalidResourceId`] — any id fails format validation or its
+    ///   stored resource uses an unsupported schema version
     /// - [`Error::NotFound`] — any id in `ids` is not a registered resource
     /// - [`Error::AdminNotSet`] — no admin has been bootstrapped
     /// - [`Error::ContractPaused`] — the registry is paused
@@ -3282,28 +3355,24 @@ impl VaultRegistry {
             return Ok(());
         }
 
-        // Validate every id exists before touching anything, then collect the
-        // unique ids in canonical (byte-sorted) order. Sorting here is what
-        // makes retries with reordered or duplicated input converge to the
-        // same index, and the unique count is what the `retagidx` event
-        // reports so duplicates cannot inflate it.
-        let mut unique: alloc::vec::Vec<String> = alloc::vec::Vec::new();
+        // Validate every id's format, existence, and schema version before
+        // touching any TagIndex entry, then collect the unique (id, resource)
+        // pairs in canonical (byte-sorted) order. Sorting here is what makes
+        // retries with reordered or duplicated input converge to the same
+        // index, and the unique count is what the `retagidx` event reports so
+        // duplicates cannot inflate it.
+        let mut unique: alloc::vec::Vec<(String, Resource)> = alloc::vec::Vec::new();
         for i in 0..len {
             let id = ids.get(i).unwrap();
-            if !env
-                .storage()
-                .persistent()
-                .has(&DataKey::Resource(id.clone()))
-            {
-                return Err(Error::NotFound);
-            }
-            if !unique.contains(&id) {
-                unique.push(id);
+            Self::validate_resource_id(&id)?;
+            let resource = Self::load(&env, &id)?;
+            if !unique.iter().any(|(existing_id, _)| *existing_id == id) {
+                unique.push((id, resource));
             }
         }
-        unique.sort_by(|a, b| Self::string_bytes(a).cmp(&Self::string_bytes(b)));
+        unique.sort_by(|(a, _), (b, _)| Self::string_bytes(a).cmp(&Self::string_bytes(b)));
 
-        // Collect current tags for each id (read canonical Resource data).
+        // Collect current tags for each validated resource.
         // Build a tag -> Vec<id> map in a simple parallel-vec structure that
         // avoids BTreeMap (unavailable in no_std without alloc feature that
         // isn't brought in here). Small curated tag sets keep this O(n*t).
@@ -3315,12 +3384,7 @@ impl VaultRegistry {
             (0..keys.len()).find(|&k| keys.get(k).unwrap() == *t)
         };
 
-        for id in unique.iter() {
-            let resource: Resource = env
-                .storage()
-                .persistent()
-                .get(&DataKey::Resource(id.clone()))
-                .unwrap(); // already validated above
+        for (id, resource) in unique.iter() {
             for j in 0..resource.tags.len() {
                 let raw_tag = resource.tags.get(j).unwrap();
                 let tag = Self::normalize_tag(&env, &raw_tag);
@@ -4118,7 +4182,7 @@ impl VaultRegistry {
         env.storage().instance().remove(&DataKey::PaymentPauseUntil);
         Self::bump_instance(&env);
         env.events()
-            .publish((symbol_short!("payment_pause"), admin.clone()), (paused, admin));
+            .publish((Symbol::new(&env, "payment_pause"), admin.clone()), (paused, admin));
         Ok(())
     }
 
@@ -4141,7 +4205,7 @@ impl VaultRegistry {
         }
         Self::bump_instance(&env);
         env.events().publish(
-            (symbol_short!("payment_pause"), admin.clone()),
+            (Symbol::new(&env, "payment_pause"), admin.clone()),
             (active, admin.clone()),
         );
         env.events().publish(
@@ -4249,25 +4313,30 @@ impl VaultRegistry {
     /// `[ids.len(), old_count)` are removed from persistent storage so the
     /// index is fully convergent after any number of repairs: two identical
     /// calls to `repair_index` always produce byte-identical on-chain state.
+    ///
+    /// Input is bounded by [`MAX_TAG_INDEX_REPAIR`] (`BatchTooLarge` otherwise)
+    /// and every id is validated for format, existence, supported resource
+    /// schema, and uniqueness before any storage write occurs so a failing
+    /// final item never leaves earlier index slots partially overwritten.
     pub fn repair_index(env: Env, ids: Vec<String>) -> Result<(), Error> {
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         Self::require_not_paused(&env)?;
 
+        if ids.len() > MAX_TAG_INDEX_REPAIR {
+            return Err(Error::BatchTooLarge);
+        }
+
         let len = ids.len();
 
         // Validate all inputs before any write so a failure leaves the index
-        // unchanged. Unknown IDs produce `NotFound`; duplicate IDs produce
-        // `DuplicateInRepair`.
+        // unchanged. Malformed IDs or unsupported resource schemas produce
+        // `InvalidResourceId`; unknown IDs produce `NotFound`; duplicate IDs
+        // produce `DuplicateInRepair`.
         for i in 0..len {
             let id = ids.get(i).unwrap();
-            if !env
-                .storage()
-                .persistent()
-                .has(&DataKey::Resource(id.clone()))
-            {
-                return Err(Error::NotFound);
-            }
+            Self::validate_resource_id(&id)?;
+            let _resource = Self::load(&env, &id)?;
             for j in (i + 1)..len {
                 if id == ids.get(j).unwrap() {
                     return Err(Error::DuplicateInRepair);
@@ -4301,6 +4370,12 @@ impl VaultRegistry {
                     env.storage().persistent().remove(&stale_key);
                 }
             }
+        }
+
+        if env.storage().instance().has(&DataKey::IndexRepairProgress) {
+            env.storage()
+                .instance()
+                .remove(&DataKey::IndexRepairProgress);
         }
 
         env.storage().instance().set(&DataKey::Count, &len);
@@ -4790,6 +4865,7 @@ impl VaultRegistry {
                     (symbol_short!("simvalid"),),
                     (true, Option::<u32>::None),
                 );
+                let recorded_at = env.ledger().sequence();
                 Ok(PaymentReceipt {
                     receipt_id: receipt_id.clone(),
                     resource_id,
@@ -4797,7 +4873,8 @@ impl VaultRegistry {
                     amount,
                     state: PaymentState::Escrowed,
                     tx_hash,
-                    recorded_at: env.ledger().sequence(),
+                    recorded_at,
+                    ledger: recorded_at,
                 })
             }
             Err(e) => {
@@ -7237,9 +7314,6 @@ impl VaultRegistry {
         };
         env.storage().persistent().set(&key, &lease);
         Self::bump_persistent(env, &key);
-
-        // Track the resource price for the active-lease fee-config guard (#991).
-        Self::update_lease_price_floor(env, resource.price);
 
         env.events()
             .publish((symbol_short!("lease"), resource_id), lease.clone());

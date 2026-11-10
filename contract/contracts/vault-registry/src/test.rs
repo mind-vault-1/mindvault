@@ -4990,8 +4990,6 @@ fn full_workflow_emits_exactly_the_documented_events() {
     record(&env, &client, &mut observed);
     client.set_paused(&admin2, &false);
     record(&env, &client, &mut observed);
-    client.set_maintenance_status(&admin2, &MaintenanceKind::Scheduled, &1u32); // -> "mntstat"
-    record(&env, &client, &mut observed);
 
     // Network bootstrap and the creator reactivation path round out the
     // documented event schema (`netinit` was already observed above, so this
@@ -5709,7 +5707,7 @@ fn remove_verifier_revokes_verification_ability() {
 
 #[test]
 fn admin_can_rotate_verifier_with_audit_event() {
-    let (env, _creator, _admin, client) = setup_with_admin();
+    let (env, _creator, admin, client) = setup_with_admin();
     let old_verifier = Address::generate(&env);
     let new_verifier = Address::generate(&env);
 
@@ -5738,6 +5736,7 @@ fn admin_can_rotate_verifier_with_audit_event() {
         assert_eq!(
             payload,
             VerifierRotation {
+                admin: admin.clone(),
                 old_verifier: old_verifier.clone(),
                 new_verifier: new_verifier.clone(),
                 ledger,
@@ -6998,6 +6997,180 @@ fn repair_index_with_empty_list_is_a_silent_noop() {
     let page = client.list(&0u32, &10u32);
     assert_eq!(page.len(), 1);
     assert_eq!(page.get(0).unwrap().id, a);
+}
+
+// ─── Proposed resource mutation simulation (#1067) ─────────────────────────
+
+#[test]
+fn simulate_resource_mutation_projects_price_metadata_and_transfer_without_writes() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "simmut1");
+    let new_owner = Address::generate(&env);
+
+    // 1. Simulate price update
+    let projected_price = client.simulate_resource_mutation(
+        &creator,
+        &id,
+        &ProposedResourceMutation::SetPrice(250i128),
+    );
+    assert_eq!(projected_price.price, 250i128);
+    assert_eq!(client.get(&id).price, 100i128);
+    assert_eq!(client.get_revision(&id), 0u32);
+
+    // 2. Simulate metadata update
+    let next_meta = String::from_str(&env, "ipfs://updated-meta");
+    let projected_meta = client.simulate_resource_mutation(
+        &creator,
+        &id,
+        &ProposedResourceMutation::UpdateMetadata(next_meta.clone()),
+    );
+    assert_eq!(projected_meta.metadata, next_meta);
+    assert_eq!(client.get(&id).metadata, String::from_str(&env, "ipfs://m"));
+    assert_eq!(client.get_revision(&id), 0u32);
+
+    // 3. Simulate ownership transfer
+    let projected_transfer = client.simulate_resource_mutation(
+        &creator,
+        &id,
+        &ProposedResourceMutation::TransferOwnership(new_owner.clone()),
+    );
+    assert_eq!(projected_transfer.creator, new_owner);
+    assert_eq!(client.get(&id).creator, creator);
+    assert_eq!(client.creator_resource_count(&creator), 1u32);
+    assert_eq!(client.creator_resource_count(&new_owner), 0u32);
+    assert_eq!(env.events().all().len(), 0);
+}
+
+#[test]
+fn simulate_resource_mutation_matches_write_error_codes_across_rules() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "simmut2");
+    let stranger = Address::generate(&env);
+
+    // Non-owner caller -> Unauthorized
+    assert_eq!(
+        client.try_simulate_resource_mutation(
+            &stranger,
+            &id,
+            &ProposedResourceMutation::SetPrice(200i128),
+        ),
+        Err(Ok(Error::Unauthorized))
+    );
+
+    // Invalid price (<= 0) -> InvalidPrice, matching set_price
+    let sim_price_err = client
+        .try_simulate_resource_mutation(&creator, &id, &ProposedResourceMutation::SetPrice(0i128))
+        .unwrap_err();
+    assert_eq!(sim_price_err, Ok(Error::InvalidPrice));
+    assert_eq!(sim_price_err, client.try_set_price(&id, &0i128).unwrap_err());
+
+    // Invalid metadata pointer -> InvalidMetadataPointer, matching update_metadata
+    let bad_meta = String::from_str(&env, "ftp://not-allowed");
+    let sim_meta_err = client
+        .try_simulate_resource_mutation(
+            &creator,
+            &id,
+            &ProposedResourceMutation::UpdateMetadata(bad_meta.clone()),
+        )
+        .unwrap_err();
+    assert_eq!(sim_meta_err, Ok(Error::InvalidMetadataPointer));
+    assert_eq!(
+        sim_meta_err,
+        client.try_update_metadata(&id, &bad_meta).unwrap_err()
+    );
+
+    // Transfer to current owner -> AlreadyOwner, matching transfer_ownership
+    let sim_tx_err = client
+        .try_simulate_resource_mutation(
+            &creator,
+            &id,
+            &ProposedResourceMutation::TransferOwnership(creator.clone()),
+        )
+        .unwrap_err();
+    assert_eq!(sim_tx_err, Ok(Error::AlreadyOwner));
+    assert_eq!(
+        sim_tx_err,
+        client.try_transfer_ownership(&id, &creator).unwrap_err()
+    );
+
+    // Frozen metadata -> MetadataFrozen on metadata update, while price stays valid
+    client.freeze_metadata(&id);
+    let valid_meta = String::from_str(&env, "ipfs://after-freeze");
+    let sim_frozen_err = client
+        .try_simulate_resource_mutation(
+            &creator,
+            &id,
+            &ProposedResourceMutation::UpdateMetadata(valid_meta.clone()),
+        )
+        .unwrap_err();
+    assert_eq!(sim_frozen_err, Ok(Error::MetadataFrozen));
+    assert_eq!(
+        sim_frozen_err,
+        client.try_update_metadata(&id, &valid_meta).unwrap_err()
+    );
+    assert!(client
+        .try_simulate_resource_mutation(
+            &creator,
+            &id,
+            &ProposedResourceMutation::SetPrice(300i128),
+        )
+        .is_ok());
+
+    // Lifecycle freeze -> ResourceNotMutable for all mutations
+    client.freeze_resource(&id);
+    let sim_immut_err = client
+        .try_simulate_resource_mutation(
+            &creator,
+            &id,
+            &ProposedResourceMutation::SetPrice(300i128),
+        )
+        .unwrap_err();
+    assert_eq!(sim_immut_err, Ok(Error::ResourceNotMutable));
+    assert_eq!(
+        sim_immut_err,
+        client.try_set_price(&id, &300i128).unwrap_err()
+    );
+
+    // Contract paused -> ContractPaused
+    client.set_paused(&admin, &true);
+    assert_eq!(
+        client.try_simulate_resource_mutation(
+            &creator,
+            &id,
+            &ProposedResourceMutation::SetPrice(300i128),
+        ),
+        Err(Ok(Error::ContractPaused))
+    );
+}
+
+#[test]
+fn simulate_resource_mutation_detects_revision_overflow_without_mutating() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "simmut3");
+
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Revision(id.clone()), &u32::MAX);
+    });
+
+    assert_eq!(
+        client.try_simulate_resource_mutation(
+            &creator,
+            &id,
+            &ProposedResourceMutation::SetPrice(500i128),
+        ),
+        Err(Ok(Error::RevisionOverflow))
+    );
+    assert_eq!(
+        client.try_simulate_resource_mutation(
+            &creator,
+            &id,
+            &ProposedResourceMutation::UpdateMetadata(String::from_str(&env, "ipfs://next")),
+        ),
+        Err(Ok(Error::RevisionOverflow))
+    );
+    assert_eq!(client.get_revision(&id), u32::MAX);
 }
 
 // ---------------------------------------------------------------------------
@@ -10072,7 +10245,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 55] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -10117,6 +10290,7 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
         (DataKey::RegistryTerms, "RegistryTerms", 1),
         (DataKey::Paused, "Paused", 1),
         (DataKey::PauseUntil, "PauseUntil", 1),
+        (DataKey::MaintenanceStatus, "MaintenanceStatus", 1),
         (DataKey::Settler(who.clone()), "Settler", 2),
         (
             DataKey::PurchaseReceipt(id.clone(), who.clone()),
@@ -10135,6 +10309,11 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
         (DataKey::ListedCount, "ListedCount", 1),
         (DataKey::FlagReasonHash(id.clone()), "FlagReasonHash", 2),
         (DataKey::AttestationHash(id.clone()), "AttestationHash", 2),
+        (
+            DataKey::RevocationReasonHash(id.clone()),
+            "RevocationReasonHash",
+            2,
+        ),
         (DataKey::PendingAdminExpiry, "PendingAdminExpiry", 1),
         (
             DataKey::PendingAdminNominatedAt,
@@ -10150,9 +10329,13 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
         ),
         (DataKey::MemoHash(id.clone()), "MemoHash", 2),
         (DataKey::FeeDestination, "FeeDestination", 1),
+        (DataKey::AccruedFees, "AccruedFees", 1),
         (DataKey::MetadataPointers(id.clone()), "MetadataPointers", 2),
         (DataKey::RecoveryAdmin, "RecoveryAdmin", 1),
         (DataKey::Revision(id.clone()), "Revision", 2),
+        (DataKey::RoleHolders(RoleKind::Verifier), "RoleHolders", 2),
+        (DataKey::PaymentPaused, "PaymentPaused", 1),
+        (DataKey::PaymentPauseUntil, "PaymentPauseUntil", 1),
     ]
 }
 
@@ -10192,7 +10375,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        49,
+        55,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -10227,6 +10410,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::RegistryTerms => "RegistryTerms",
             DataKey::Paused => "Paused",
             DataKey::PauseUntil => "PauseUntil",
+            DataKey::MaintenanceStatus => "MaintenanceStatus",
             DataKey::Settler(_) => "Settler",
             DataKey::PurchaseReceipt(_, _) => "PurchaseReceipt",
             DataKey::AnchorFailure(_, _) => "AnchorFailure",
@@ -10237,6 +10421,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::ListedCount => "ListedCount",
             DataKey::FlagReasonHash(_) => "FlagReasonHash",
             DataKey::AttestationHash(_) => "AttestationHash",
+            DataKey::RevocationReasonHash(_) => "RevocationReasonHash",
             DataKey::PendingAdminExpiry => "PendingAdminExpiry",
             DataKey::PendingAdminNominatedAt => "PendingAdminNominatedAt",
             DataKey::TagCount(_) => "TagCount",
@@ -10244,9 +10429,13 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::CreatorListedCount(_) => "CreatorListedCount",
             DataKey::MemoHash(_) => "MemoHash",
             DataKey::FeeDestination => "FeeDestination",
+            DataKey::AccruedFees => "AccruedFees",
             DataKey::MetadataPointers(_) => "MetadataPointers",
             DataKey::RecoveryAdmin => "RecoveryAdmin",
             DataKey::Revision(_) => "Revision",
+            DataKey::RoleHolders(_) => "RoleHolders",
+            DataKey::PaymentPaused => "PaymentPaused",
+            DataKey::PaymentPauseUntil => "PaymentPauseUntil",
         };
         assert_eq!(
             matched, *name,
@@ -11802,12 +11991,8 @@ include!("test/creator_listed_count.rs");
 include!("test/memo_hash.rs");
 include!("test/flag_details.rs");
 include!("test/payment_idempotency.rs");
-include!("test/payment_pause_scope.rs");
-include!("test/simulation_mutation_validation.rs");
 include!("test/stellar_wave_804_805_806_808.rs");
 include!("test/stellar_wave_970_971_975_976.rs");
 include!("test/stellar_wave_981_982_983_984.rs");
-include!("test/stellar_wave_977_978_979_980.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
-include!("test/pause_scope_matrix.rs");

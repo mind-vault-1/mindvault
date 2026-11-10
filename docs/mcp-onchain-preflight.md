@@ -97,6 +97,13 @@ Hook sites in [`mcp/src/tools/publish.ts`](../mcp/src/tools/publish.ts):
   offline with any environment.
 - `registerOnchain()` — before the register/prepare request.
 
+For resource-level mutation preflight on an already-registered resource, the
+contract also exposes `simulate_resource_mutation(caller, id, mutation)`
+(`ProposedResourceMutation::SetPrice(i128)`,
+`ProposedResourceMutation::UpdateMetadata(String)`, and
+`ProposedResourceMutation::TransferOwnership(Address)`), which runs the exact
+write validation rules without modifying storage or emitting events.
+
 ## The envelope
 
 ```json
