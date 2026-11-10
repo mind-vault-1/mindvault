@@ -11807,3 +11807,82 @@ include!("test/stellar_wave_970_971_975_976.rs");
 include!("test/stellar_wave_981_982_983_984.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
+
+
+#[test]
+fn preview_fee_split_validates_bounds_and_covers_all_fee_destinations() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    let fee_recipient = Address::generate(&env);
+    let charity = Address::generate(&env);
+
+    // Without fee config, all 1_000 stroops go to creator.
+    let no_cfg = client.preview_fee_split(&1_000);
+    assert_eq!(
+        no_cfg,
+        FeeSplitPreview {
+            amount: 1_000,
+            platform_fee_amount: 0,
+            destination_amount: 0,
+            fee_recipient_amount: 0,
+            royalty_amount: 0,
+            creator_amount: 1_000,
+        }
+    );
+
+    // Invalid bounds are rejected with the same errors as validate_price.
+    assert_eq!(client.try_preview_fee_split(&0), Err(Ok(Error::InvalidPrice)));
+    assert_eq!(client.try_preview_fee_split(&-5), Err(Ok(Error::InvalidPrice)));
+    assert_eq!(
+        client.try_preview_fee_split(&(MAX_PRICE + 1)),
+        Err(Ok(Error::PriceExceedsMax))
+    );
+
+    // Configure 250 bps platform fee + 500 bps royalty = 750 bps total.
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 250,
+        royalty_bps: 500,
+        fee_recipient: Some(fee_recipient.clone()),
+    });
+
+    // Boundary: amount <= 750 fails creator-share invariant; 751 succeeds.
+    assert_eq!(client.try_preview_fee_split(&750), Err(Ok(Error::InvalidPrice)));
+    let min_valid = client.preview_fee_split(&751);
+    assert_eq!(
+        min_valid.platform_fee_amount + min_valid.royalty_amount + min_valid.creator_amount,
+        751
+    );
+    assert!(min_valid.creator_amount > 0);
+
+    // Destination 1: None (0 bps)
+    let split_none = client.preview_fee_split(&10_005);
+    assert_eq!(split_none.platform_fee_amount, 250);
+    assert_eq!(split_none.destination_amount, 0);
+    assert_eq!(split_none.fee_recipient_amount, 250);
+    assert_eq!(split_none.royalty_amount, 500);
+    assert_eq!(split_none.creator_amount, 9_255);
+
+    // Destination 2: Burn (4_000 bps = 40% of platform fee)
+    client.set_fee_destination(&FeeDestinationConfig {
+        bps: 4_000,
+        destination: FeeDestination::Burn,
+    });
+    let split_burn = client.preview_fee_split(&10_005);
+    assert_eq!(split_burn.platform_fee_amount, 250);
+    assert_eq!(split_burn.destination_amount, 100);
+    assert_eq!(split_burn.fee_recipient_amount, 150);
+    assert_eq!(split_burn.royalty_amount, 500);
+    assert_eq!(split_burn.creator_amount, 9_255);
+
+    // Destination 3: Charity (10_000 bps = 100% of platform fee)
+    client.set_fee_destination(&FeeDestinationConfig {
+        bps: 10_000,
+        destination: FeeDestination::Charity(charity),
+    });
+    let split_charity = client.preview_fee_split(&10_005);
+    assert_eq!(split_charity.platform_fee_amount, 250);
+    assert_eq!(split_charity.destination_amount, 250);
+    assert_eq!(split_charity.fee_recipient_amount, 0);
+    assert_eq!(split_charity.royalty_amount, 500);
+    assert_eq!(split_charity.creator_amount, 9_255);
+    let _ = admin;
+}

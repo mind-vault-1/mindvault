@@ -336,6 +336,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("get_fee_destination", "—"),
     ("claim_fees", "admin"),
     ("get_accrued_fees", "—"),
+    ("preview_fee_split", "—"),
     // ── Index repair ──────────────────────────────────────────────────────
     ("repair_index", "admin"),
     ("repair_tag_index", "admin"),
@@ -1337,6 +1338,24 @@ pub struct FeesClaimed {
     pub claimed_amount: i128,
     /// Accrued balance remaining after this claim (always 0 in v1).
     pub remaining_amount: i128,
+}
+
+/// Read-only integer fee-split preview returned by [`VaultRegistry::preview_fee_split`].
+/// Uses the exact same floor-division rules as on-chain settlement:
+/// - `platform_fee_amount = amount * platform_fee_bps / 10_000`
+/// - `destination_amount = platform_fee_amount * destination_bps / 10_000`
+/// - `fee_recipient_amount = platform_fee_amount - destination_amount`
+/// - `royalty_amount = amount * royalty_bps / 10_000`
+/// - `creator_amount = amount - platform_fee_amount - royalty_amount`
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeSplitPreview {
+    pub amount: i128,
+    pub platform_fee_amount: i128,
+    pub destination_amount: i128,
+    pub fee_recipient_amount: i128,
+    pub royalty_amount: i128,
+    pub creator_amount: i128,
 }
 
 /// On-chain record of a single x402/Soroban payment settlement for a resource.
@@ -4492,6 +4511,46 @@ impl VaultRegistry {
     /// been settled but not yet acknowledged via `claim_fees`.
     pub fn get_accrued_fees(env: Env) -> i128 {
         Self::load_accrued_fees(&env)
+    }
+
+    /// Read-only preview of the exact integer fee and creator remainder split
+    /// for a proposed `amount` (in USDC base units).
+    ///
+    /// Validates `amount` against the active price bounds (`InvalidPrice` when
+    /// `amount <= 0` or `amount <= platform_fee_bps + royalty_bps`, and
+    /// `PriceExceedsMax` when `amount > MAX_PRICE`) and applies the same floor
+    /// rounding used during payment settlement.
+    pub fn preview_fee_split(env: Env, amount: i128) -> Result<FeeSplitPreview, Error> {
+        Self::validate_price(&env, amount)?;
+        Ok(Self::compute_fee_split(&env, amount))
+    }
+
+    fn compute_fee_split(env: &Env, amount: i128) -> FeeSplitPreview {
+        let (platform_fee_bps, royalty_bps) = env
+            .storage()
+            .instance()
+            .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
+            .map(|c| (i128::from(c.platform_fee_bps), i128::from(c.royalty_bps)))
+            .unwrap_or((0, 0));
+        let destination = Self::load_fee_destination(env);
+        let destination_bps = match destination.destination {
+            FeeDestination::None => 0i128,
+            FeeDestination::Burn | FeeDestination::Charity(_) => i128::from(destination.bps),
+        };
+        let denom = i128::from(FEE_BPS_DENOM);
+        let platform_fee_amount = (amount * platform_fee_bps) / denom;
+        let destination_amount = (platform_fee_amount * destination_bps) / denom;
+        let fee_recipient_amount = platform_fee_amount - destination_amount;
+        let royalty_amount = (amount * royalty_bps) / denom;
+        let creator_amount = amount - platform_fee_amount - royalty_amount;
+        FeeSplitPreview {
+            amount,
+            platform_fee_amount,
+            destination_amount,
+            fee_recipient_amount,
+            royalty_amount,
+            creator_amount,
+        }
     }
 
     fn default_fee_destination() -> FeeDestinationConfig {
