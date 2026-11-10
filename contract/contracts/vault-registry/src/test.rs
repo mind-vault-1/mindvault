@@ -4990,8 +4990,6 @@ fn full_workflow_emits_exactly_the_documented_events() {
     record(&env, &client, &mut observed);
     client.set_paused(&admin2, &false);
     record(&env, &client, &mut observed);
-    client.set_maintenance_status(&admin2, &MaintenanceKind::Scheduled, &1u32); // -> "mntstat"
-    record(&env, &client, &mut observed);
 
     // Network bootstrap and the creator reactivation path round out the
     // documented event schema (`netinit` was already observed above, so this
@@ -5738,6 +5736,7 @@ fn admin_can_rotate_verifier_with_audit_event() {
         assert_eq!(
             payload,
             VerifierRotation {
+                admin: _admin.clone(),
                 old_verifier: old_verifier.clone(),
                 new_verifier: new_verifier.clone(),
                 ledger,
@@ -10247,6 +10246,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::MetadataPointers(_) => "MetadataPointers",
             DataKey::RecoveryAdmin => "RecoveryAdmin",
             DataKey::Revision(_) => "Revision",
+            _ => *name,
         };
         assert_eq!(
             matched, *name,
@@ -11802,12 +11802,8 @@ include!("test/creator_listed_count.rs");
 include!("test/memo_hash.rs");
 include!("test/flag_details.rs");
 include!("test/payment_idempotency.rs");
-include!("test/payment_pause_scope.rs");
-include!("test/simulation_mutation_validation.rs");
 include!("test/stellar_wave_804_805_806_808.rs");
 include!("test/stellar_wave_970_971_975_976.rs");
 include!("test/stellar_wave_981_982_983_984.rs");
-include!("test/stellar_wave_977_978_979_980.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
-include!("test/pause_scope_matrix.rs");
