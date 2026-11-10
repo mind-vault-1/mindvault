@@ -11886,3 +11886,65 @@ fn preview_fee_split_validates_bounds_and_covers_all_fee_destinations() {
     assert_eq!(split_charity.creator_amount, 9_255);
     let _ = admin;
 }
+
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+    #[test]
+    fn prop_fee_preview_matches_recorded_payment_rounding_at_small_amounts(
+        platform_fee_bps in 0u32..=2500u32,
+        royalty_bps in 0u32..=2500u32,
+        dest_bps in 0u32..=5000u32,
+        extra_price in 1i128..=25_000i128,
+    ) {
+        let (env, creator, admin, client) = setup_with_admin();
+        let settler = Address::generate(&env);
+        let payer = Address::generate(&env);
+        let fee_recipient = Address::generate(&env);
+        client.add_settler(&settler);
+
+        client.set_fee_config(&FeeConfig {
+            platform_fee_bps,
+            royalty_bps,
+            fee_recipient: Some(fee_recipient),
+        });
+        if platform_fee_bps > 0 && dest_bps > 0 {
+            client.set_fee_destination(&FeeDestinationConfig {
+                bps: dest_bps,
+                destination: FeeDestination::Burn,
+            });
+        }
+
+        let min_price = i128::from(platform_fee_bps + royalty_bps) + extra_price;
+        let preview = client.preview_fee_split(&min_price);
+
+        let res_id = String::from_str(&env, "smallround1");
+        client.register(
+            &creator,
+            &res_id,
+            &min_price,
+            &String::from_str(&env, "ipfs://smallround1"),
+            &Vec::new(&env),
+        );
+
+        let rcpt_id = String::from_str(&env, "rcpt-small-1");
+        let tx_hash = String::from_str(&env, "tx-small-1");
+        client.record_payment(&settler, &rcpt_id, &res_id, &payer, &min_price, &tx_hash);
+        client.settle_payment(&settler, &rcpt_id);
+
+        let persisted = client.get_payment(&rcpt_id);
+        let accrued = client.get_accrued_fees();
+
+        prop_assert_eq!(persisted.amount, preview.amount);
+        prop_assert_eq!(
+            preview.platform_fee_amount + preview.royalty_amount + preview.creator_amount,
+            persisted.amount
+        );
+        prop_assert_eq!(
+            preview.destination_amount + preview.fee_recipient_amount,
+            preview.platform_fee_amount
+        );
+        prop_assert_eq!(accrued, preview.fee_recipient_amount);
+        let _ = admin;
+    }
+}

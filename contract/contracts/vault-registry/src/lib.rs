@@ -5026,11 +5026,13 @@ impl VaultRegistry {
         // in integer arithmetic (truncation is fine — leftover sub-stroop
         // dust is not tracked). Only non-zero fees are accrued so the
         // guard is inactive when no platform fee is configured.
+        // Use the canonical `compute_fee_split` floor-division helper so that
+        // `preview_fee_split` and recorded payment settlement never diverge at
+        // small stroop amounts or across fee-destination splits.
         if let Some(fee_config) = env.storage().instance().get::<DataKey, FeeConfig>(&DataKey::FeeConfig) {
             if fee_config.platform_fee_bps > 0 && fee_config.fee_recipient.is_some() {
-                let fee_amount = receipt.amount * i128::from(fee_config.platform_fee_bps)
-                    / i128::from(FEE_BPS_DENOM);
-                Self::accrue_fees(&env, fee_amount);
+                let split = Self::compute_fee_split(&env, receipt.amount);
+                Self::accrue_fees(&env, split.fee_recipient_amount);
             }
         }
 

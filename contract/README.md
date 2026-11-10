@@ -221,7 +221,7 @@ the gross resource price. `None` with zero bps disables the route; `Burn` and
 remaining `fee_recipient`; a 100% route may leave it unset. An active route also
 requires a non-zero `platform_fee_bps`.
 
-Settlement uses integer floor rounding:
+Both `preview_fee_split` and `settle_payment` share `compute_fee_split` so quoted fee splits and recorded payment receipts use identical integer floor rounding even at small base-unit amounts:
 
 ```
 platform_amount = floor(price * platform_fee_bps / 10_000)
