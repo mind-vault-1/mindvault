@@ -350,6 +350,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("settle_payment", "settler"),
     ("get_payment", "—"),
     ("get_payment_receipt", "—"),
+    ("list_payment_receipts_page", "—"),
     ("set_refund_window", "admin"),
     ("refund_window", "—"),
     ("record_creator_refund", "creator"),
@@ -1024,6 +1025,15 @@ pub struct VerifierStatusEntry {
 #[derive(Clone, Debug, PartialEq)]
 pub struct VerifierStatusPage {
     pub items: Vec<VerifierStatusEntry>,
+    pub next_cursor: Option<u32>,
+}
+
+/// Paginated payment receipt page filtered optionally by buyer (`payer`) and/or
+/// `resource_id`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaymentReceiptPage {
+    pub items: Vec<PaymentReceipt>,
     pub next_cursor: Option<u32>,
 }
 
@@ -5090,6 +5100,90 @@ impl VaultRegistry {
         Self::get_payment(env, receipt_id)
     }
 
+    /// Return a bounded page of payment receipts in chronological recording
+    /// order, optionally filtered by `buyer` (`payer`) and/or `resource_id`.
+    ///
+    /// - `cursor` is a 0-based index into the append-only payment receipt log.
+    /// - `limit` is capped at [`LIST_PAGE_CAP`] (20).
+    /// - `next_cursor` is `Some(next_index)` when more matching receipts exist
+    ///   after this page, or `None` at end-of-list.
+    pub fn list_payment_receipts_page(
+        env: Env,
+        buyer: Option<Address>,
+        resource_id: Option<String>,
+        cursor: u32,
+        limit: u32,
+    ) -> PaymentReceiptPage {
+        if let Some(ref rid) = resource_id {
+            if Self::validate_resource_id(rid).is_err() {
+                return PaymentReceiptPage {
+                    items: Vec::new(&env),
+                    next_cursor: None,
+                };
+            }
+        }
+        let page_size = limit.min(LIST_PAGE_CAP);
+        if page_size == 0 {
+            return PaymentReceiptPage {
+                items: Vec::new(&env),
+                next_cursor: None,
+            };
+        }
+
+        let log_key = symbol_short!("pay_log");
+        let log: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&log_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        let total = log.len();
+        let mut items: Vec<PaymentReceipt> = Vec::new(&env);
+        let mut i = cursor;
+
+        let matches_filter = |receipt: &PaymentReceipt| -> bool {
+            buyer.as_ref().map_or(true, |b| &receipt.payer == b)
+                && resource_id
+                    .as_ref()
+                    .map_or(true, |rid| &receipt.resource_id == rid)
+        };
+
+        while i < total && items.len() < page_size {
+            let receipt_id = log.get(i).unwrap();
+            let receipt_key = DataKey::PaymentReceipt(receipt_id);
+            if let Some(receipt) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, PaymentReceipt>(&receipt_key)
+            {
+                if matches_filter(&receipt) {
+                    Self::bump_persistent(&env, &receipt_key);
+                    items.push_back(receipt);
+                }
+            }
+            i += 1;
+        }
+
+        let mut next_cursor = None;
+        let mut probe = i;
+        while probe < total {
+            let receipt_id = log.get(probe).unwrap();
+            let receipt_key = DataKey::PaymentReceipt(receipt_id);
+            if let Some(receipt) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, PaymentReceipt>(&receipt_key)
+            {
+                if matches_filter(&receipt) {
+                    next_cursor = Some(probe);
+                    break;
+                }
+            }
+            probe += 1;
+        }
+
+        PaymentReceiptPage { items, next_cursor }
+    }
+
     /// Record a completed creator-initiated refund for a settled payment.
     /// The transfer must already have occurred; the registry stores its hash
     /// as an audit anchor and does not custody or move USDC.
@@ -6481,6 +6575,15 @@ impl VaultRegistry {
 
         env.storage().persistent().set(&tx_hash_key, &receipt_id);
         Self::bump_persistent(env, &tx_hash_key);
+
+        let log_key = symbol_short!("pay_log");
+        let mut log: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&log_key)
+            .unwrap_or_else(|| Vec::new(env));
+        log.push_back(receipt_id.clone());
+        env.storage().persistent().set(&log_key, &log);
 
         env.events()
             .publish((symbol_short!("payment"), receipt_id), receipt.clone());

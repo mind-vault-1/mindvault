@@ -11824,6 +11824,103 @@ fn differently_cased_tags_indexed_under_same_normalized_tag() {
     assert_eq!(results.len(), 2);
 }
 
+#[test]
+fn list_payment_receipts_page_filters_by_buyer_and_resource_and_paginates() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let settler = Address::generate(&env);
+    client.add_settler(&settler);
+
+    let buyer1 = Address::generate(&env);
+    let buyer2 = Address::generate(&env);
+    let r1 = register_priced(&env, &creator, &client, "paypage1", 100i128);
+    let r2 = register_priced(&env, &creator, &client, "paypage2", 200i128);
+
+    // Record 4 payments across two buyers and two resources.
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "rcpt1"),
+        &r1,
+        &buyer1,
+        &100i128,
+        &String::from_str(&env, "tx1"),
+    );
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "rcpt2"),
+        &r2,
+        &buyer1,
+        &200i128,
+        &String::from_str(&env, "tx2"),
+    );
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "rcpt3"),
+        &r1,
+        &buyer2,
+        &100i128,
+        &String::from_str(&env, "tx3"),
+    );
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "rcpt4"),
+        &r1,
+        &buyer1,
+        &100i128,
+        &String::from_str(&env, "tx4"),
+    );
+
+    // 1. Filter by buyer1 only (3 matching receipts at indices 0, 1, 3), paginate with limit=2.
+    let p1 = client.list_payment_receipts_page(&Some(buyer1.clone()), &None, &0u32, &2u32);
+    assert_eq!(p1.items.len(), 2u32);
+    assert_eq!(
+        p1.items.get(0).unwrap().receipt_id,
+        String::from_str(&env, "rcpt1")
+    );
+    assert_eq!(
+        p1.items.get(1).unwrap().receipt_id,
+        String::from_str(&env, "rcpt2")
+    );
+    assert_eq!(p1.next_cursor, Some(3u32));
+
+    let p2 = client.list_payment_receipts_page(&Some(buyer1.clone()), &None, &3u32, &2u32);
+    assert_eq!(p2.items.len(), 1u32);
+    assert_eq!(
+        p2.items.get(0).unwrap().receipt_id,
+        String::from_str(&env, "rcpt4")
+    );
+    assert_eq!(p2.next_cursor, None);
+
+    // 2. Filter by resource r1 only (3 matching receipts at indices 0, 2, 3).
+    let r1_page = client.list_payment_receipts_page(&None, &Some(r1.clone()), &0u32, &20u32);
+    assert_eq!(r1_page.items.len(), 3u32);
+    assert_eq!(r1_page.next_cursor, None);
+
+    // 3. Combined buyer1 + resource r1 filter (2 matching receipts: rcpt1 and rcpt4).
+    let combo =
+        client.list_payment_receipts_page(&Some(buyer1.clone()), &Some(r1.clone()), &0u32, &1u32);
+    assert_eq!(combo.items.len(), 1u32);
+    assert_eq!(
+        combo.items.get(0).unwrap().receipt_id,
+        String::from_str(&env, "rcpt1")
+    );
+    assert_eq!(combo.next_cursor, Some(3u32));
+
+    let combo2 =
+        client.list_payment_receipts_page(&Some(buyer1.clone()), &Some(r1.clone()), &3u32, &1u32);
+    assert_eq!(combo2.items.len(), 1u32);
+    assert_eq!(
+        combo2.items.get(0).unwrap().receipt_id,
+        String::from_str(&env, "rcpt4")
+    );
+    assert_eq!(combo2.next_cursor, None);
+
+    // 4. Empty result for unknown buyer or buyer2 + r2.
+    let empty =
+        client.list_payment_receipts_page(&Some(buyer2.clone()), &Some(r2.clone()), &0u32, &20u32);
+    assert_eq!(empty.items.len(), 0u32);
+    assert_eq!(empty.next_cursor, None);
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 
