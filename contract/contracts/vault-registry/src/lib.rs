@@ -366,6 +366,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Access leases ─────────────────────────────────────────────────────
     ("buy_lease", "holder"),
     ("record_lease", "settler + holder"),
+    ("renew_lease", "holder"),
     ("settle_lease", "settler"),
     ("revoke_lease", "creator"),
     ("get_lease", "—"),
@@ -5907,6 +5908,86 @@ impl VaultRegistry {
             tx_hash,
             LeaseState::Active,
         )
+    }
+
+    /// Explicitly renew an existing `Active` lease for `(resource_id, holder)`
+    /// with zero access gap.
+    ///
+    /// - When called before or at `existing.expiry_ledger`, extends
+    ///   `expiry_ledger` by `tier_ledgers(tier)` directly from
+    ///   `existing.expiry_ledger` while preserving `start_ledger` so access is
+    ///   uninterrupted across the boundary.
+    /// - When called after `existing.expiry_ledger`, starts a fresh window at
+    ///   the current ledger (`now + tier_ledgers(tier)`).
+    /// - Rejects `Pending` or `Revoked` leases (`InvalidPaymentTransition`),
+    ///   reused `tx_hash` (`DuplicateTxHash`), and unlisted resources
+    ///   (`ResourceNotMutable`). Emits `lease`.
+    pub fn renew_lease(
+        env: Env,
+        holder: Address,
+        resource_id: String,
+        tier: LeaseTier,
+        amount: i128,
+        tx_hash: String,
+    ) -> Result<Lease, Error> {
+        holder.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::require_payment_not_paused(&env)?;
+        Self::validate_resource_id(&resource_id)?;
+        Self::validate_payment_amount(amount)?;
+        Self::validate_tx_hash(&tx_hash)?;
+
+        let resource = Self::load(&env, &resource_id)?;
+        if resource.state != ResourceState::Listed {
+            return Err(Error::ResourceNotMutable);
+        }
+        if amount != Self::tier_price(resource.price, tier)? {
+            return Err(Error::PaymentAmountMismatch);
+        }
+
+        let key = DataKey::Lease(resource_id.clone(), holder.clone());
+        let existing: Lease = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::NotFound)?;
+        if existing.state != LeaseState::Active {
+            return Err(Error::InvalidPaymentTransition);
+        }
+        if existing.tx_hash == tx_hash {
+            return Err(Error::DuplicateTxHash);
+        }
+
+        let now = env.ledger().sequence();
+        let duration = Self::tier_ledgers(tier);
+        let (start_ledger, expiry_ledger) = if now <= existing.expiry_ledger {
+            (
+                existing.start_ledger,
+                existing.expiry_ledger.saturating_add(duration),
+            )
+        } else {
+            (now, now.saturating_add(duration))
+        };
+
+        let renewed = Lease {
+            resource_id: resource_id.clone(),
+            holder,
+            tier,
+            start_ledger,
+            expiry_ledger,
+            amount: existing.amount.saturating_add(amount),
+            tx_hash,
+            state: LeaseState::Active,
+            recorded_at: now,
+        };
+        env.storage().persistent().set(&key, &renewed);
+        Self::bump_persistent(&env, &key);
+        env.storage()
+            .temporary()
+            .set(&symbol_short!("has_lease"), &true);
+        env.events()
+            .publish((symbol_short!("lease"), resource_id), renewed.clone());
+        Ok(renewed)
     }
 
     /// Advance a `Pending` lease to `Active` once its payment is confirmed.

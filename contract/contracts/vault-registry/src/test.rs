@@ -11824,6 +11824,103 @@ fn differently_cased_tags_indexed_under_same_normalized_tag() {
     assert_eq!(results.len(), 2);
 }
 
+#[test]
+fn renew_lease_extends_active_window_with_no_access_gap_and_handles_boundaries() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let settler = Address::generate(&env);
+    client.add_settler(&settler);
+    let holder = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "leaserenew", 100i128);
+    env.ledger().set_sequence_number(1_000);
+
+    let initial = client.record_lease(
+        &settler,
+        &holder,
+        &id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "tx1"),
+    );
+    assert_eq!(initial.start_ledger, 1_000);
+    assert_eq!(initial.expiry_ledger, 1_000 + LEASE_HOUR_LEDGERS);
+
+    // 1. Renew before expiry (at ledger 1_500): extends from 1_720, no access gap.
+    env.ledger().set_sequence_number(1_500);
+    let renewed_before = client.renew_lease(
+        &holder,
+        &id,
+        &LeaseTier::Day,
+        &300i128,
+        &String::from_str(&env, "tx2"),
+    );
+    assert_eq!(renewed_before.start_ledger, 1_000);
+    assert_eq!(
+        renewed_before.expiry_ledger,
+        1_000 + LEASE_HOUR_LEDGERS + LEASE_DAY_LEDGERS
+    );
+    assert_eq!(renewed_before.amount, 400i128);
+
+    // Access stays continuously active across the original expiry boundary (1_720).
+    env.ledger().set_sequence_number(1_000 + LEASE_HOUR_LEDGERS);
+    assert!(client.lease_is_active(&id, &holder));
+
+    // 2. Renew at the exact expiry boundary: extends seamlessly with no gap.
+    let second_expiry = renewed_before.expiry_ledger;
+    env.ledger().set_sequence_number(second_expiry);
+    let renewed_at_boundary = client.renew_lease(
+        &holder,
+        &id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "tx3"),
+    );
+    assert_eq!(renewed_at_boundary.start_ledger, 1_000);
+    assert_eq!(
+        renewed_at_boundary.expiry_ledger,
+        second_expiry + LEASE_HOUR_LEDGERS
+    );
+    assert!(client.lease_is_active(&id, &holder));
+
+    // 3. Renew after expiry: starts a new window at current ledger.
+    let after_expiry = renewed_at_boundary.expiry_ledger + 50;
+    env.ledger().set_sequence_number(after_expiry);
+    let renewed_after = client.renew_lease(
+        &holder,
+        &id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "tx4"),
+    );
+    assert_eq!(renewed_after.start_ledger, after_expiry);
+    assert_eq!(
+        renewed_after.expiry_ledger,
+        after_expiry + LEASE_HOUR_LEDGERS
+    );
+
+    // Duplicate tx_hash and revoked lease are rejected.
+    assert_eq!(
+        client.try_renew_lease(
+            &holder,
+            &id,
+            &LeaseTier::Hour,
+            &100i128,
+            &String::from_str(&env, "tx4"),
+        ),
+        Err(Ok(Error::DuplicateTxHash))
+    );
+    client.revoke_lease(&id, &holder);
+    assert_eq!(
+        client.try_renew_lease(
+            &holder,
+            &id,
+            &LeaseTier::Hour,
+            &100i128,
+            &String::from_str(&env, "tx5"),
+        ),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 
