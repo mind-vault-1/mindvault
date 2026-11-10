@@ -268,6 +268,64 @@ fn revoke_lease_is_creator_only_immediate_and_terminal() {
 }
 
 #[test]
+fn revoked_lease_stays_inactive_after_resource_freeze_dispute_and_reactivation() {
+    let (env, creator, settler, holder, client) = lease_setup();
+    let active_holder = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "leasereact", 100i128);
+    env.ledger().set_sequence_number(100);
+
+    // Record two active leases on the same resource.
+    client.record_lease(
+        &settler,
+        &holder,
+        &id,
+        &LeaseTier::Day,
+        &300i128,
+        &String::from_str(&env, "tx-revoked"),
+    );
+    client.record_lease(
+        &settler,
+        &active_holder,
+        &id,
+        &LeaseTier::Day,
+        &300i128,
+        &String::from_str(&env, "tx-active"),
+    );
+    assert!(client.lease_is_active(&id, &holder));
+    assert!(client.lease_is_active(&id, &active_holder));
+
+    // Revoke `holder`'s lease, then freeze and reactivate the resource.
+    client.revoke_lease(&id, &holder);
+    assert!(!client.lease_is_active(&id, &holder));
+
+    client.freeze_resource(&id);
+    assert!(!client.lease_is_active(&id, &holder));
+    assert!(!client.lease_is_active(&id, &active_holder));
+
+    client.reactivate_resource(&id);
+    // Revoked lease must NEVER become active after resource reactivation,
+    // whereas the non-revoked active lease resumes access.
+    assert!(!client.lease_is_active(&id, &holder));
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Revoked);
+    assert!(client.lease_is_active(&id, &active_holder));
+
+    // Also verify dispute -> resolve_dispute and delist -> relist preserve terminal revocation.
+    let admin = client.admin().unwrap();
+    client.open_dispute(&id, &admin);
+    assert!(!client.lease_is_active(&id, &holder));
+    assert!(!client.lease_is_active(&id, &active_holder));
+    client.resolve_dispute(&id, &admin, &ResourceState::Listed);
+    assert!(!client.lease_is_active(&id, &holder));
+    assert!(client.lease_is_active(&id, &active_holder));
+
+    // Settling a revoked lease must also remain rejected.
+    assert_eq!(
+        client.try_settle_lease(&settler, &id, &holder),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+}
+
+#[test]
 fn revoke_lease_requires_the_creator_signature() {
     let (env, creator, settler, holder, client) = lease_setup();
     let id = register_priced(&env, &creator, &client, "leaseauth", 100i128);

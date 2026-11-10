@@ -5926,13 +5926,17 @@ impl VaultRegistry {
         Self::require_not_paused(&env)?;
         Self::require_payment_not_paused(&env)?;
         Self::validate_resource_id(&resource_id)?;
+        let resource = Self::load(&env, &resource_id)?;
+        if resource.state != ResourceState::Listed {
+            return Err(Error::ResourceNotMutable);
+        }
         let key = DataKey::Lease(resource_id.clone(), holder);
         let mut lease: Lease = env
             .storage()
             .persistent()
             .get(&key)
             .ok_or(Error::NotFound)?;
-        if lease.state != LeaseState::Pending {
+        if lease.state != LeaseState::Pending || env.ledger().sequence() >= lease.expiry_ledger {
             return Err(Error::InvalidPaymentTransition);
         }
         lease.state = LeaseState::Active;
@@ -7257,7 +7261,13 @@ impl VaultRegistry {
     }
 
     fn lease_grants_access(env: &Env, lease: &Lease) -> bool {
-        lease.state == LeaseState::Active && env.ledger().sequence() < lease.expiry_ledger
+        if lease.state != LeaseState::Active || env.ledger().sequence() >= lease.expiry_ledger {
+            return false;
+        }
+        match Self::load(env, &lease.resource_id) {
+            Ok(resource) => resource.state == ResourceState::Listed,
+            Err(_) => false,
+        }
     }
 
     /// Validation and storage shared by `buy_lease` and `record_lease`.

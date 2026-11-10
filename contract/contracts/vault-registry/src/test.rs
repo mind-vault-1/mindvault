@@ -11824,6 +11824,60 @@ fn differently_cased_tags_indexed_under_same_normalized_tag() {
     assert_eq!(results.len(), 2);
 }
 
+#[test]
+fn revoked_lease_stays_inactive_after_resource_freeze_dispute_and_reactivation() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let settler = Address::generate(&env);
+    client.add_settler(&settler);
+    let holder = Address::generate(&env);
+    let active_holder = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "leasereact", 100i128);
+    env.ledger().set_sequence_number(100);
+
+    client.record_lease(
+        &settler,
+        &holder,
+        &id,
+        &LeaseTier::Day,
+        &300i128,
+        &String::from_str(&env, "tx-revoked"),
+    );
+    client.record_lease(
+        &settler,
+        &active_holder,
+        &id,
+        &LeaseTier::Day,
+        &300i128,
+        &String::from_str(&env, "tx-active"),
+    );
+    assert!(client.lease_is_active(&id, &holder));
+    assert!(client.lease_is_active(&id, &active_holder));
+
+    client.revoke_lease(&id, &holder);
+    assert!(!client.lease_is_active(&id, &holder));
+
+    client.freeze_resource(&id);
+    assert!(!client.lease_is_active(&id, &holder));
+    assert!(!client.lease_is_active(&id, &active_holder));
+
+    client.reactivate_resource(&id);
+    assert!(!client.lease_is_active(&id, &holder));
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Revoked);
+    assert!(client.lease_is_active(&id, &active_holder));
+
+    client.open_dispute(&id, &admin);
+    assert!(!client.lease_is_active(&id, &holder));
+    assert!(!client.lease_is_active(&id, &active_holder));
+    client.resolve_dispute(&id, &admin, &ResourceState::Listed);
+    assert!(!client.lease_is_active(&id, &holder));
+    assert!(client.lease_is_active(&id, &active_holder));
+
+    assert_eq!(
+        client.try_settle_lease(&settler, &id, &holder),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 
