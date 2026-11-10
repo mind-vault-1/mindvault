@@ -1257,6 +1257,67 @@ fn register_with_hash_immutably_binds_metadata_pointer() {
 }
 
 #[test]
+fn content_and_attestation_hashes_normalize_consistently_across_registration_and_verification() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+
+    let variants = [
+        ("normhash1", "  SHA256:AbCd1234Ef56  "),
+        ("normhash2", "SHA-256:0xABCD1234EF56"),
+        ("normhash3", "0xAbCd1234Ef56"),
+        ("normhash4", "  abcd1234ef56\t\n"),
+    ];
+    let expected = String::from_str(&env, "sha256:abcd1234ef56");
+
+    for (raw_id, raw_hash) in variants {
+        let id = String::from_str(&env, raw_id);
+        let input_hash = String::from_str(&env, raw_hash);
+        client.register_with_hash(
+            &creator,
+            &id,
+            &100i128,
+            &String::from_str(&env, "ipfs://QmNorm"),
+            &empty_tags(&env),
+            &Some(input_hash.clone()),
+        );
+        assert_eq!(client.get(&id).content_hash, Some(expected.clone()));
+
+        client.set_verification_status(
+            &id,
+            &verifier,
+            &VerificationStatus::Verified,
+            &Some(input_hash),
+        );
+        assert_eq!(client.get_attestation_hash(&id), Some(expected.clone()));
+    }
+
+    // Whitespace-only hashes are rejected at both registration and verification.
+    let bad_id = String::from_str(&env, "normbad1");
+    assert_eq!(
+        client.try_register_with_hash(
+            &creator,
+            &bad_id,
+            &100i128,
+            &String::from_str(&env, "ipfs://QmNorm"),
+            &empty_tags(&env),
+            &Some(String::from_str(&env, "   \t ")),
+        ),
+        Err(Ok(Error::ContentHashTooLong))
+    );
+    let ok_id = String::from_str(&env, "normhash1");
+    assert_eq!(
+        client.try_set_verification_status(
+            &ok_id,
+            &verifier,
+            &VerificationStatus::Rejected,
+            &Some(String::from_str(&env, "   ")),
+        ),
+        Err(Ok(Error::AttestationHashTooLong))
+    );
+}
+
+#[test]
 fn register_with_hash_without_content_hash_keeps_metadata_mutable() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "hashoptional");

@@ -6571,8 +6571,109 @@ impl VaultRegistry {
         }
     }
 
+    fn normalize_content_hash(env: &Env, hash: &String) -> Result<String, Error> {
+        let raw = Self::string_bytes(hash);
+        let mut start = 0usize;
+        let mut end = raw.len();
+        while start < end && raw[start].is_ascii_whitespace() {
+            start += 1;
+        }
+        while end > start && raw[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        let trimmed = &raw[start..end];
+        if trimmed.is_empty() || trimmed.len() > MAX_CONTENT_HASH_LEN as usize {
+            return Err(Error::ContentHashTooLong);
+        }
+
+        let mut lower = alloc::vec::Vec::with_capacity(trimmed.len());
+        for &b in trimmed {
+            if b.is_ascii_whitespace() || b.is_ascii_control() {
+                return Err(Error::ContentHashTooLong);
+            }
+            lower.push(b.to_ascii_lowercase());
+        }
+
+        let mut separator = None;
+        for (idx, &byte) in lower.iter().enumerate() {
+            if byte == b':' {
+                separator = Some(idx);
+                break;
+            }
+        }
+
+        if let Some(sep) = separator {
+            let algorithm = &lower[..sep];
+            let mut digest = &lower[sep + 1..];
+            if digest.len() > 2 && &digest[..2] == b"0x" {
+                digest = &digest[2..];
+            }
+            if algorithm.is_empty() || digest.is_empty() {
+                return Err(Error::ContentHashTooLong);
+            }
+            for &byte in algorithm {
+                if !matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_') {
+                    return Err(Error::ContentHashTooLong);
+                }
+            }
+            let canonical_alg: &[u8] = if algorithm == b"sha-256" {
+                DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes()
+            } else {
+                algorithm
+            };
+            let mut out = alloc::vec::Vec::with_capacity(canonical_alg.len() + 1 + digest.len());
+            out.extend_from_slice(canonical_alg);
+            out.push(b':');
+            out.extend_from_slice(digest);
+            if out.len() > MAX_CONTENT_HASH_LEN as usize {
+                return Err(Error::ContentHashTooLong);
+            }
+            return Ok(String::from_bytes(env, &out));
+        }
+
+        let digest: &[u8] = if lower.len() > 2 && &lower[..2] == b"0x" {
+            &lower[2..]
+        } else {
+            &lower[..]
+        };
+        if digest.is_empty() {
+            return Err(Error::ContentHashTooLong);
+        }
+        let tagged_len = DEFAULT_ATTESTATION_HASH_ALGORITHM.len() + 1 + digest.len();
+        if tagged_len <= MAX_CONTENT_HASH_LEN as usize {
+            let mut out = alloc::vec::Vec::with_capacity(tagged_len);
+            out.extend_from_slice(DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes());
+            out.push(b':');
+            out.extend_from_slice(digest);
+            Ok(String::from_bytes(env, &out))
+        } else {
+            Ok(String::from_bytes(env, digest))
+        }
+    }
+
     fn normalize_attestation_hash(env: &Env, hash: &String) -> Result<String, Error> {
-        let bytes = Self::string_bytes(hash);
+        let raw = Self::string_bytes(hash);
+        let mut start = 0usize;
+        let mut end = raw.len();
+        while start < end && raw[start].is_ascii_whitespace() {
+            start += 1;
+        }
+        while end > start && raw[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        let trimmed = &raw[start..end];
+        if trimmed.is_empty() {
+            return Err(Error::AttestationHashTooLong);
+        }
+
+        let mut bytes = alloc::vec::Vec::with_capacity(trimmed.len());
+        for &b in trimmed {
+            if b.is_ascii_whitespace() || b.is_ascii_control() {
+                return Err(Error::AttestationHashTooLong);
+            }
+            bytes.push(b.to_ascii_lowercase());
+        }
+
         let mut separator = None;
         for (idx, byte) in bytes.iter().enumerate() {
             if *byte == b':' {
@@ -6583,7 +6684,10 @@ impl VaultRegistry {
 
         if let Some(separator) = separator {
             let algorithm = &bytes[..separator];
-            let digest = &bytes[separator + 1..];
+            let mut digest = &bytes[separator + 1..];
+            if digest.len() > 2 && &digest[..2] == b"0x" {
+                digest = &digest[2..];
+            }
             if algorithm.is_empty()
                 || algorithm.len() > MAX_ATTESTATION_HASH_ALGORITHM_LEN as usize
                 || digest.is_empty()
@@ -6596,18 +6700,32 @@ impl VaultRegistry {
                     return Err(Error::AttestationHashTooLong);
                 }
             }
-            return Ok(hash.clone());
+            let canonical_alg: &[u8] = if algorithm == b"sha-256" {
+                DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes()
+            } else {
+                algorithm
+            };
+            let mut tagged = alloc::vec::Vec::with_capacity(canonical_alg.len() + 1 + digest.len());
+            tagged.extend_from_slice(canonical_alg);
+            tagged.push(b':');
+            tagged.extend_from_slice(digest);
+            return Ok(String::from_bytes(env, &tagged));
         }
 
-        if bytes.is_empty() || bytes.len() > MAX_ATTESTATION_HASH_LEN as usize {
+        let digest: &[u8] = if bytes.len() > 2 && &bytes[..2] == b"0x" {
+            &bytes[2..]
+        } else {
+            &bytes[..]
+        };
+        if digest.is_empty() || digest.len() > MAX_ATTESTATION_HASH_LEN as usize {
             return Err(Error::AttestationHashTooLong);
         }
         let mut tagged = alloc::vec::Vec::with_capacity(
-            DEFAULT_ATTESTATION_HASH_ALGORITHM.len() + 1 + bytes.len(),
+            DEFAULT_ATTESTATION_HASH_ALGORITHM.len() + 1 + digest.len(),
         );
         tagged.extend_from_slice(DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes());
         tagged.push(b':');
-        tagged.extend_from_slice(&bytes);
+        tagged.extend_from_slice(digest);
         Ok(String::from_bytes(env, &tagged))
     }
 
@@ -7629,12 +7747,10 @@ impl VaultRegistry {
         if Self::is_reserved_id(&id) {
             return Err(Error::ReservedId);
         }
-        if let Some(ref hash) = content_hash {
-            let hash_len = hash.len();
-            if hash_len == 0 || hash_len > MAX_CONTENT_HASH_LEN {
-                return Err(Error::ContentHashTooLong);
-            }
-        }
+        let content_hash = match content_hash {
+            Some(ref hash) => Some(Self::normalize_content_hash(&env, hash)?),
+            None => None,
+        };
         let key = DataKey::Resource(id.clone());
         if env.storage().persistent().has(&key) {
             return Err(Error::AlreadyRegistered);
