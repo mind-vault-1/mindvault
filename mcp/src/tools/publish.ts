@@ -157,16 +157,23 @@ export async function publish(args: {
   }
 
   const paidFetch = makePaidFetch(wallet);
+  const paymentKey = `publish:${resource.id}`;
 
-  const verifyRes = await paidFetch(`${BASE_URL}/verify-content`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      content: `Title: ${args.title}\nDescription: ${args.description ?? ""}\nURL: ${args.externalUrl}`,
-      resourceId: resource.id,
-    }),
-  });
-  metrics.recordPayment(verifyRes.ok);
+  let verifyRes: Response;
+  try {
+    verifyRes = await paidFetch(`${BASE_URL}/verify-content`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: `Title: ${args.title}\nDescription: ${args.description ?? ""}\nURL: ${args.externalUrl}`,
+        resourceId: resource.id,
+      }),
+    });
+  } catch (err) {
+    metrics.recordPayment(false, paymentKey);
+    throw err;
+  }
+  metrics.recordPayment(verifyRes.ok, paymentKey);
 
   const verifyData = await verifyRes.json().catch(() => null);
 
@@ -195,6 +202,7 @@ export async function publish(args: {
     method: "POST",
     headers: { "x-api-key": apiKey },
   });
+  metrics.recordSettlement?.(registerRes.ok);
 
   const onchainStatus: string = registerRes.ok
     ? (registerRes.data.onchainStatus ?? "registered")
@@ -943,6 +951,7 @@ export async function publishBatch(
       `Verifying resource ${index + 1}/${items.length}: "${item.title}"`,
     );
 
+    const paymentKey = `publish:${resource.id}`;
     let verifyRes: Response;
     try {
       verifyRes = await paidFetch(`${BASE_URL}/verify-content`, {
@@ -954,7 +963,7 @@ export async function publishBatch(
         }),
       });
     } catch (err) {
-      metrics.recordPayment(false);
+      metrics.recordPayment(false, paymentKey);
       results.push({
         index,
         title: item.title,
@@ -966,7 +975,7 @@ export async function publishBatch(
       continue;
     }
 
-    metrics.recordPayment(verifyRes.ok);
+    metrics.recordPayment(verifyRes.ok, paymentKey);
     const verifyData = await verifyRes.json().catch(() => null);
 
     if (!verifyRes.ok) {

@@ -38,7 +38,12 @@ Example output when enabled:
   "enabled": true,
   "since": "2026-07-23T18:00:00.000Z",
   "totals": { "calls": 7, "errors": 1 },
-  "payments": { "attempts": 2, "failures": 0 },
+  "payments": {
+    "attempts": 2,
+    "failures": 0,
+    "retries": 1,
+    "settlements": { "attempts": 1, "settled": 1, "failures": 0 }
+  },
   "tools": {
     "mindvault_browse": { "calls": 3, "errors": 0, "totalDurationMs": 41, "maxDurationMs": 18 },
     "mindvault_buy": { "calls": 2, "errors": 1, "totalDurationMs": 220, "maxDurationMs": 140 }
@@ -47,8 +52,10 @@ Example output when enabled:
 ```
 
 - `totals` — aggregate call and error counts across all tools.
-- `payments` — x402 payment attempts recorded on `mindvault_publish`
-  (content verification) and `mindvault_buy`, with the failing subset.
+- `payments` — x402 payment attempts recorded on `mindvault_publish` / `mindvault_publish_batch`
+  (content verification) and `mindvault_buy`, with deduplicated `attempts`, `failures`, and
+  `retries` when the same payment key is retried, plus separate `settlements`
+  (`attempts`, `settled`, `failures`) for post-payment settlement and on-chain registration steps.
 - `tools` — per-tool call/error counts and durations in milliseconds
   (`totalDurationMs` is the sum, `maxDurationMs` the slowest single call).
 

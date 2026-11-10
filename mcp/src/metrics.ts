@@ -18,13 +18,26 @@ export interface ToolMetric {
   budgetExceeded: number;
 }
 
+export interface PaymentSettlementMetrics {
+  attempts: number;
+  settled: number;
+  failures: number;
+}
+
+export interface PaymentMetrics {
+  attempts: number;
+  failures: number;
+  retries?: number;
+  settlements?: PaymentSettlementMetrics;
+}
+
 export interface MetricsSnapshot {
   enabled: boolean;
   /** ISO timestamp of when collection (re)started, or null when disabled. */
   since: string | null;
   toolDurationBudgetMs: number | null;
   totals: { calls: number; errors: number; budgetExceeded: number };
-  payments: { attempts: number; failures: number };
+  payments: PaymentMetrics;
   tools: Record<string, ToolMetric>;
 }
 
@@ -32,7 +45,8 @@ export interface MetricsRecorder {
   readonly enabled: boolean;
   readonly toolDurationBudgetMs: number;
   recordToolCall(tool: string, durationMs: number, ok: boolean): void;
-  recordPayment(ok: boolean): void;
+  recordPayment(ok: boolean, paymentKey?: string): void;
+  recordSettlement?(ok: boolean): void;
   snapshot(): MetricsSnapshot;
   reset(): void;
 }
@@ -60,12 +74,22 @@ function emptyToolMetric(): ToolMetric {
   return { calls: 0, errors: 0, totalDurationMs: 0, maxDurationMs: 0, budgetExceeded: 0 };
 }
 
+function emptyPaymentMetrics(): Required<PaymentMetrics> {
+  return {
+    attempts: 0,
+    failures: 0,
+    retries: 0,
+    settlements: { attempts: 0, settled: 0, failures: 0 },
+  };
+}
+
 /** Disabled recorder — zero overhead, always reports an empty, disabled snapshot. */
 class NoopMetricsRecorder implements MetricsRecorder {
   readonly enabled = false;
   readonly toolDurationBudgetMs = 0;
   recordToolCall(): void {}
   recordPayment(): void {}
+  recordSettlement(): void {}
   reset(): void {}
   snapshot(): MetricsSnapshot {
     return {
@@ -73,7 +97,7 @@ class NoopMetricsRecorder implements MetricsRecorder {
       since: null,
       toolDurationBudgetMs: null,
       totals: { calls: 0, errors: 0, budgetExceeded: 0 },
-      payments: { attempts: 0, failures: 0 },
+      payments: emptyPaymentMetrics(),
       tools: {},
     };
   }
@@ -84,7 +108,8 @@ class ActiveMetricsRecorder implements MetricsRecorder {
   readonly toolDurationBudgetMs: number;
   private since = new Date();
   private tools = new Map<string, ToolMetric>();
-  private payments = { attempts: 0, failures: 0 };
+  private payments: Required<PaymentMetrics> = emptyPaymentMetrics();
+  private paymentStates = new Map<string, "succeeded" | "failed">();
 
   constructor(budgetMs: number) {
     this.toolDurationBudgetMs = budgetMs;
@@ -101,15 +126,45 @@ class ActiveMetricsRecorder implements MetricsRecorder {
     this.tools.set(tool, metric);
   }
 
-  recordPayment(ok: boolean): void {
-    this.payments.attempts += 1;
-    if (!ok) this.payments.failures += 1;
+  recordPayment(ok: boolean, paymentKey?: string): void {
+    const normalizedKey = typeof paymentKey === "string" ? paymentKey.trim() : "";
+    if (!normalizedKey) {
+      this.payments.attempts += 1;
+      if (!ok) this.payments.failures += 1;
+      return;
+    }
+
+    const previousState = this.paymentStates.get(normalizedKey);
+    if (previousState === undefined) {
+      this.paymentStates.set(normalizedKey, ok ? "succeeded" : "failed");
+      this.payments.attempts += 1;
+      if (!ok) this.payments.failures += 1;
+      return;
+    }
+
+    // Retrying the same logical payment increments retries rather than
+    // double-counting the initial payment attempt or failure.
+    this.payments.retries += 1;
+    if (previousState === "failed" && ok) {
+      this.paymentStates.set(normalizedKey, "succeeded");
+      this.payments.failures = Math.max(0, this.payments.failures - 1);
+    }
+  }
+
+  recordSettlement(ok: boolean): void {
+    this.payments.settlements.attempts += 1;
+    if (ok) {
+      this.payments.settlements.settled += 1;
+    } else {
+      this.payments.settlements.failures += 1;
+    }
   }
 
   reset(): void {
     this.since = new Date();
     this.tools.clear();
-    this.payments = { attempts: 0, failures: 0 };
+    this.paymentStates.clear();
+    this.payments = emptyPaymentMetrics();
   }
 
   snapshot(): MetricsSnapshot {
@@ -128,7 +183,12 @@ class ActiveMetricsRecorder implements MetricsRecorder {
       since: this.since.toISOString(),
       toolDurationBudgetMs: this.toolDurationBudgetMs,
       totals: { calls, errors, budgetExceeded },
-      payments: { ...this.payments },
+      payments: {
+        attempts: this.payments.attempts,
+        failures: this.payments.failures,
+        retries: this.payments.retries,
+        settlements: { ...this.payments.settlements },
+      },
       tools,
     };
   }
@@ -291,6 +351,30 @@ export function toOtlpMetricsExport(snapshot: MetricsSnapshot): OtlpMetricsPaylo
     "mindvault.payments.failures",
     "x402 payment attempts that did not succeed.",
     [intPoint(null, snapshot.payments.failures)],
+    false,
+  );
+  sumMetric(
+    "mindvault.payments.retries",
+    "Retried x402 payment invocations for an already-attempted payment key.",
+    [intPoint(null, snapshot.payments.retries ?? 0)],
+    true,
+  );
+  sumMetric(
+    "mindvault.payments.settlements.attempts",
+    "Post-payment settlement or on-chain registration attempts.",
+    [intPoint(null, snapshot.payments.settlements?.attempts ?? 0)],
+    true,
+  );
+  sumMetric(
+    "mindvault.payments.settlements.settled",
+    "Post-payment settlement or on-chain registration attempts that succeeded.",
+    [intPoint(null, snapshot.payments.settlements?.settled ?? 0)],
+    true,
+  );
+  sumMetric(
+    "mindvault.payments.settlements.failures",
+    "Post-payment settlement or on-chain registration attempts that failed.",
+    [intPoint(null, snapshot.payments.settlements?.failures ?? 0)],
     true,
   );
   sumMetric(

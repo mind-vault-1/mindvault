@@ -179,10 +179,7 @@ import {
   trimUsdc,
   usdcToStroops as toStroops,
 } from "./usdcAmount.js";
-import {
-  buildWalletAllowanceSummary,
-  formatWalletAllowanceSummary,
-} from "./walletAllowance.js";
+import { buildWalletAllowanceSummary, formatWalletAllowanceSummary } from "./walletAllowance.js";
 import { findCanonicalUsdc } from "./usdcIdentity.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
@@ -2005,8 +2002,7 @@ async function walletAllowanceOutcome(): Promise<ToolOutcome> {
   const wallet = requireWallet();
   const profile = activeProfileName;
   const network = NETWORK; // e.g. "stellar:testnet"
-  const usdcContractId =
-    process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
+  const usdcContractId = process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
   const ceiling = process.env.MINDVAULT_MAX_AUTO_PAY_USDC ?? DEFAULT_MAX_AUTO_PAY_USDC;
 
   // Fetch live balance — same call as walletInfo.
@@ -2724,6 +2720,7 @@ async function publish(args: {
   }
 
   const paidFetch = makePaidFetch(wallet);
+  const paymentKey = `publish:${resource.id}`;
 
   let verifyRes: Response;
   try {
@@ -2736,6 +2733,7 @@ async function publish(args: {
       }),
     });
   } catch (err) {
+    metrics.recordPayment(false, paymentKey);
     if (isTimeoutError(err)) {
       try {
         const snapshot = await publishStatus({ resourceId: resource.id });
@@ -2757,7 +2755,7 @@ async function publish(args: {
       mapTransportError({ operation: "Publish verification failed", source: "x402", error: err }),
     );
   }
-  metrics.recordPayment(verifyRes.ok);
+  metrics.recordPayment(verifyRes.ok, paymentKey);
 
   const verifyData = await verifyRes.json().catch(() => null);
 
@@ -2789,6 +2787,7 @@ async function publish(args: {
       headers: { "x-api-key": apiKey },
     });
   } catch (err) {
+    metrics.recordSettlement?.(false);
     if (isTimeoutError(err)) {
       try {
         const snapshot = await publishStatus({ resourceId: resource.id });
@@ -2810,6 +2809,7 @@ async function publish(args: {
       mapTransportError({ operation: "On-chain registration failed", source: "api", error: err }),
     );
   }
+  metrics.recordSettlement?.(registerRes.ok);
 
   const onchainStatus: string = registerRes.ok
     ? (registerRes.data.onchainStatus ?? "registered")
@@ -2948,7 +2948,7 @@ export async function buy(
       headers: { "Idempotency-Key": clientIdempotencyKey },
     });
   } catch (err) {
-    metrics.recordPayment(false);
+    metrics.recordPayment(false, clientIdempotencyKey);
     if (err instanceof PriceChangedCeilingError) {
       // Price changed between preview and x402 challenge — the agent must
       // re-authorize. Return a structured refusal (same shape as ceiling
@@ -2957,7 +2957,7 @@ export async function buy(
     }
     throw mcpError(mapTransportError({ operation: "Buy failed", source: "x402", error: err }));
   }
-  metrics.recordPayment(res.ok);
+  metrics.recordPayment(res.ok, clientIdempotencyKey);
   if (!res.ok) {
     const text = await res.text();
     throwHttpError({
@@ -3053,6 +3053,7 @@ export async function buy(
       skipped: false,
       result,
     });
+    metrics.recordSettlement?.(settlement.status === "settled");
   }
 
   const summary = {

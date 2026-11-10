@@ -3,6 +3,7 @@ import {
   createMetricsRecorder,
   measureTool,
   metricsEnabledFromEnv,
+  toOtlpMetricsExport,
   type MetricsRecorder,
 } from "./metrics.js";
 
@@ -29,12 +30,18 @@ describe("disabled (noop) recorder", () => {
     const recorder = createMetricsRecorder(false, 30000);
     expect(recorder.enabled).toBe(false);
     recorder.recordToolCall("mindvault_buy", 12, false);
-    recorder.recordPayment(false);
+    recorder.recordPayment(false, "publish:res-1");
+    recorder.recordSettlement?.(false);
     const snap = recorder.snapshot();
     expect(snap.enabled).toBe(false);
     expect(snap.tools).toEqual({});
     expect(snap.totals).toEqual({ calls: 0, errors: 0, budgetExceeded: 0 });
-    expect(snap.payments).toEqual({ attempts: 0, failures: 0 });
+    expect(snap.payments).toEqual({
+      attempts: 0,
+      failures: 0,
+      retries: 0,
+      settlements: { attempts: 0, settled: 0, failures: 0 },
+    });
   });
 });
 
@@ -64,7 +71,58 @@ describe("active recorder", () => {
     recorder.recordPayment(true);
     recorder.recordPayment(false);
     recorder.recordPayment(true);
-    expect(recorder.snapshot().payments).toEqual({ attempts: 3, failures: 1 });
+    expect(recorder.snapshot().payments).toEqual({
+      attempts: 3,
+      failures: 1,
+      retries: 0,
+      settlements: { attempts: 0, settled: 0, failures: 0 },
+    });
+  });
+
+  it("does not double-count failed publish attempts that retry the same payment key (#851)", () => {
+    const recorder = createMetricsRecorder(true, 30000);
+    // Initial failed verification payment for resource res-1
+    recorder.recordPayment(false, "publish:res-1");
+    // Retry of the same verification payment also fails
+    recorder.recordPayment(false, "publish:res-1");
+    expect(recorder.snapshot().payments).toEqual({
+      attempts: 1,
+      failures: 1,
+      retries: 1,
+      settlements: { attempts: 0, settled: 0, failures: 0 },
+    });
+
+    // Retry of the same verification payment succeeds on third try
+    recorder.recordPayment(true, "publish:res-1");
+    expect(recorder.snapshot().payments).toEqual({
+      attempts: 1,
+      failures: 0,
+      retries: 2,
+      settlements: { attempts: 0, settled: 0, failures: 0 },
+    });
+  });
+
+  it("tracks post-payment settlement outcomes separately from payment attempts (#851)", () => {
+    const recorder = createMetricsRecorder(true, 30000);
+    // Verification payment succeeds, but on-chain registration fails and is retried
+    recorder.recordPayment(true, "publish:res-2");
+    recorder.recordSettlement?.(false);
+    recorder.recordSettlement?.(true);
+
+    const snap = recorder.snapshot();
+    expect(snap.payments).toEqual({
+      attempts: 1,
+      failures: 0,
+      retries: 0,
+      settlements: { attempts: 2, settled: 1, failures: 1 },
+    });
+
+    const otlp = toOtlpMetricsExport(snap);
+    const metricNames = otlp.resourceMetrics[0].scopeMetrics[0].metrics.map((m) => m.name);
+    expect(metricNames).toContain("mindvault.payments.retries");
+    expect(metricNames).toContain("mindvault.payments.settlements.attempts");
+    expect(metricNames).toContain("mindvault.payments.settlements.settled");
+    expect(metricNames).toContain("mindvault.payments.settlements.failures");
   });
 
   it("clamps non-finite/negative durations to zero", () => {
