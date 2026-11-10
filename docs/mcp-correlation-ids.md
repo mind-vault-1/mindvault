@@ -117,6 +117,36 @@ await withNewCorrelationId(async (id) => {
 });
 ```
 
+## Exporting a request trace (#1068)
+
+Operators and tooling can export the full bounded trace for a single correlation
+ID across tool lifecycle, API (`source: "api"`), payment (`x402-payment`,
+`source: "x402" | "horizon"`), and registry (`onchain-*`,
+`source: "soroban" | "registry" | "sponsored"`) operations using
+`exportCorrelationTrace` (or `buildCorrelationTrace` for in-memory audit
+entries) from [`mcp/src/traceExport.ts`](../mcp/src/traceExport.ts):
+
+```ts
+import { exportCorrelationTrace } from "./traceExport.js";
+
+const trace = exportCorrelationTrace("/var/log/mindvault/audit.jsonl", correlationId, {
+  maxSpans: 200,
+  expectedDomains: ["tool", "api", "payment", "registry"],
+});
+```
+
+- **Bounded**: Reads at most `MAX_TRACE_EXPORT_BYTES` (1 MiB) from the tail of
+  the JSONL log and returns at most `MAX_TRACE_EXPORT_SPANS` (500) spans.
+- **Ordered**: Preserves chronological and file sequence ordering across
+  lifecycle and network spans (`trace.spans[i].index === i`).
+- **Redacted**: Every exported span passes through `redactObject`,
+  `redactSecrets`, and a Stellar secret-key sweep so API keys, bearer tokens,
+  proxy credentials, and `S…` secret keys are never exposed.
+- **Explicit missing-span reporting**: `trace.missingSpans` reports missing
+  `tool:start`, `tool:terminal`, `payment:start`, `payment:terminal`, or any
+  `expectedDomains` (`<domain>:operation`) that were not observed, and marks
+  `trace.complete = false` (`trace.status = "incomplete" | "not_found"`).
+
 ## Coverage
 
 - [`mcp/src/correlation.test.ts`](../mcp/src/correlation.test.ts) — ID format

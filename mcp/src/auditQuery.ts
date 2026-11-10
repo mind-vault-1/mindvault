@@ -1,11 +1,25 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { redactObject } from "./redaction.js";
+export {
+  TRACE_EXPORT_SCHEMA,
+  MAX_TRACE_EXPORT_BYTES,
+  MAX_TRACE_EXPORT_SPANS,
+  DEFAULT_TRACE_EXPORT_SPANS,
+  buildCorrelationTrace,
+  exportCorrelationTrace,
+  type TraceOperationDomain,
+  type TraceSpan,
+  type MissingSpanReport,
+  type TraceExportOptions,
+  type CorrelationTraceExport,
+} from "./traceExport.js";
 
 export interface AuditQuery {
   since?: string;
   until?: string;
   tool?: string;
   outcome?: "start" | "success" | "error";
+  correlationId?: string;
   offset?: number;
   limit?: number;
 }
@@ -53,6 +67,8 @@ export function queryAuditLog(path: string, query: AuditQuery = {}) {
       if (until !== null && !(time <= until)) continue;
       if (query.tool !== undefined && event.toolName !== query.tool) continue;
       if (query.outcome !== undefined && event.status !== query.outcome) continue;
+      if (query.correlationId !== undefined && event.correlationId !== query.correlationId)
+        continue;
       matches.push(redactObject(event) as Record<string, unknown>);
     }
     const entries = matches.slice(offset, offset + limit);
