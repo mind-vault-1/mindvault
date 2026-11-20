@@ -1,7 +1,12 @@
+import { createLimitedRegistryClient } from "./upstreamStellar.js";
+import {
+  limitPaymentPayload,
+  limitUpstreamFetch,
+  withUpstreamSlot,
+} from "./upstreamConcurrency.js";
 import { randomUUID } from "node:crypto";
 import {
   checkContractBindings,
-  createRegistryClient,
   getAttestationHash,
   Errors as RegistryErrors,
   listResources,
@@ -93,7 +98,12 @@ import {
   mockSetListed,
   mockSetTags,
 } from "./mock.js";
-import { purchaseHistoryTool, recordPurchase, loadPurchaseHistory } from "./purchaseHistory.js";
+import {
+  listPurchases,
+  purchaseHistoryTool,
+  purchaseStatusOf,
+  recordPurchase,
+} from "./purchaseHistory.js";
 import { Mutex } from "./mutex.js";
 import { exportReceiptsTool } from "./receipts.js";
 import { debugBundleTool } from "./debugBundle.js";
@@ -179,10 +189,7 @@ import {
   trimUsdc,
   usdcToStroops as toStroops,
 } from "./usdcAmount.js";
-import {
-  buildWalletAllowanceSummary,
-  formatWalletAllowanceSummary,
-} from "./walletAllowance.js";
+import { buildWalletAllowanceSummary, formatWalletAllowanceSummary } from "./walletAllowance.js";
 import { findCanonicalUsdc } from "./usdcIdentity.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
@@ -230,6 +237,8 @@ import {
   isRetryableStatus,
   retryAfterDelay,
   retryPolicyFromEnv,
+  retryBudgetFromEnv,
+  runWithRetryBudget,
   withRetry,
   type RetryAttemptInfo,
 } from "./retry.js";
@@ -368,9 +377,11 @@ export function _setMockMode(on: boolean): void {
   else delete process.env.MINDVAULT_MOCK;
 }
 const PROXY_CONFIG = resolveProxyConfig(process.env);
-const httpFetch: typeof fetch = MOCK
-  ? createMockFetch(() => currentWallet()?.publicKey)
-  : withProxy((input, init) => fetch(input as RequestInfo | URL, init), PROXY_CONFIG);
+const httpFetch = limitUpstreamFetch(
+  MOCK
+    ? createMockFetch(() => currentWallet()?.publicKey)
+    : withProxy((input, init) => fetch(input as RequestInfo | URL, init), PROXY_CONFIG),
+);
 
 const TIMEOUTS = resolveTimeouts(process.env);
 const toolTimeoutsResult = resolveToolTimeouts(process.env);
@@ -378,6 +389,7 @@ const TOOL_TIMEOUTS = toolTimeoutsResult.overrides;
 assertToolTimeoutOverridesWithinDeadline(TOOL_TIMEOUTS, resolveTransportTimeoutMax(process.env));
 
 const RETRY_POLICY = retryPolicyFromEnv(process.env);
+const TOOL_RETRY_BUDGET = retryBudgetFromEnv(process.env);
 
 const USER_AGENT = resolveUserAgent(process.env);
 
@@ -1218,7 +1230,7 @@ function requireApiKey(): string {
 
 function makePaidFetch(wallet: AgentWallet, baseFetch?: typeof fetch) {
   const signer = createEd25519Signer(wallet.secretKey, NETWORK);
-  const scheme = new ExactStellarScheme(signer);
+  const scheme = limitPaymentPayload(new ExactStellarScheme(signer));
   const client = new x402Client().register(NETWORK, scheme);
   const resolvedFetch = baseFetch ?? httpFetch;
   return wrapFetchWithPayment(withTimeout(resolvedFetch, "payment", TIMEOUTS.payment), client);
@@ -1986,83 +1998,6 @@ async function walletBalancesOutcome(): Promise<ToolOutcome> {
           : "No agent wallets configured.",
     },
   };
-}
-
-// ── Wallet allowance (#1052) ─────────────────────────────────────────────────
-
-/**
- * Summarize USDC balance, estimated pending spend, and payment ceiling for
- * the active wallet and network.
- *
- * Read-only: no signing, no transfer, no state mutation.
- *
- * Pending spend is the sum of local purchase receipts from the past 24 h
- * scoped to the active profile and current network. It is labeled as an
- * estimate because receipts are written on payment submission; on-chain
- * settlement may differ if a transaction is retried or not yet confirmed.
- */
-async function walletAllowanceOutcome(): Promise<ToolOutcome> {
-  const wallet = requireWallet();
-  const profile = activeProfileName;
-  const network = NETWORK; // e.g. "stellar:testnet"
-  const usdcContractId =
-    process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
-  const ceiling = process.env.MINDVAULT_MAX_AUTO_PAY_USDC ?? DEFAULT_MAX_AUTO_PAY_USDC;
-
-  // Fetch live balance — same call as walletInfo.
-  const details = await getBalanceDetails(wallet.publicKey);
-
-  // Estimate pending spend: receipts from the last 24 h for this profile + network.
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const store = loadPurchaseHistory();
-  const recentReceipts = store.purchases.filter((r) => {
-    if (r.network !== network) return false;
-    if (r.profile !== undefined && r.profile !== profile) return false;
-    return new Date(r.timestamp).getTime() >= cutoff;
-  });
-
-  const estimatedPendingSpend = recentReceipts
-    .reduce((acc, r) => {
-      const n = parseFloat(r.amount);
-      return acc + (Number.isFinite(n) ? n : 0);
-    }, 0)
-    .toFixed(7);
-
-  const snapshotAt = new Date().toISOString();
-
-  const lines = [
-    `Profile: ${profile}`,
-    `Address: ${wallet.publicKey}`,
-    `Network: ${network}`,
-    `Asset: USDC (${usdcContractId})`,
-    `USDC Balance: ${details.usdcBalance}`,
-    `Est. Pending Spend (24 h): ${estimatedPendingSpend} USDC (${recentReceipts.length} receipt${recentReceipts.length === 1 ? "" : "s"})`,
-    `Payment Ceiling: ${ceiling} USDC (MINDVAULT_MAX_AUTO_PAY_USDC)`,
-    `Snapshot: ${snapshotAt}`,
-  ];
-
-  if (details.message) lines.push(`Note: ${details.message}`);
-
-  return {
-    text: lines.join("\n"),
-    structured: {
-      profile,
-      address: wallet.publicKey,
-      network,
-      asset: "USDC" as const,
-      assetContractId: usdcContractId,
-      usdcBalance: details.usdcBalance,
-      estimatedPendingSpend,
-      receiptCount: recentReceipts.length,
-      paymentCeiling: ceiling,
-      snapshotAt,
-      note: details.message ?? null,
-    },
-  };
-}
-
-export async function walletAllowance(): Promise<string> {
-  return outcomeText(await walletAllowanceOutcome());
 }
 
 // ── Server endpoints (#890) ──────────────────────────────────────────────────
@@ -3206,7 +3141,7 @@ export async function updateMetadata(resourceId: string, metadata: string): Prom
 
   if (_isMock()) return mockUpdateMetadata(resourceId, normalizedMetadata);
 
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -3307,7 +3242,7 @@ export async function setPrice(resourceId: string, price: string): Promise<strin
 
   const stroops = usdcToStroops(price);
 
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -3406,7 +3341,7 @@ export async function transferOwnership(resourceId: string, newCreator: string):
   const wallet = requireWallet();
   if (_isMock()) return mockTransferOwnership(resourceId, newCreator);
 
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -3505,7 +3440,7 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
   const wallet = requireWallet();
   if (_isMock()) return mockSetListed(resourceId, listed);
 
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -3596,7 +3531,7 @@ export async function setTags(resourceId: string, tags: string[]): Promise<strin
   const wallet = requireWallet();
   if (_isMock()) return mockSetTags(resourceId, tags);
 
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -3679,7 +3614,9 @@ export async function setTags(resourceId: string, tags: string[]): Promise<strin
 }
 
 export async function registryLookup(resourceId: string): Promise<string> {
-  const client = createRegistryClient({
+  if (_isMock())
+    return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -3764,7 +3701,7 @@ export async function pendingTransfer(resourceId: string): Promise<string> {
   }
 
   // Confirm the resource exists on-chain first.
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -3817,7 +3754,7 @@ export async function pendingTransfer(resourceId: string): Promise<string> {
 
     const keyBase64 = ledgerKey.toXDR("base64");
 
-    const rpcRes = await fetch(SOROBAN_RPC_URL, {
+    const rpcRes = await httpFetch(SOROBAN_RPC_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -3897,7 +3834,7 @@ export async function registryList(start: number, limit: number): Promise<string
   if (_isMock())
     return mockRegistryList(start, limit, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
 
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -4023,7 +3960,7 @@ export async function registryCreatorPage(
     });
   }
 
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -4090,7 +4027,7 @@ export async function registryTagSearch(
 ): Promise<string> {
   if (_isMock()) return mockRegistryTagSearch(prefix, cursor, limit, REGISTRY_CONTRACT_ID);
 
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -4137,7 +4074,7 @@ export async function registryTagSearch(
 export async function registryCount(creator?: string): Promise<string> {
   if (_isMock()) return mockRegistryCount(creator, REGISTRY_CONTRACT_ID);
 
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -4319,7 +4256,7 @@ export async function checkConsistency(
   let onchainData: any = null;
   let onchainError: string | null = null;
   try {
-    const client = createRegistryClient({
+    const client = createLimitedRegistryClient({
       contractId: REGISTRY_CONTRACT_ID,
       rpcUrl: SOROBAN_RPC_URL,
       networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -4436,12 +4373,14 @@ export async function verifyAttestation(
 
   let registeredAttestationHash: string | null;
   try {
-    registeredAttestationHash = await getAttestationHash({
-      contractId: REGISTRY_CONTRACT_ID,
-      rpcUrl: SOROBAN_RPC_URL,
-      networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
-      resourceId,
-    });
+    registeredAttestationHash = await withUpstreamSlot(() =>
+      getAttestationHash({
+        contractId: REGISTRY_CONTRACT_ID,
+        rpcUrl: SOROBAN_RPC_URL,
+        networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+        resourceId,
+      }),
+    );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     if (/does not expose get_attestation_hash/.test(message)) {
@@ -4679,12 +4618,14 @@ export function clientConfig(client?: string): string {
  */
 async function checkBindings(): Promise<string> {
   if (_isMock()) return "Mock mode: contract binding check skipped (no live RPC).";
-  const result = await checkContractBindings({
-    contractId: REGISTRY_CONTRACT_ID,
-    rpcUrl: SOROBAN_RPC_URL,
-    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
-    network: STELLAR_NETWORK,
-  });
+  const result = await withUpstreamSlot(() =>
+    checkContractBindings({
+      contractId: REGISTRY_CONTRACT_ID,
+      rpcUrl: SOROBAN_RPC_URL,
+      networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+      network: STELLAR_NETWORK,
+    }),
+  );
   return result.message;
 }
 
@@ -4746,7 +4687,15 @@ const STATE_MUTATING_TOOLS = new Set([
 
 const stateMutex = new Mutex();
 
-async function dispatchToolOutcome(
+function dispatchToolOutcome(
+  name: string,
+  rawArgs: unknown,
+  onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
+): Promise<ToolOutcome> {
+  return runWithRetryBudget(TOOL_RETRY_BUDGET, () => executeTool(name, rawArgs, onProgress));
+}
+
+async function executeTool(
   name: string,
   rawArgs: unknown,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
@@ -5229,12 +5178,14 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 });
 
 if (!process.env.VITEST && !MOCK) {
-  void checkContractBindings({
-    contractId: REGISTRY_CONTRACT_ID,
-    rpcUrl: SOROBAN_RPC_URL,
-    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
-    network: STELLAR_NETWORK,
-  })
+  void withUpstreamSlot(() =>
+    checkContractBindings({
+      contractId: REGISTRY_CONTRACT_ID,
+      rpcUrl: SOROBAN_RPC_URL,
+      networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+      network: STELLAR_NETWORK,
+    }),
+  )
     .then((result: { status: string; message: string }) => {
       if (result.status === "mismatch") logger.warn(`MindVault MCP: ${result.message}`);
     })

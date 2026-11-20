@@ -1,9 +1,5 @@
-import {
-  createRegistryClient,
-  Errors as RegistryErrors,
-  listResources,
-  type Resource,
-} from "@mindvault/registry-client";
+import { createLimitedRegistryClient } from "../upstreamStellar.js";
+import { Errors as RegistryErrors, listResources, type Resource } from "@mindvault/registry-client";
 import {
   BASE_URL,
   HORIZON_URL,
@@ -197,7 +193,7 @@ export async function insufficientFundsMessage(
 export async function registryLookup(resourceId: string): Promise<string> {
   if (_isMock())
     return mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -273,7 +269,7 @@ export async function registryList(start: number, limit: number): Promise<string
   if (_isMock())
     return mockRegistryList(start, limit, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
 
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -352,7 +348,7 @@ export async function registryList(start: number, limit: number): Promise<string
 export async function registryCount(creator?: string): Promise<string> {
   if (_isMock()) return mockRegistryCount(creator, REGISTRY_CONTRACT_ID);
 
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -473,7 +469,7 @@ export async function checkConsistency(
   let onchainData: any = null;
   let onchainError: string | null = null;
   try {
-    const client = createRegistryClient({
+    const client = createLimitedRegistryClient({
       contractId: REGISTRY_CONTRACT_ID,
       rpcUrl: SOROBAN_RPC_URL,
       networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -593,7 +589,7 @@ export async function pendingTransfer(resourceId: string): Promise<string> {
   }
 
   // First confirm the resource exists on-chain to give a meaningful error.
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -648,7 +644,7 @@ export async function pendingTransfer(resourceId: string): Promise<string> {
 
     const keyBase64 = ledgerKey.toXDR("base64");
 
-    const rpcRes = await fetch(SOROBAN_RPC_URL, {
+    const rpcRes = await httpFetch(SOROBAN_RPC_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -794,7 +790,7 @@ export async function metadataDiff(resourceId: string): Promise<string> {
   let onchainError: string | null = null;
   if (!_isMock()) {
     try {
-      const client = createRegistryClient({
+      const client = createLimitedRegistryClient({
         contractId: REGISTRY_CONTRACT_ID,
         rpcUrl: SOROBAN_RPC_URL,
         networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,

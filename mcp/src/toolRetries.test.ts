@@ -54,8 +54,9 @@ vi.mock("@mindvault/registry-client", async (importOriginal) => {
 // Retry counts are read once at module load. VITEST already forces a zero base
 // delay, so these run without real sleeping.
 process.env.MINDVAULT_RETRY_ATTEMPTS = "3";
+process.env.MINDVAULT_TOOL_RETRY_BUDGET = "1";
 
-const { browse, buy, walletInfo, txStatus, networkProfile, _setAgentWallet } =
+const { browse, buy, dispatchTool, walletInfo, txStatus, networkProfile, _setAgentWallet } =
   await import("./index.js");
 
 function mockResponse(data: unknown, ok = true, status = 200, headers?: Record<string, string>) {
@@ -79,6 +80,27 @@ const testWallet = {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+it("shares the retry budget across a tool's upstream health checks", async () => {
+  const unavailable = mockResponse({}, false, 503);
+  const healthy = mockResponse({});
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(unavailable)
+    .mockResolvedValueOnce(healthy)
+    .mockResolvedValueOnce(unavailable)
+    .mockResolvedValueOnce(healthy);
+  vi.stubGlobal("fetch", fetchMock);
+  try {
+    const report = await dispatchTool("mindvault_registry_health", {});
+    expect(report).toContain("MindVault API: Reachable");
+    expect(report).toContain("Horizon: Returned HTTP 503");
+    expect(report).toContain("Soroban RPC: Reachable");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 describe("idempotent reads retry", () => {
