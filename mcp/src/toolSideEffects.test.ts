@@ -161,7 +161,13 @@ function sampleValue(spec: ArgumentSpec): unknown {
     case "string_array":
       return ["mock-1"];
     case "string":
-      return "mock-1";
+      return "mock1";
+    case "stellar_address":
+      return "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH";
+    case "stellar_secret":
+      return "SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY";
+    case "url":
+      return "https://example.com/probe";
     case "object":
       return {};
   }
@@ -175,6 +181,7 @@ const PROBE_OVERRIDES: Record<string, Record<string, unknown>> = {
   mindvault_publish_status: { resourceId: "mock-1" },
   mindvault_purchase_history: {},
   mindvault_export_receipts: { format: "csv" },
+  mindvault_explain_error_code: { code: 1 },
 };
 
 function probeArgs(name: string): Record<string, unknown> {

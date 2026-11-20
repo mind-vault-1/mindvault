@@ -847,6 +847,54 @@ export const REGISTRY_ERROR_MAP: Record<RegistryErrorName, RegistryErrorMapEntry
     code: "MV_CONTRACT_ERROR",
     message: "Listing revision counter would overflow; the resource cannot be mutated further.",
   },
+  RoleCapacityReached: {
+    discriminant: 56,
+    name: "RoleCapacityReached",
+    code: "MV_CONFLICT",
+    message: "This registry role already has the maximum number of active holders.",
+  },
+  UnclaimedFees: {
+    discriminant: 57,
+    name: "UnclaimedFees",
+    code: "MV_CONFLICT",
+    message: "Claim accrued platform fees before changing the fee recipient or destination.",
+  },
+  LeaseFeeConfigConflict: {
+    discriminant: 58,
+    name: "LeaseFeeConfigConflict",
+    code: "MV_ARGUMENT_INVALID",
+    message: "Lower the combined fee rates below the price locked in by the lease.",
+  },
+  RevocationReasonHashTooLong: {
+    discriminant: 59,
+    name: "RevocationReasonHashTooLong",
+    code: "MV_ARGUMENT_INVALID",
+    message: "The attestation revocation reason hash exceeds the 64-byte limit.",
+  },
+  InvalidMaintenanceReason: {
+    discriminant: 60,
+    name: "InvalidMaintenanceReason",
+    code: "MV_ARGUMENT_INVALID",
+    message: "Provide a maintenance reason code between 0 and 255.",
+  },
+  InvalidPaymentMemo: {
+    discriminant: 61,
+    name: "InvalidPaymentMemo",
+    code: "MV_ARGUMENT_INVALID",
+    message: "Use the canonical mv:<resource_id> memo from the Stellar transaction.",
+  },
+  FlagNotOverdue: {
+    discriminant: 62,
+    name: "FlagNotOverdue",
+    code: "MV_CONFLICT",
+    message: "Resolve this flag after its deadline has passed.",
+  },
+  InvalidFlagResolutionWindow: {
+    discriminant: 63,
+    name: "InvalidFlagResolutionWindow",
+    code: "MV_ARGUMENT_INVALID",
+    message: "Provide a flag resolution window no longer than 535680 ledgers.",
+  },
 };
 
 /**
