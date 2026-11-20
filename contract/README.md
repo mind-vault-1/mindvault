@@ -238,11 +238,19 @@ its transaction evidence separately.
 
 - `platform_fee_bps ≤ MAX_FEE_BPS` (else `FeeBpsTooHigh`)
 - `royalty_bps ≤ MAX_FEE_BPS` (else `FeeBpsTooHigh`)
-- `platform_fee_bps + royalty_bps ≤ MAX_FEE_BPS` (else `TotalFeeTooHigh`)
+- `platform_fee_bps + royalty_bps ≤ MAX_FEE_BPS`, using `checked_add` so an
+  extreme pair cannot wrap into a small value (else `TotalFeeTooHigh`)
 
 `validate_price` (called on every `register` / `set_price` / `set_price_many`) enforces:
 
-- `price > platform_fee_bps + royalty_bps` (else `InvalidPrice`)
+- `price > platform_fee_bps + royalty_bps`, also computed with `checked_add` and
+  mapped to `InvalidPrice` on overflow (else `InvalidPrice`)
+
+All fee arithmetic changes are validation-only: they add no storage keys, change
+no stored encoding, and leave the public ABI unchanged. Rejected calls emit no
+events and write no state; the helper that screens active leases returns
+`LeaseFeeConfigConflict` on overflow without touching storage. The regenerated
+TypeScript bindings therefore need no method or struct changes for this fix.
 
 This two-layer invariant — a fee ceiling in `set_fee_config` and a price floor in `validate_price` — guarantees the creator always receives a **positive** remainder of at least `MIN_CREATOR_SHARE_BPS` (50 %) on every sale.
 The contract does **not** collect fees itself — it stores the agreed split so
@@ -375,6 +383,8 @@ See [`docs/adr-fee-config.md`](../docs/adr-fee-config.md) for the full design ra
 | `refund_window()`                                                           | —                                                        | —                                                                                                                                                                                                                                                    | `u32`                                  | Read the configured refund window in ledgers; defaults to `DEFAULT_REFUND_WINDOW_LEDGERS` (one day).                                                                                                                                                                                                     |
 | `record_creator_refund(creator, refund_id, payment_receipt_id, recipient, amount, tx_hash)` | payment `creator` | `creator: Address`; `refund_id: String`; `payment_receipt_id: String`; `recipient: Address`; `amount: i128`; `tx_hash: String`                                                                                                     | `Result<(), Error>`                    | Record a completed external refund within the payment's deadline. The creator who received the payment must authorize; recipient must be the original payer. Cumulative refunds cannot exceed the payment amount. Emits `refund`.                                                                          |
 | `record_admin_refund(admin, refund_id, payment_receipt_id, recipient, amount, tx_hash)` | current `admin`                                           | `admin: Address`; `refund_id: String`; `payment_receipt_id: String`; `recipient: Address`; `amount: i128`; `tx_hash: String`                                                                                                        | `Result<(), Error>`                    | Admin override for recording a refund after the deadline or without creator authorization. Payer and cumulative amount constraints still apply. Emits `refund`.                                                                                                                                           |
+| `record_creator_refund_reason(creator, refund_id, payment_receipt_id, recipient, amount, tx_hash, reason_hash)` | payment `creator` | Same as `record_creator_refund`, plus `reason_hash: Option<String>` — a 1-64 byte digest of an off-chain dispute record, never the private text. | `Result<(), Error>` | Creator refund with an optional reason hash stored on the receipt and emitted in `refund`. `None` keeps the legacy behavior; an over-long hash errors `RefundReasonHashTooLong` before any storage is written. |
+| `record_admin_refund_with_reason(admin, refund_id, payment_receipt_id, recipient, amount, tx_hash, reason_hash)` | current `admin` | Same as `record_admin_refund`, plus `reason_hash: Option<String>` — a 1-64 byte digest of an off-chain dispute record. | `Result<(), Error>` | Admin refund with an optional reason hash stored on the receipt and emitted in `refund`. `None` keeps the legacy behavior; an over-long hash errors `RefundReasonHashTooLong` before any storage is written. |
 | `get_refund(refund_id)`                                                      | —                                                        | `refund_id: String`                                                                                                                                                                                                                                  | `Result<RefundReceipt, Error>`         | Fetch a refund record by its id. Errors `NotFound` if absent.                                                                                                                                                                                                                                              |
 | `get_refunded_amount(payment_receipt_id)`                                    | —                                                        | `payment_receipt_id: String`                                                                                                                                                                                                                         | `Result<i128, Error>`                  | Read the cumulative amount recorded as refunded for a payment. Errors `NotFound` if the payment receipt is absent.                                                                                                                                                                                        |
 | `get_refund_deadline(payment_receipt_id)`                                     | —                                                        | `payment_receipt_id: String`                                                                                                                                                                                                                         | `Result<u32, Error>`                   | Read the exclusive ledger deadline for creator refunds of a settled payment.                                                                                                                                                                                                                              |
@@ -423,6 +433,12 @@ exceed the original amount.
 These methods store the supplied refund transaction hash and emit `refund` for
 indexers; they do not custody USDC or verify the hash's transfer contents. The
 caller must submit the record only after the external transfer is complete.
+`record_creator_refund_reason` and `record_admin_refund_with_reason` accept
+an optional `reason_hash`: a bounded digest of an off-chain dispute record that
+is returned by `get_refund` and included in the `refund` event. Pass `None` for
+the original behavior; private text is never stored on-chain. The hash lives in
+a separate `RefundReasonHash` storage key, so receipts written before this
+feature keep their original encoding and read back with `reason_hash: None`.
 This follows the ADR's direct-payment model, where refunds are separate
 transactions rather than contract-held escrow.
 
@@ -714,13 +730,15 @@ if (page.next_cursor !== null) {
 | `54` | `UnsupportedResourceSchema`      | A resource uses a schema version this deployment cannot safely read or upgrade.          |
 | `55` | `RevisionOverflow`               | A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state. |
 | `56` | `RoleCapacityReached`           | A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role. |
-| `56` | `UnclaimedFees`                 | A fee-recipient or fee-destination change was attempted while accrued fees remain unclaimed. Call `claim_fees` first, then retry. |
+| `57` | `UnclaimedFees`                 | A fee-recipient or fee-destination change was attempted while accrued fees remain unclaimed. Call `claim_fees` first to acknowledge receipt of outstanding fees, then retry the change. |
+| `58` | `LeaseFeeConfigConflict`        | A combined fee configuration would invalidate the pricing of an active lease; the change is rejected before any storage is written. |
+| `59` | `RefundReasonHashTooLong`       | A refund `reason_hash` exceeds `MAX_REFUND_REASON_HASH_LEN` (64 bytes). |
 
 #### Error budget
 
 This enum is declared with `#[contracterror(export = false)]`. The protocol
 caps a *spec-exported* contract error enum at 50 cases
-(`ScSpecUdtErrorEnumV0.cases` is `VecM<_, 50>`), and codes `1`–`56` are all
+(`ScSpecUdtErrorEnumV0.cases` is `VecM<_, 50>`), and codes `1`-`59` are all
 allocated, so a spec-exported `#[contracterror]` would fail to compile with
 `LengthExceedsMax` on a `51` variant. Disabling the spec export keeps the
 contract buildable; the discriminants and names below remain the on-wire
@@ -733,9 +751,12 @@ recovery features landed: `InvalidMetadataPointers` (51), `AdminAlreadySet`
 `RevisionOverflow` (55). They are distinct failure modes, so folding them
 into a broader existing code would hide the cause from callers.
 
-Code `56` (`UnclaimedFees`) was added for the accrued-fee guard (#985):
+Code `57` (`UnclaimedFees`) was added for the accrued-fee guard (#985):
 it blocks fee-recipient/destination rotation while settled fees remain
-unclaimed, with `claim_fees` as the safe migration path.
+unclaimed, with `claim_fees` as the safe migration path. Code `58`
+(`LeaseFeeConfigConflict`) covers fee changes that would invalidate active
+lease pricing (#991), and code `59` (`RefundReasonHashTooLong`) bounds the
+optional refund reason digest (#986).
 
 Plan new validation around an existing code where the semantics genuinely fit,
 or prefer a behavior that needs no new code (a documented no-op, or folding the

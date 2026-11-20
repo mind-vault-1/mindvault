@@ -71,6 +71,10 @@ pub const SUPPORTED_ATTESTATION_HASH_ALGORITHMS: [&str; 2] = ["sha256", "sha512"
 /// `set_flag_reason_hash`. Same bound as `MAX_TERMS_HASH_LEN` — both store a
 /// fixed-size digest of arbitrary off-chain content.
 pub const MAX_FLAG_REASON_HASH_LEN: u32 = 64;
+/// Max length for a bounded reason hash attached to a creator or admin refund.
+/// Like other hash fields it stores a digest of an off-chain dispute record,
+/// never the private text itself.
+pub const MAX_REFUND_REASON_HASH_LEN: u32 = 64;
 
 /// Max length for a verifier's off-chain attestation revocation reason hash.
 /// Bounded to the same length as other hash fields for consistency and to
@@ -351,7 +355,9 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("set_refund_window", "admin"),
     ("refund_window", "—"),
     ("record_creator_refund", "creator"),
+    ("record_creator_refund_reason", "creator"),
     ("record_admin_refund", "admin override"),
+    ("record_admin_refund_with_reason", "admin override"),
     ("get_refund", "—"),
     ("get_refunded_amount", "—"),
     ("get_remaining_refundable", "—"),
@@ -445,16 +451,9 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (54, "UnsupportedResourceSchema", "A resource uses a schema version this deployment cannot safely read or upgrade."),
     (55, "RevisionOverflow", "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state."),
     (56, "RoleCapacityReached", "A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role."),
-    (47, "RevocationReasonHashTooLong", "`revocation_reason_hash` exceeds `MAX_REVOCATION_REASON_HASH_LEN` (64 bytes)."),
-    (48, "PaymentAmountMismatch", "Payment amount differs from the resource price or cumulative refunds exceed the original payment."),
-    (49, "DuplicateTxHash", "A payment or refund receipt already uses the supplied transaction hash (`tx_hash`)."),
-    (50, "FeeConfigNotSet", "`set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`."),
-    (51, "AdminNominationExpired", "The pending admin nomination is missing or has expired."),
-    (52, "InvalidMetadataPointers", "`set_metadata_pointers` received zero, more than `MAX_METADATA_POINTERS`, or duplicate pointers, or an out-of-range `primary` index."),
-    (53, "AdminAlreadySet", "`bootstrap_dual_admin` was called after an admin was already set."),
-    (54, "RecoveryAdminNotSet", "`recover_admin` was called but no recovery admin is configured."),
-    (55, "UnsupportedResourceSchema", "A resource uses a schema version this deployment cannot safely read or upgrade."),
-    (56, "RevisionOverflow", "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state."),
+    (57, "UnclaimedFees", "A fee-recipient or fee-destination change was attempted while accrued fees remain unclaimed. Call `claim_fees` first to acknowledge receipt of outstanding fees, then retry the change."),
+    (58, "LeaseFeeConfigConflict", "A combined fee configuration would invalidate the pricing of an active lease; the change is rejected before any storage is written."),
+    (59, "RefundReasonHashTooLong", "A refund `reason_hash` exceeds `MAX_REFUND_REASON_HASH_LEN` (64 bytes)."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -658,6 +657,8 @@ pub enum RoleKind {
     Moderator = 2,
     /// Multi-member settler role (`is_settler`).
     Settler = 3,
+}
+
 /// Registry-level maintenance posture: which kind of pause is in effect.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -1091,9 +1092,6 @@ pub enum DataKey {
     PendingTransfer(String),
     Verifier(Address),
     NetworkId,
-    /// Paginated status-change history for a verifier address, appended to
-    /// on every `set_verification_status` call that involves this verifier.
-    VerifierHistory(Address),
     /// Canonical payment receipt, keyed by its caller-assigned `receipt_id`.
     PaymentReceipt(String),
     /// Secondary index mapping `(resource_id, payer)` to the `receipt_id` of
@@ -1121,8 +1119,6 @@ pub enum DataKey {
     VerifierHistory(Address),
     /// Aggregated settled-payment earnings for a creator wallet address.
     CreatorEarnings(Address),
-    /// Moderator who last set a resource's dispute flag or reason hash.
-    FlagModerator(String),
     /// Active lease held by `holder` on a resource.
     Lease(String, Address),
     /// Anchor attempt counter for `(resource_id, buyer)`.
@@ -1210,6 +1206,10 @@ pub enum DataKey {
     PaymentPaused,
     /// Unix timestamp at which a scheduled payment pause automatically expires.
     PaymentPauseUntil,
+    /// Optional bounded dispute reason hash for a refund. Stored separately so
+    /// receipts written before this field existed keep their original encoding.
+    /// Appended to preserve every existing storage-key discriminant.
+    RefundReasonHash(String),
 }
 
 /// Payload of every role grant/revoke event (`addverif`/`rmverif`,
@@ -1410,6 +1410,27 @@ pub struct RefundReceipt {
     pub admin_override: bool,
     /// Remaining refundable balance after this refund is applied.
     /// Calculated as: original payment amount - cumulative refunds (including this one).
+    pub remaining_balance: i128,
+    /// Optional bounded hash of an off-chain dispute reason. `None` for refunds
+    /// recorded through the legacy entry points, so existing clients keep working.
+    pub reason_hash: Option<String>,
+}
+
+/// Stored encoding of a refund receipt. The optional reason hash lives under
+/// [`DataKey::RefundReasonHash`] so this map keeps the field set that existed
+/// before refund reasons were added.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+struct StoredRefundReceipt {
+    pub refund_id: String,
+    pub payment_receipt_id: String,
+    pub resource_id: String,
+    pub recipient: Address,
+    pub amount: i128,
+    pub tx_hash: String,
+    pub initiated_by: Address,
+    pub recorded_at: u32,
+    pub admin_override: bool,
     pub remaining_balance: i128,
 }
 
@@ -1650,7 +1671,12 @@ pub enum Error {
     /// A fee-recipient or fee-destination change was attempted while accrued
     /// fees remain unclaimed. Call `claim_fees` first to acknowledge receipt
     /// of outstanding fees, then retry the change.
-    UnclaimedFees = 56,
+    UnclaimedFees = 57,
+    /// A combined fee configuration would invalidate the pricing of an active
+    /// lease. The fee change is rejected before any storage is written.
+    LeaseFeeConfigConflict = 58,
+    /// A refund `reason_hash` exceeded `MAX_REFUND_REASON_HASH_LEN` (64 bytes).
+    RefundReasonHashTooLong = 59,
 }
 
 #[contract]
@@ -4114,11 +4140,15 @@ impl VaultRegistry {
     /// every call, including no-op transitions.
     pub fn set_payment_paused(env: Env, admin: Address, paused: bool) -> Result<(), Error> {
         Self::require_current_admin(&env, &admin)?;
-        env.storage().instance().set(&DataKey::PaymentPaused, &paused);
+        env.storage()
+            .instance()
+            .set(&DataKey::PaymentPaused, &paused);
         env.storage().instance().remove(&DataKey::PaymentPauseUntil);
         Self::bump_instance(&env);
-        env.events()
-            .publish((symbol_short!("payment_pause"), admin.clone()), (paused, admin));
+        env.events().publish(
+            (symbol_short!("payment_pause"), admin.clone()),
+            (paused, admin),
+        );
         Ok(())
     }
 
@@ -4128,10 +4158,16 @@ impl VaultRegistry {
     /// clock. The existing `set_payment_paused(admin, true)` entry point remains the
     /// way to create an indefinite pause. A deadline at or before the current
     /// ledger timestamp takes effect as an immediate resume.
-    pub fn set_payment_paused_until(env: Env, admin: Address, pause_until: u64) -> Result<(), Error> {
+    pub fn set_payment_paused_until(
+        env: Env,
+        admin: Address,
+        pause_until: u64,
+    ) -> Result<(), Error> {
         Self::require_current_admin(&env, &admin)?;
         let active = pause_until > env.ledger().timestamp();
-        env.storage().instance().set(&DataKey::PaymentPaused, &active);
+        env.storage()
+            .instance()
+            .set(&DataKey::PaymentPaused, &active);
         if active {
             env.storage()
                 .instance()
@@ -4340,16 +4376,20 @@ impl VaultRegistry {
         if config.royalty_bps > MAX_FEE_BPS {
             return Err(Error::FeeBpsTooHigh);
         }
-        // Then validate the combined ceiling
-        if config.platform_fee_bps + config.royalty_bps > MAX_FEE_BPS {
+        // Then validate the combined ceiling. `checked_add` keeps an extreme
+        // pair from wrapping to a small value and bypassing the bound.
+        let combined_fee_bps = config
+            .platform_fee_bps
+            .checked_add(config.royalty_bps)
+            .ok_or(Error::TotalFeeTooHigh)?;
+        if combined_fee_bps > MAX_FEE_BPS {
             return Err(Error::TotalFeeTooHigh);
         }
         let destination = Self::load_fee_destination(&env);
         Self::validate_fee_destination_for_fee_config(&config, &destination)?;
 
         // Reject fee-recipient rotation when accrued fees are unclaimed.
-        let existing: Option<FeeConfig> =
-            env.storage().instance().get(&DataKey::FeeConfig);
+        let existing: Option<FeeConfig> = env.storage().instance().get(&DataKey::FeeConfig);
         if let Some(ref old) = existing {
             if old.fee_recipient != config.fee_recipient {
                 Self::require_no_unclaimed_fees(&env)?;
@@ -4527,7 +4567,7 @@ impl VaultRegistry {
         let current = Self::load_accrued_fees(env);
         env.storage()
             .instance()
-            .set(&DataKey::AccruedFees, &(current + fee_amount));
+            .set(&DataKey::AccruedFees, &current.saturating_add(fee_amount));
     }
 
     /// Reject the call with `UnclaimedFees` if accrued platform fees are
@@ -4581,9 +4621,13 @@ impl VaultRegistry {
     /// if a lease was bought when fees were 10% and the resource was priced at 100,
     /// increasing fees to 100% would retroactively invalidate that lease's pricing
     /// assumptions, which we prevent here.
+    #[allow(dead_code)]
     fn validate_fee_config_for_leases(env: &Env, config: &FeeConfig) -> Result<(), Error> {
-        let combined_fee_bps = config.platform_fee_bps + config.royalty_bps;
-        
+        let combined_fee_bps = config
+            .platform_fee_bps
+            .checked_add(config.royalty_bps)
+            .ok_or(Error::LeaseFeeConfigConflict)?;
+
         // If there are no fees, there's no conflict
         if combined_fee_bps == 0 {
             return Ok(());
@@ -4592,10 +4636,14 @@ impl VaultRegistry {
         // Scan listed resources to find minimum price. We check listed resources
         // because only listed resources can have leases sold on them.
         let count: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
-        
+
         for i in 0..count {
             let index_key = DataKey::Index(i);
-            if let Some(resource_id) = env.storage().persistent().get::<DataKey, String>(&index_key) {
+            if let Some(resource_id) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, String>(&index_key)
+            {
                 if let Ok(resource) = Self::load(env, &resource_id) {
                     // Only check listed resources (leases can only be created on listed resources)
                     if resource.state == ResourceState::Listed {
@@ -4786,10 +4834,8 @@ impl VaultRegistry {
 
         match validation_result {
             Ok(()) => {
-                env.events().publish(
-                    (symbol_short!("simvalid"),),
-                    (true, Option::<u32>::None),
-                );
+                env.events()
+                    .publish((symbol_short!("simvalid"),), (true, Option::<u32>::None));
                 Ok(PaymentReceipt {
                     receipt_id: receipt_id.clone(),
                     resource_id,
@@ -4810,10 +4856,8 @@ impl VaultRegistry {
                     Error::InvalidTxHash => Some(24u32),
                     _ => None,
                 };
-                env.events().publish(
-                    (symbol_short!("simvalid"),),
-                    (false, error_code),
-                );
+                env.events()
+                    .publish((symbol_short!("simvalid"),), (false, error_code));
                 Err(e)
             }
         }
@@ -4967,7 +5011,11 @@ impl VaultRegistry {
         // in integer arithmetic (truncation is fine — leftover sub-stroop
         // dust is not tracked). Only non-zero fees are accrued so the
         // guard is inactive when no platform fee is configured.
-        if let Some(fee_config) = env.storage().instance().get::<DataKey, FeeConfig>(&DataKey::FeeConfig) {
+        if let Some(fee_config) = env
+            .storage()
+            .instance()
+            .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
+        {
             if fee_config.platform_fee_bps > 0 && fee_config.fee_recipient.is_some() {
                 let fee_amount = receipt.amount * i128::from(fee_config.platform_fee_bps)
                     / i128::from(FEE_BPS_DENOM);
@@ -5038,6 +5086,33 @@ impl VaultRegistry {
             amount,
             tx_hash,
             false,
+            None,
+        )
+    }
+
+    /// Like [`Self::record_creator_refund`], with an optional bounded hash of
+    /// the off-chain dispute reason. Absent values are stored as `None`.
+    pub fn record_creator_refund_reason(
+        env: Env,
+        creator: Address,
+        refund_id: String,
+        payment_receipt_id: String,
+        recipient: Address,
+        amount: i128,
+        tx_hash: String,
+        reason_hash: Option<String>,
+    ) -> Result<(), Error> {
+        creator.require_auth();
+        Self::record_refund(
+            &env,
+            creator,
+            refund_id,
+            payment_receipt_id,
+            recipient,
+            amount,
+            tx_hash,
+            false,
+            reason_hash,
         )
     }
 
@@ -5062,20 +5137,66 @@ impl VaultRegistry {
             amount,
             tx_hash,
             true,
+            None,
+        )
+    }
+
+    /// Like [`Self::record_admin_refund`], with an optional bounded hash of the
+    /// off-chain dispute reason.
+    pub fn record_admin_refund_with_reason(
+        env: Env,
+        admin: Address,
+        refund_id: String,
+        payment_receipt_id: String,
+        recipient: Address,
+        amount: i128,
+        tx_hash: String,
+        reason_hash: Option<String>,
+    ) -> Result<(), Error> {
+        Self::require_current_admin(&env, &admin)?;
+        Self::record_refund(
+            &env,
+            admin,
+            refund_id,
+            payment_receipt_id,
+            recipient,
+            amount,
+            tx_hash,
+            true,
+            reason_hash,
         )
     }
 
     /// Fetch a refund record by its caller-assigned `refund_id`.
     pub fn get_refund(env: Env, refund_id: String) -> Result<RefundReceipt, Error> {
         Self::validate_receipt_id(&refund_id)?;
-        let key = DataKey::RefundReceipt(refund_id);
-        let refund: RefundReceipt = env
+        let key = DataKey::RefundReceipt(refund_id.clone());
+        let stored: StoredRefundReceipt = env
             .storage()
             .persistent()
             .get(&key)
             .ok_or(Error::NotFound)?;
         Self::bump_persistent(&env, &key);
-        Ok(refund)
+
+        let reason_key = DataKey::RefundReasonHash(refund_id);
+        let reason_hash: Option<String> = env.storage().persistent().get(&reason_key);
+        if env.storage().persistent().has(&reason_key) {
+            Self::bump_persistent(&env, &reason_key);
+        }
+
+        Ok(RefundReceipt {
+            refund_id: stored.refund_id,
+            payment_receipt_id: stored.payment_receipt_id,
+            resource_id: stored.resource_id,
+            recipient: stored.recipient,
+            amount: stored.amount,
+            tx_hash: stored.tx_hash,
+            initiated_by: stored.initiated_by,
+            recorded_at: stored.recorded_at,
+            admin_override: stored.admin_override,
+            remaining_balance: stored.remaining_balance,
+            reason_hash,
+        })
     }
 
     /// Total amount recorded as refunded for a payment receipt.
@@ -6174,6 +6295,7 @@ impl VaultRegistry {
         amount: i128,
         tx_hash: String,
         admin_override: bool,
+        reason_hash: Option<String>,
     ) -> Result<(), Error> {
         Self::require_not_paused(env)?;
         Self::require_payment_not_paused(env)?;
@@ -6181,6 +6303,15 @@ impl VaultRegistry {
         Self::validate_receipt_id(&payment_receipt_id)?;
         Self::validate_payment_amount(amount)?;
         Self::validate_tx_hash(&tx_hash)?;
+        if let Some(ref hash) = reason_hash {
+            Self::validate_bounded_string(
+                hash,
+                1,
+                MAX_REFUND_REASON_HASH_LEN,
+                Error::RefundReasonHashTooLong,
+                Error::RefundReasonHashTooLong,
+            )?;
+        }
 
         let refund_key = DataKey::RefundReceipt(refund_id.clone());
         if env.storage().persistent().has(&refund_key) {
@@ -6242,24 +6373,42 @@ impl VaultRegistry {
         let next_refunded = refunded
             .checked_add(amount)
             .ok_or(Error::PaymentAmountMismatch)?;
-        
+
         // Calculate remaining balance after this refund
         let remaining_balance = payment.amount.saturating_sub(next_refunded).max(0);
 
-        let refund = RefundReceipt {
+        let stored = StoredRefundReceipt {
             refund_id: refund_id.clone(),
-            payment_receipt_id,
-            resource_id: payment.resource_id,
-            recipient,
+            payment_receipt_id: payment_receipt_id.clone(),
+            resource_id: payment.resource_id.clone(),
+            recipient: recipient.clone(),
             amount,
             tx_hash: tx_hash.clone(),
-            initiated_by: initiator,
+            initiated_by: initiator.clone(),
             recorded_at: env.ledger().sequence(),
             admin_override,
             remaining_balance,
         };
-        env.storage().persistent().set(&refund_key, &refund);
+        let refund = RefundReceipt {
+            refund_id: stored.refund_id.clone(),
+            payment_receipt_id: stored.payment_receipt_id.clone(),
+            resource_id: stored.resource_id.clone(),
+            recipient: stored.recipient.clone(),
+            amount: stored.amount,
+            tx_hash: stored.tx_hash.clone(),
+            initiated_by: stored.initiated_by.clone(),
+            recorded_at: stored.recorded_at,
+            admin_override: stored.admin_override,
+            remaining_balance: stored.remaining_balance,
+            reason_hash: reason_hash.clone(),
+        };
+        env.storage().persistent().set(&refund_key, &stored);
         Self::bump_persistent(env, &refund_key);
+        if let Some(hash) = reason_hash {
+            let reason_key = DataKey::RefundReasonHash(refund_id.clone());
+            env.storage().persistent().set(&reason_key, &hash);
+            Self::bump_persistent(env, &reason_key);
+        }
         env.storage()
             .persistent()
             .set(&refunded_key, &next_refunded);
@@ -6288,12 +6437,19 @@ impl VaultRegistry {
         // entire remaining amount, leaving the creator with zero even when
         // royalty_bps alone was below the price.  No fee config set means no
         // fees are owed, so the check is a no-op until one is configured.
-        let combined_fee_bps: i128 = env
+        let combined_fee_bps: i128 = match env
             .storage()
             .instance()
             .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
-            .map(|config| i128::from(config.platform_fee_bps + config.royalty_bps))
-            .unwrap_or(0);
+        {
+            Some(config) => i128::from(
+                config
+                    .platform_fee_bps
+                    .checked_add(config.royalty_bps)
+                    .ok_or(Error::InvalidPrice)?,
+            ),
+            None => 0,
+        };
         if combined_fee_bps >= price {
             return Err(Error::InvalidPrice);
         }
@@ -7005,11 +7161,7 @@ impl VaultRegistry {
         Self::bump_instance(env);
     }
 
-    fn add_verifier_internal(
-        env: &Env,
-        admin: &Address,
-        verifier: Address,
-    ) -> Result<(), Error> {
+    fn add_verifier_internal(env: &Env, admin: &Address, verifier: Address) -> Result<(), Error> {
         Self::role_index_add(env, RoleKind::Verifier, &verifier)?;
         env.storage()
             .instance()
