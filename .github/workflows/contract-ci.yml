@@ -74,7 +74,10 @@ jobs:
         working-directory: contract
         run: |
           WASM_FILE="target/wasm32v1-none/release/vault_registry.wasm"
-          # 156 KB. Raised from 148 KB when `list_by_creator_page_filtered`
+          # 172 KiB. The restored maintenance, memo and flag-deadline APIs
+          # bring optimized WASM to about 173 KB. Keep the budget close to the
+          # measured size so further growth still requires review.
+          # The previous budget was 156 KiB, raised from 148 KB when `list_by_creator_page_filtered`
           # and `search_by_tag_prefix` landed: the two new exported read
           # methods add spec entries and XDR conversion code, taking the
           # optimized WASM from 150,639 to 153,781 bytes.
@@ -92,7 +95,7 @@ jobs:
           # landed.
           # The release profile already uses opt-level "z", LTO, one codegen
           # unit and stripped symbols.
-          MAX_SIZE=159744
+          MAX_SIZE=176128
           SIZE=$(stat -c%s "$WASM_FILE")
           echo "WASM Size: $SIZE bytes"
           if [ "$SIZE" -gt "$MAX_SIZE" ]; then
