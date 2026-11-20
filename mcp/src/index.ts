@@ -179,6 +179,7 @@ import {
 } from "./paymentCeiling.js";
 import {
   USDC_DECIMALS,
+  checkUsdcAmountInput,
   compareUsdc,
   normalizeUsdcBalance,
   stroopsToUsdc,
@@ -4794,6 +4795,12 @@ async function dispatchToolOutcome(
               `mindvault_publish_batch: items[${i}].price must be a non-empty string.`,
             );
           }
+          // Same amount rules as mindvault_publish (#1252): no exponent, no
+          // sign, at most 7 decimal places, above zero.
+          const priceCheck = checkUsdcAmountInput(item.price, { positive: true });
+          if (!priceCheck.ok) {
+            throw new Error(`mindvault_publish_batch: items[${i}].price: ${priceCheck.message}`);
+          }
           if (typeof item.externalUrl !== "string" || item.externalUrl.trim() === "") {
             throw new Error(
               `mindvault_publish_batch: items[${i}].externalUrl must be a non-empty string.`,
@@ -4802,7 +4809,7 @@ async function dispatchToolOutcome(
           return {
             title: item.title,
             description: typeof item.description === "string" ? item.description : undefined,
-            price: item.price,
+            price: item.price.trim(),
             externalUrl: item.externalUrl,
           };
         });
