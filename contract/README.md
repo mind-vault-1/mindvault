@@ -731,14 +731,14 @@ if (page.next_cursor !== null) {
 | `53` | `RecoveryAdminNotSet`            | `recover_admin` was called but no recovery admin is configured.                          |
 | `54` | `UnsupportedResourceSchema`      | A resource uses a schema version this deployment cannot safely read or upgrade.          |
 | `55` | `RevisionOverflow`               | A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state. |
-| `56` | `RoleCapacityReached`           | A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role. |
 | `56` | `UnclaimedFees`                 | A fee-recipient or fee-destination change was attempted while accrued fees remain unclaimed. Call `claim_fees` first, then retry. |
+| `57` | `RoleCapacityReached`           | A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role. |
 
 #### Error budget
 
 This enum is declared with `#[contracterror(export = false)]`. The protocol
 caps a *spec-exported* contract error enum at 50 cases
-(`ScSpecUdtErrorEnumV0.cases` is `VecM<_, 50>`), and codes `1`–`56` are all
+(`ScSpecUdtErrorEnumV0.cases` is `VecM<_, 50>`), and codes `1`–`57` are all
 allocated, so a spec-exported `#[contracterror]` would fail to compile with
 `LengthExceedsMax` on a `51` variant. Disabling the spec export keeps the
 contract buildable; the discriminants and names below remain the on-wire
@@ -753,7 +753,9 @@ into a broader existing code would hide the cause from callers.
 
 Code `56` (`UnclaimedFees`) was added for the accrued-fee guard (#985):
 it blocks fee-recipient/destination rotation while settled fees remain
-unclaimed, with `claim_fees` as the safe migration path.
+unclaimed, with `claim_fees` as the safe migration path. Code `57`
+(`RoleCapacityReached`) was appended for the role-inventory guard because
+`56` was already allocated when that guard landed.
 
 Plan new validation around an existing code where the semantics genuinely fit,
 or prefer a behavior that needs no new code (a documented no-op, or folding the

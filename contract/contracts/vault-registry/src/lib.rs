@@ -444,17 +444,8 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (53, "RecoveryAdminNotSet", "`recover_admin` was called but no recovery admin is configured."),
     (54, "UnsupportedResourceSchema", "A resource uses a schema version this deployment cannot safely read or upgrade."),
     (55, "RevisionOverflow", "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state."),
-    (56, "RoleCapacityReached", "A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role."),
-    (47, "RevocationReasonHashTooLong", "`revocation_reason_hash` exceeds `MAX_REVOCATION_REASON_HASH_LEN` (64 bytes)."),
-    (48, "PaymentAmountMismatch", "Payment amount differs from the resource price or cumulative refunds exceed the original payment."),
-    (49, "DuplicateTxHash", "A payment or refund receipt already uses the supplied transaction hash (`tx_hash`)."),
-    (50, "FeeConfigNotSet", "`set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`."),
-    (51, "AdminNominationExpired", "The pending admin nomination is missing or has expired."),
-    (52, "InvalidMetadataPointers", "`set_metadata_pointers` received zero, more than `MAX_METADATA_POINTERS`, or duplicate pointers, or an out-of-range `primary` index."),
-    (53, "AdminAlreadySet", "`bootstrap_dual_admin` was called after an admin was already set."),
-    (54, "RecoveryAdminNotSet", "`recover_admin` was called but no recovery admin is configured."),
-    (55, "UnsupportedResourceSchema", "A resource uses a schema version this deployment cannot safely read or upgrade."),
-    (56, "RevisionOverflow", "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state."),
+    (56, "UnclaimedFees", "A fee-recipient or fee-destination change was attempted while accrued fees remain unclaimed. Call `claim_fees` first to acknowledge receipt of outstanding fees, then retry the change."),
+    (57, "RoleCapacityReached", "A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -1077,7 +1068,7 @@ pub struct TransferWithTermsEvent {
     pub attestation_reset: bool,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone)]
 pub enum DataKey {
     Resource(String),
@@ -1119,8 +1110,6 @@ pub enum DataKey {
     RefundedAmount(String),
     /// Configured creator-refund window length, in ledgers.
     RefundWindow,
-    /// Ordered history of verification status changes for a verifier address.
-    VerifierHistory(Address),
     /// Aggregated settled-payment earnings for a creator wallet address.
     CreatorEarnings(Address),
     /// Moderator who last set a resource's dispute flag or reason hash.
@@ -1158,9 +1147,6 @@ pub enum DataKey {
     /// enum code): this carries a digest of free-form detail a moderator
     /// recorded off-chain, analogous to `CreatorTerms`.
     FlagReasonHash(String),
-    /// Last moderator address that acted on the moderation state of a resource,
-    /// stored by resource id. Read by `flag_details`.
-    FlagModerator(String),
     /// Hash of a verifier's off-chain attestation document, provided during a
     /// status change via `set_verification_status`.
     AttestationHash(String),
@@ -1648,7 +1634,7 @@ pub enum Error {
     RevisionOverflow = 55,
     /// A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for
     /// that role. The grant is rejected without modifying state.
-    RoleCapacityReached = 56,
+    RoleCapacityReached = 57,
     /// A fee-recipient or fee-destination change was attempted while accrued
     /// fees remain unclaimed. Call `claim_fees` first to acknowledge receipt
     /// of outstanding fees, then retry the change.
@@ -4122,7 +4108,7 @@ impl VaultRegistry {
         env.storage().instance().remove(&DataKey::PaymentPauseUntil);
         Self::bump_instance(&env);
         env.events().publish(
-            (symbol_short!("payment_pause"), admin.clone()),
+            (Symbol::new(&env, "payment_pause"), admin.clone()),
             (paused, admin),
         );
         Ok(())
@@ -4153,7 +4139,7 @@ impl VaultRegistry {
         }
         Self::bump_instance(&env);
         env.events().publish(
-            (symbol_short!("payment_pause"), admin.clone()),
+            (Symbol::new(&env, "payment_pause"), admin.clone()),
             (active, admin.clone()),
         );
         env.events().publish(
@@ -4811,6 +4797,7 @@ impl VaultRegistry {
                     state: PaymentState::Escrowed,
                     tx_hash,
                     recorded_at: env.ledger().sequence(),
+                    ledger: env.ledger().sequence(),
                 })
             }
             Err(e) => {
