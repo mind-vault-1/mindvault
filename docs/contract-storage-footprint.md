@@ -85,6 +85,10 @@ shared bounded view and is not included in the per-registration aggregate.
   `(resource_id, holder)`. The 128-byte `tx_hash` dominates the value; a
   holder holds at most one lease per resource, and a new purchase overwrites
   an expired or revoked one rather than adding an entry.
+- **`HolderLeaseIndex`** is a per-holder persistent `Vec<String>` of resource
+  ids used by `list_holder_leases`, so a buyer can enumerate leases without
+  knowing resource ids. Entries are appended on first lease record per pair and
+  reused on replacement; non-active leases are skipped at read time.
 
 - **`Resource`** dominates the per-registration cost, and `metadata` (up to 512
   bytes) dominates `Resource`. Storing a content pointer rather than content is
