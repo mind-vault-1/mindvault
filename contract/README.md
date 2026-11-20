@@ -382,7 +382,9 @@ See [`docs/adr-fee-config.md`](../docs/adr-fee-config.md) for the full design ra
 | `attempt_anchor_purchase_receipt(service, resource_id, buyer, receipt_hash)` | `verifier`                                               | `service: Address`; `resource_id: String`; `buyer: Address`; `receipt_hash: String`                                                                                                                                                                  | `Result<bool, Error>`                  | Same anchor, but a rejected attempt emits `anchrfail` and returns `false` instead of reverting. Authorization failures still revert.                                                                                                                                                                     |
 | `override_purchase_receipt_anchor(admin, resource_id, buyer, new_receipt_hash)` | `admin`                                                  | `admin: Address`; `resource_id: String`; `buyer: Address`; `new_receipt_hash: String`                                                                                                                                                                | `Result<(), Error>`                    | Override an existing purchase receipt anchor. Errors `NotFound` if it does not exist. Emits `anchor`.                                                                                                                                                                                                  |
 | `get_purchase_receipt(resource_id, buyer)`                                   | —                                                        | `resource_id: String`; `buyer: Address`                                                                                                                                                                                                              | `Result<PurchaseReceiptAnchor, Error>` | Fetch a purchase receipt anchor. Errors `NotFound` if absent.                                                                                                                                                                                                                                            |
-| `get_anchor_attempts(resource_id, buyer)`                                    | —                                                        | `resource_id: String`; `buyer: Address`                                                                                                                                                                                                              | `Result<AnchorAttempts, Error>`        | Rejected `attempt_anchor_purchase_receipt` count and last-attempt ledger for the pair; both `0` when it was never rejected or its anchor has since been written.                                                                                                                                         |
+| `get_anchor_attempts(resource_id, buyer)`                                    | —                                                        | `resource_id: String`; `buyer: Address`                                                                                                                                                                                                              | `Result<AnchorAttempts, Error>`        | Rejected anchor-retry attempt count and last-attempt ledger for the pair (shared by verifier and settler retry paths); both `0` when never rejected or cleared after a successful anchor.                                                                                                                   |
+| `get_anchor_failure(resource_id, buyer)`                                     | —                                                        | `resource_id: String`; `buyer: Address`                                                                                                                                                                                                              | `Result<AnchorFailure, Error>`         | Fetch the durable failure record for the pair. Errors `NotFound` when there is no outstanding failure.                                                                                                                                                                                                       |
+| `retry_anchor_purchase_receipt(settler, resource_id, buyer, receipt_hash)`   | `settler`                                                | `settler: Address`; `resource_id: String`; `buyer: Address`; `receipt_hash: String`                                                                                                                                                                  | `Result<bool, Error>`                  | Settle-time anchor retry for a recorded payment. `receipt_hash` must match the payment's `tx_hash`. Obeys the same attempt cap/backoff as `attempt_anchor_purchase_receipt`; rejected attempts emit/persist `anchrfail` (and `anchrxhst` at cap) and return `false`.                                          |
 | `buy_lease(holder, resource_id, tier, amount, tx_hash)`                      | `holder`                                                 | `holder: Address`; `resource_id: String`; `tier: LeaseTier` — `Hour`, `Day`, or `Week`; `amount: i128` — must equal `lease_price(resource_id, tier)`; `tx_hash: String` — 1-128 bytes                                                                 | `Result<Lease, Error>`                 | Record a time-limited access lease in `Pending` state, to be confirmed by `settle_lease`. Requires a `Listed` resource (`ResourceNotMutable`), the exact lease price (`PaymentAmountMismatch`), and no pending or unexpired active lease for the pair (`AlreadyRegistered`). Emits `lease`.                |
 | `record_lease(settler, holder, resource_id, tier, amount, tx_hash)`          | `settler` + `holder`                                     | `settler: Address` — holder of the settler role; then as `buy_lease`                                                                                                                                                                                 | `Result<Lease, Error>`                 | Settler-recorded lease: the same checks as `buy_lease`, written directly in `Active` state because the settler has already confirmed the payment. Emits `lease`.                                                                                                                                         |
 | `settle_lease(settler, resource_id, holder)`                                 | `settler`                                                | `settler: Address`; `resource_id: String`; `holder: Address`                                                                                                                                                                                         | `Result<Lease, Error>`                 | Advance a `Pending` lease to `Active`. Errors `NotFound` without a lease and `InvalidPaymentTransition` if it is not `Pending`. Emits `leasesetl`.                                                                                                                                                        |
@@ -1076,9 +1078,9 @@ A settlement service anchoring many receipts in one transaction therefore loses
 both the anchors that would have succeeded and any on-chain record of what went
 wrong.
 
-`attempt_anchor_purchase_receipt` is the reporting variant. It performs exactly
-the same checks, but turns the three _data_ failures into an `anchrfail` event
-and a `false` return instead of reverting:
+`attempt_anchor_purchase_receipt` is the reporting variant. It performs the
+same checks, but turns the three _data_ failures into an `anchrfail` event, a
+durable failure record, and a `false` return instead of reverting:
 
 | Rejected because                           | `AnchorFailureReason` | `anchor_purchase_receipt` returns |
 | ------------------------------------------ | --------------------- | --------------------------------- |
@@ -1086,24 +1088,30 @@ and a `false` return instead of reverting:
 | `receipt_hash` empty or over 128 bytes     | `InvalidReceiptHash`  | `InvalidTxHash`                   |
 | `(resource_id, buyer)` already anchored    | `DuplicateReceipt`    | `DuplicateReceipt`                |
 
-Authorization is never downgraded to an event: a caller without the verifier
+`retry_anchor_purchase_receipt` is the settler recovery path for a recorded
+payment. It applies the same bounded attempt cap and ledger backoff as the
+verifier reporting path, and counted rejections emit/persist `anchrfail` (and
+`anchrxhst` at cap) before returning `false`. A retry that supplies the same
+hash as an existing anchor is an idempotent success.
+
+Authorization is never downgraded to an event: a caller without the required
 role, or one supplying a malformed `resource_id`, still reverts, so an address
 that cannot anchor cannot write to the event log either. A rejected attempt
 leaves any existing anchor for the pair untouched.
 
 Rejected attempts are counted per `(resource_id, buyer)` in
 `DataKey::AnchorAttempts`, readable through `get_anchor_attempts`, so a
-settlement job that keeps retrying a permanently failing pair is throttled
-instead of re-running the data checks on every ledger:
+settlement/retry job that keeps hitting a permanently failing pair is
+throttled instead of re-running the data checks on every ledger:
 
 | Situation                                                              | `AnchorFailureReason` | Effect                                                                              |
 | ---------------------------------------------------------------------- | --------------------- | ----------------------------------------------------------------------------------- |
-| Retry fewer than `ANCHOR_RETRY_BACKOFF_LEDGERS` (12) ledgers after the last rejection | `RetryTooSoon`        | `anchrfail`, `false`; nothing written, data checks not run                          |
+| Retry fewer than `ANCHOR_RETRY_BACKOFF_LEDGERS` (300) ledgers after the last rejection | `RetryTooSoon`        | `anchrfail`, `false`; nothing written, data checks not run                          |
 | `MAX_ANCHOR_ATTEMPTS` (5) rejections accumulated                       | `AttemptsExhausted`   | `anchrfail`, `false`; nothing written, data checks not run                          |
-| A data rejection that brings the count to `MAX_ANCHOR_ATTEMPTS`        | (the data reason)     | `anchrfail` plus one `anchrxhst` whose topics name the pair and whose data is the final `AnchorAttempts` |
-| An anchor is written for the pair (either entry point)                 | —                     | The pair's attempt history is deleted                                               |
+| A counted data/retry rejection that brings the count to `MAX_ANCHOR_ATTEMPTS`        | (the rejection reason) | `anchrfail` plus one `anchrxhst` whose topics name the pair and whose data is the final `AnchorAttempts`; durable failure/attempt state persisted |
+| An anchor is written for the pair                                      | —                     | The pair's attempt and durable failure history is deleted                           |
 
-Both throttling reasons exist only on this reporting path;
+Both throttling reasons exist only on the reporting/retry paths;
 `AnchorFailureReason::as_error` maps them to `InvalidPaymentTransition` so the
 mapping stays total.
 
@@ -1259,7 +1267,7 @@ features (such as `role_inventory_page`) before invoking them.
 | `MAX_PRICE`                | `1_000_000_000_000_000_000`  | Maximum price in USDC base units (100 billion USDC).   |
 | `LIST_PAGE_CAP`            | `20`                         | Maximum items returned per page by all `list*` calls. |
 | `MAX_ANCHOR_ATTEMPTS`      | `5`                          | Rejected `attempt_anchor_purchase_receipt` calls allowed per `(resource_id, buyer)` before the pair fails fast. |
-| `ANCHOR_RETRY_BACKOFF_LEDGERS` | `12`                     | Minimum ledgers between two rejected anchor attempts for the same pair. |
+| `ANCHOR_RETRY_BACKOFF_LEDGERS` | `300`                    | Minimum ledgers between two rejected anchor attempts for the same pair. |
 | `LEASE_HOUR_LEDGERS` / `LEASE_DAY_LEDGERS` / `LEASE_WEEK_LEDGERS` | `720` / `17280` / `120960` | Lease duration per `LeaseTier`. |
 | `LEASE_HOUR_MULTIPLIER` / `LEASE_DAY_MULTIPLIER` / `LEASE_WEEK_MULTIPLIER` | `1` / `5` / `20` | Lease price multiplier over the per-request price, per `LeaseTier`. |
 | `RESOURCE_SCHEMA_VERSION`  | `2`                          | Current `Resource` schema version (tags added in v2). |
@@ -1293,7 +1301,7 @@ must require an explicit deployment guard.
 | `EXPORT_PAGE_CAP`          | `20`                         | Maximum catalog index slots `export_page` reads per call.                                                                                    |
 | `EXPORT_VIEW_VERSION`      | `1`                          | Version of the `ResourceExport` layout returned by `export_page`.                                                                            |
 | `MAX_ANCHOR_ATTEMPTS`      | `5`                          | Rejected `attempt_anchor_purchase_receipt` calls allowed per `(resource_id, buyer)` before the pair fails fast.                               |
-| `ANCHOR_RETRY_BACKOFF_LEDGERS` | `12`                     | Minimum ledgers between two rejected anchor attempts for the same pair.                                                                      |
+| `ANCHOR_RETRY_BACKOFF_LEDGERS` | `300`                    | Minimum ledgers between two rejected anchor attempts for the same pair.                                                                      |
 | `LEASE_HOUR_LEDGERS` / `LEASE_DAY_LEDGERS` / `LEASE_WEEK_LEDGERS` | `720` / `17280` / `120960` | Lease duration per `LeaseTier`.                                                                                          |
 | `LEASE_HOUR_MULTIPLIER` / `LEASE_DAY_MULTIPLIER` / `LEASE_WEEK_MULTIPLIER` | `1` / `5` / `20` | Lease price multiplier over the per-request price, per `LeaseTier`.                                                     |
 | `RESOURCE_SCHEMA_VERSION`  | `2`                          | Current `Resource` schema version (tags added in v2).                                                                                        |
