@@ -144,3 +144,7 @@ For client installation and configuration see
 ---
 
 _This file was generated from `mcp/src/tools.ts` — 72 tools._
+
+## Further reading
+
+- [Registry cursor guarantees and limits](registry-cursor.md) — page-size cap, catalog index vs id-cursor semantics, stability guarantees, token format, and common mistakes for `mindvault_registry_list`, `mindvault_registry_creator_page`, and `mindvault_registry_tag_search`
