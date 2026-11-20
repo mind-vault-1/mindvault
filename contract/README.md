@@ -427,6 +427,24 @@ This follows the ADR's direct-payment model, where refunds are separate
 transactions rather than contract-held escrow.
 
 
+#### Creator index consistency on transfer
+
+`CreatorResources` / `CreatorCount` and `CreatorListedCount` are derived indexes:
+they describe the resources (and listed resources) currently owned by an
+address. `transfer_ownership`, `accept_transfer` and
+`transfer_ownership_with_terms` all move an id from the previous owner's index
+to the new owner's in the same transaction that updates `Resource.creator`, and
+they derive each count from the rewritten index. The listed-count delta is
+applied only when an entry actually moves, so an old duplicate in the
+destination index is repaired rather than counted twice. Rejected calls leave
+both the indexes and the emitted events unchanged.
+
+No ABI, argument, or event-topic changes are involved: the public methods and
+their signatures are unchanged, and TypeScript bindings regenerated from the
+contract describe the same interface as before. Operators do not need to
+migrate storage — the first transfer involving an affected address repairs its
+own index entries.
+
 ### Roles
 
 Three roles sit alongside the per-resource `creator` and the pre-existing admin:

@@ -66,6 +66,7 @@ import {
   formatPaidConfirmationDiagnostics,
 } from "./paidOperations.js";
 import { assertToolAllowedInReadOnlyMode, readOnlyModeEnabled } from "./readOnlyMode.js";
+import { assertToolAllowedInAllowlist } from "./toolAllowlist.js";
 import {
   createMetricsRecorder,
   measureTool,
@@ -179,10 +180,7 @@ import {
   trimUsdc,
   usdcToStroops as toStroops,
 } from "./usdcAmount.js";
-import {
-  buildWalletAllowanceSummary,
-  formatWalletAllowanceSummary,
-} from "./walletAllowance.js";
+import { buildWalletAllowanceSummary, formatWalletAllowanceSummary } from "./walletAllowance.js";
 import { findCanonicalUsdc } from "./usdcIdentity.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
@@ -2005,8 +2003,7 @@ async function walletAllowanceOutcome(): Promise<ToolOutcome> {
   const wallet = requireWallet();
   const profile = activeProfileName;
   const network = NETWORK; // e.g. "stellar:testnet"
-  const usdcContractId =
-    process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
+  const usdcContractId = process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
   const ceiling = process.env.MINDVAULT_MAX_AUTO_PAY_USDC ?? DEFAULT_MAX_AUTO_PAY_USDC;
 
   // Fetch live balance — same call as walletInfo.
@@ -4755,11 +4752,11 @@ async function dispatchToolOutcome(
     throw new UnknownToolError(name);
   }
 
-  // Read-only mode is checked before argument validation (#593): when the
-  // server cannot run this tool at all, a malformed-arguments error would be
-  // a misleading thing to report, and the refusal does not depend on the
-  // arguments being well-formed.
+  // Operator-scoped gates are checked before argument validation (#593, #1199):
+  // when the server cannot run this tool at all, a malformed-arguments error
+  // would be misleading, and neither refusal depends on the arguments.
   assertToolAllowedInReadOnlyMode(name, process.env);
+  assertToolAllowedInAllowlist(name, process.env);
 
   const rawRecord =
     typeof rawArgs === "object" && rawArgs !== null && !Array.isArray(rawArgs)

@@ -198,6 +198,8 @@ Wallet helpers live in `server/scripts/generate-wallet.ts` (run via `make wallet
 - **Reconciliation**: see [docs/reconciliation.md](docs/reconciliation.md) — detects and reports drift between the DB and the on-chain [vault registry](docs/GLOSSARY.md#vault-registry); run with `pnpm reconcile` from `server/`.
 - **Deployment runbook**: see [docs/deployment-runbook.md](docs/deployment-runbook.md) — step-by-step guide to deploy the full stack (contract + server + frontend + MCP) to a new Stellar network.
 - **Contract upgrade checklist**: see [docs/contract-upgrade-checklist.md](docs/contract-upgrade-checklist.md) — preflight checks before deploying a new vault-registry WASM (build, optimize, test, network, contract ID, binding regeneration).
+- **Contract upgrade rehearsal**: see [docs/contract-upgrade-rehearsal-testnet.md](docs/contract-upgrade-rehearsal-testnet.md) — rehearse the WASM deploy end to end on testnet before a production cutover.
+- **Contract method & event reference**: see [docs/contract-method-event-reference.md](docs/contract-method-event-reference.md) — published method signatures and event topics derived from the generated bindings and contract spec.
 - **Contract storage footprint**: see [docs/contract-storage-footprint.md](docs/contract-storage-footprint.md) — what each vault-registry ledger entry costs in XDR bytes, and the budgets that keep it from growing silently; regenerate with `make footprint`.
 - **Reconciliation**: see [docs/reconciliation.md](docs/reconciliation.md) — detects and reports drift between the DB and the on-chain vault registry; run with `pnpm reconcile` from `server/`.
 
