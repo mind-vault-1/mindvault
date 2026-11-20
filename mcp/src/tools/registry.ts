@@ -19,6 +19,8 @@ import {
 } from "../runtime.js";
 import type { CatalogFilters } from "../catalogFilters.js";
 import { mapRegistryError, mapTransportError, mcpError, throwHttpError } from "../errorMapping.js";
+import { truncateResponse } from "../truncation.js";
+import { type ToolOutcome } from "../toolResult.js";
 import { fetchWithTimeout } from "../httpTimeout.js";
 import { withRetry } from "../retry.js";
 import { parseMetadataHash, describeMetadataPointerHash } from "../metadataHash.js";
@@ -721,46 +723,84 @@ export async function pendingTransfer(resourceId: string): Promise<string> {
   );
 }
 
-/** Batch catalog lookup — resolve multiple resource ids in one call. */
-export async function batchCatalogLookupOutcome(
-  resourceIds: string[],
-  refetch?: boolean,
-): Promise<string> {
-  const ids = [...new Set(resourceIds)];
-  const results: Record<string, unknown>[] = [];
-  let found = 0;
-  let missing = 0;
-  for (const id of ids) {
-    try {
-      const res = await jsonFetch(`${BASE_URL}/resources/${id}/meta`);
-      if (res.ok) {
-        results.push({ id, found: true, ...res.data });
-        found++;
-      } else {
-        results.push({ id, found: false });
-        missing++;
-      }
-    } catch {
-      results.push({ id, found: false });
-      missing++;
-    }
-  }
-  return JSON.stringify({ requested: ids.length, found, missing, items: results }, null, 2);
-}
+export async function previewMetadataHashOutcome(resourceId: string): Promise<ToolOutcome> {
+  let pointer: unknown;
+  let source: string | null = null;
 
-/** Preview the metadata hash for a resource. */
-export async function previewMetadataHashOutcome(resourceId: string): Promise<string> {
-  const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
-  if (!res.ok) {
-    return JSON.stringify(
-      { resourceId, pointer: null, report: null, message: "Resource not found." },
-      null,
-      2,
-    );
+  if (_isMock()) {
+    const raw = mockRegistryLookup(resourceId, REGISTRY_CONTRACT_ID, currentWallet()?.publicKey);
+    const parsed = JSON.parse(raw);
+    if (!parsed.found) {
+      // Same semantics as the live path: an id that is not registered on-chain
+      // is an input problem, not a digest problem.
+      throw mcpError(
+        mapRegistryError({
+          operation: `Metadata hash preview for resource "${resourceId}"`,
+          message: `Resource "${resourceId}" is not registered on-chain.`,
+          notFound: true,
+        }),
+      );
+    }
+    pointer = parsed.metadata;
+    source = "on-chain (mock)";
+  } else {
+    const client = createLimitedRegistryClient({
+      contractId: REGISTRY_CONTRACT_ID,
+      rpcUrl: SOROBAN_RPC_URL,
+      networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    });
+    let tx: Awaited<ReturnType<typeof client.get>>;
+    try {
+      tx = await client.get({ id: resourceId });
+    } catch (err: any) {
+      throw mcpError(
+        mapTransportError({
+          operation: `Metadata hash preview failed for resource "${resourceId}" (contract ${REGISTRY_CONTRACT_ID}, RPC ${SOROBAN_RPC_URL})`,
+          source: "soroban",
+          error: err,
+        }),
+      );
+    }
+    if (tx.result.isErr()) {
+      const err = tx.result.unwrapErr();
+      if (err.message === RegistryErrors[2].message) {
+        throw mcpError(
+          mapRegistryError({
+            operation: `Metadata hash preview for resource "${resourceId}"`,
+            message: err.message,
+            notFound: true,
+          }),
+        );
+      }
+      throw mcpError(
+        mapRegistryError({
+          operation: `Contract error for resource "${resourceId}" (contract ${REGISTRY_CONTRACT_ID}, network ${REGISTRY_NETWORK_PASSPHRASE})`,
+          message: err.message,
+        }),
+      );
+    }
+    pointer = tx.result.unwrap().metadata;
+    source = "on-chain";
   }
-  const pointer: string | null = typeof res.data?.metadata === "string" ? res.data.metadata : null;
-  const report = pointer ? describeMetadataPointerHash(pointer) : null;
-  return JSON.stringify({ resourceId, pointer, report }, null, 2);
+
+  const report = describeMetadataPointerHash(pointer);
+  const structured = {
+    resourceId,
+    pointer: { source, present: typeof pointer === "string" && pointer.trim() !== "" },
+    report,
+  };
+  const lines = [
+    `Resource: ${resourceId}`,
+    `Metadata pointer source: ${source ?? "none"}`,
+    `Digest anchored: ${report.present ? "yes" : "no"}`,
+  ];
+  if (report.present && report.valid) {
+    lines.push(`Algorithm: ${report.algorithm}`, `Canonical digest: ${report.canonical}`);
+  } else {
+    lines.push(`Digest: ${report.reason ?? "not anchored"}`);
+  }
+  const text = truncateResponse(lines.join("\n"));
+  return { text, structured };
 }
 
 /**

@@ -212,11 +212,7 @@ import {
   type TransactionLookup,
 } from "./settlement.js";
 import { publisherTerms } from "./tools/state.js";
-import {
-  batchCatalogLookupOutcome,
-  metadataDiff,
-  previewMetadataHashOutcome,
-} from "./tools/registry.js";
+import { metadataDiff, previewMetadataHashOutcome } from "./tools/registry.js";
 import { mockVerifyAttestation } from "./mock.js";
 import { formatResetPreview, isResetConfirmed, type ResetScope } from "./resetGuard.js";
 import { verifyInstall, formatVerifyInstall } from "./verifyInstall.js";
@@ -261,7 +257,7 @@ import {
   sanitizeServiceUrl,
   SPONSORED_CREATE_PATH,
 } from "./sponsoredDiagnostics.js";
-import { describeMetadataPointerHash, parseMetadataHash } from "./metadataHash.js";
+import { parseMetadataHash } from "./metadataHash.js";
 import {
   checkWalletIntegrity,
   sponsoredWalletIntegrityError,
@@ -444,7 +440,7 @@ function activeProfile(): WalletProfile {
 }
 
 function bindActiveProfileToNetwork(): void {
-  activeProfile().network ??= NETWORK as "testnet" | "mainnet";
+  activeProfile().network ??= NETWORK;
 }
 
 function currentWallet(): AgentWallet | null {
@@ -918,7 +914,11 @@ export async function prewarmCatalogCache(): Promise<string> {
   try {
     await browseOutcome({});
     const elapsedMs = Date.now() - startedAt;
-    const snapshot = getCatalogSnapshot(Date.now(), "catalog", catalogCacheContext());
+    const snapshot = getCatalogSnapshot(
+      Date.now(),
+      catalogCacheKey(`${BASE_URL}/resources`),
+      catalogCacheContext(),
+    );
     const count = snapshot && Array.isArray(snapshot.resources) ? snapshot.resources.length : 0;
     return `Catalog pre-warmed: ${count} resource(s) cached in ${elapsedMs}ms.`;
   } catch (err) {
@@ -1704,12 +1704,8 @@ async function repairSponsoredAccount(secretKey: string, profileArg?: string): P
   let publicKey: string;
   try {
     publicKey = Keypair.fromSecret(secretKey).publicKey();
-  } catch (err) {
-    // Never echo the secret key in error messages — describe the shape problem instead.
-    throw new Error(
-      `Invalid Stellar secret key: could not derive public key. ` +
-        `Expected S followed by 55 base32 characters (${safeErrorMessage(err)}).`,
-    );
+  } catch {
+    throw new Error("Invalid Stellar secret key: could not derive public key.");
   }
   const details = await getBalanceDetails(publicKey);
 
@@ -1721,6 +1717,7 @@ async function repairSponsoredAccount(secretKey: string, profileArg?: string): P
 
   activeProfileName = target;
   activeProfile().wallet = { publicKey, secretKey };
+  bindActiveProfileToNetwork();
   saveState();
   return JSON.stringify(
     {
@@ -2432,13 +2429,13 @@ export async function search(filtersOrQuery: string | CatalogFilters): Promise<s
 
 /**
  * Fetch one resource's public metadata, recording a snapshot on success and
- * falling back to the last snapshot on transport failure (#556). A
- * reachable-but-error response is surfaced verbatim — the cache only covers the
- * unreachable case.
+ * falling back to the scoped snapshot when the catalog is unreachable or
+ * returns a retryable HTTP status (#556, #837).
  */
 async function previewData(
   resourceId: string,
   bypassCache = false,
+  context = catalogCacheContext(),
 ): Promise<{ r: any; label: string | null; cacheStatus: "live" | "bypassed" | "offline" }> {
   try {
     const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
@@ -2449,13 +2446,13 @@ async function previewData(
         status: res.status,
         data: res.data,
       });
-    recordPreviewSnapshot(resourceId, res.data, catalogCacheContext());
+    recordPreviewSnapshot(resourceId, res.data, context);
     return { r: res.data, label: null, cacheStatus: bypassCache ? "bypassed" : "live" };
   } catch (err) {
     // Same rule as browse/search: a snapshot answers for a catalog that could
     // not answer, never for a 404 on an id the agent got wrong (#837).
     const reason = bypassCache ? null : catalogFallbackFor(err);
-    const snap = reason ? getPreviewSnapshot(resourceId, Date.now(), catalogCacheContext()) : null;
+    const snap = reason ? getPreviewSnapshot(resourceId, Date.now(), context) : null;
     if (!snap || !reason) throw err;
     return {
       r: snap.meta as any,
@@ -2465,24 +2462,104 @@ async function previewData(
   }
 }
 
+async function batchCatalogLookupOutcome(
+  resourceIds: string[],
+  refetch: boolean,
+): Promise<ToolOutcome> {
+  const ids = [...new Set(resourceIds)];
+  const context = catalogCacheContext();
+  const items = [];
+  const lines: string[] = [];
+  const missing: string[] = [];
+  const cached: string[] = [];
+  let offlineError: unknown;
+  let reachable = false;
+  let cacheLabel: string | null = null;
+
+  for (const id of ids) {
+    let meta: Awaited<ReturnType<typeof previewData>> | undefined;
+    try {
+      meta = await previewData(id, refetch, context);
+    } catch (err) {
+      const status = mappedErrorOf(err)?.status;
+      if (status === 404) {
+        reachable = true;
+      } else {
+        if (refetch || !catalogFallbackFor(err)) throw err;
+        offlineError ??= err;
+      }
+    }
+    const r = meta?.r;
+    if (meta?.label) {
+      cached.push(id);
+      cacheLabel ??= meta.label;
+    }
+    if (!r) missing.push(id);
+    items.push({
+      id,
+      found: Boolean(r),
+      title: r?.title ?? null,
+      price: r?.price ?? null,
+      verificationStatus: r?.verificationStatus ?? null,
+      resourceType: r?.resourceType ?? null,
+      accessUrl: r?.accessUrl ?? null,
+    });
+    lines.push(r ? formatResource({ ...r, id }) : `[${id}] not found in the catalog.`);
+  }
+
+  if (!reachable && missing.length === ids.length && offlineError) {
+    const failure = mappedErrorOf(offlineError);
+    if (failure) throw mcpError({ ...failure, summary: `Batch lookup failed: ${failure.summary}` });
+    throw offlineError;
+  }
+
+  const notice = cacheLabel ? `${cacheLabel} (served from cache: ${cached.join(", ")})` : null;
+  const full = (notice ? [...lines, notice] : lines).join("\n\n");
+  const text = truncateResponse(full);
+  return {
+    text,
+    structured: {
+      items,
+      requested: ids.length,
+      foundCount: ids.length - missing.length,
+      missing,
+      notice,
+      truncated: text !== full,
+    },
+  };
+}
+
 export async function preview(resourceId: string, bypassCache = false): Promise<string> {
+  const walletAddress = currentWallet()?.publicKey;
   const { r, label, cacheStatus } = await previewData(resourceId, bypassCache);
   // Publisher-supplied title/description are unbounded at the source, so cap
   // them before serializing rather than truncating the JSON afterwards (#582).
   // Every advertised field is required (#1065): a value the API left out is
   // reported as null rather than dropped by JSON.stringify.
-  const out: Record<string, unknown> = applyPreviewLimits({
-    id: r.id,
-    title: r.title,
-    description: r.description,
-    price: `$${r.price} USDC`,
-    type: r.resourceType,
-    verificationStatus: r.verificationStatus,
-    accessUrl: r.accessUrl,
+  const out: Record<string, unknown> = {
+    id: r.id ?? null,
+    title: r.title ?? null,
+    description: r.description ?? null,
+    price: r.price == null ? null : `$${r.price} USDC`,
+    type: r.resourceType ?? null,
+    verificationStatus: r.verificationStatus ?? null,
+    accessUrl: r.accessUrl ?? null,
     cacheStatus,
-  });
+  };
+  if (!label && walletAddress && walletAddress === r.publisherWallet) {
+    const verification = await jsonFetch(`${BASE_URL}/resources/${resourceId}/verification`).catch(
+      () => null,
+    );
+    out.isOwner = true;
+    out.listed = verification?.ok ? (verification.data?.listed ?? null) : null;
+    out.onchainStatus =
+      r.onchainStatus ?? (verification?.ok ? verification.data?.onchainStatus : null) ?? null;
+    if (out.listed === false) {
+      out.delistNote = "This resource is delisted and not discoverable in the public catalog.";
+    }
+  }
   if (label) out.offlineCache = label;
-  return serializePreview(out);
+  return serializePreview(applyPreviewLimits(out));
 }
 
 async function fetchPublishStatusData(resourceId: string): Promise<PublishStatusFetch> {
@@ -3127,6 +3204,144 @@ export function usdcToStroops(usdc: string): bigint {
     );
   }
   return stroops;
+}
+
+type RegistryResourceUpdate = { kind: "freeze" } | { kind: "royalty"; recipient: string | null };
+
+async function updateRegistryResource(
+  resourceId: string,
+  update: RegistryResourceUpdate,
+): Promise<string> {
+  const wallet = requireWallet();
+  const operation = update.kind === "freeze" ? "Freeze metadata" : "Set royalty recipient";
+  const details = update.kind === "royalty" ? { royaltyRecipient: update.recipient } : {};
+  if (_isMock()) {
+    return JSON.stringify({
+      status: "success",
+      ...txPhaseFields("settled"),
+      resourceId,
+      ...details,
+      txHash: `MOCK_TX_${update.kind.toUpperCase()}_${resourceId}`,
+    });
+  }
+
+  const client = createLimitedRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    publicKey: wallet.publicKey,
+  });
+
+  const context = `${operation} failed for resource "${resourceId}"`;
+  let tx: Awaited<ReturnType<typeof client.freeze_metadata>>;
+  try {
+    tx =
+      update.kind === "freeze"
+        ? await client.freeze_metadata({ id: resourceId })
+        : await client.set_royalty_recipient({
+            id: resourceId,
+            recipient: update.recipient ?? undefined,
+          });
+  } catch (error) {
+    throw mcpError(
+      isTimeoutError(error)
+        ? mapTransportError({ operation: context, source: "soroban", error })
+        : mapRegistryError({ operation: context, message: safeErrorMessage(error) }),
+    );
+  }
+
+  if (tx.result.isErr()) {
+    const err = tx.result.unwrapErr();
+    throw mcpError(
+      mapRegistryError({
+        operation: context,
+        message: err.message,
+        notFound: err.message === RegistryErrors[2].message,
+      }),
+    );
+  }
+
+  const { Keypair, Transaction } = await import("@stellar/stellar-sdk");
+  const keypair = Keypair.fromSecret(wallet.secretKey);
+  let txHash: string | null;
+  try {
+    ({ txHash } = await signAndSendTracked((watcher) =>
+      tx.signAndSend({
+        signTransaction: async (xdr: string) => {
+          const stellarTx = new Transaction(xdr, REGISTRY_NETWORK_PASSPHRASE);
+          assertTransactionFeeWithinCeiling({ feeStroops: stellarTx.fee });
+          stellarTx.sign(keypair);
+          return { signedTxXdr: stellarTx.toXDR() };
+        },
+        watcher,
+      }),
+    ));
+  } catch (error) {
+    if (error instanceof SubmittedTransactionUnconfirmed) {
+      return JSON.stringify(submittedUnconfirmedResult(operation, resourceId, error, details));
+    }
+    throw mcpError(
+      mapRegistryError({
+        operation: `${operation} submission failed for resource "${resourceId}"`,
+        message: safeErrorMessage(error),
+      }),
+    );
+  }
+
+  return JSON.stringify({
+    status: "success",
+    ...txPhaseFields("settled"),
+    resourceId,
+    ...details,
+    txHash,
+  });
+}
+
+async function feeConfig(): Promise<string> {
+  const context = {
+    source: "on-chain",
+    contract: REGISTRY_CONTRACT_ID,
+    network: REGISTRY_NETWORK_PASSPHRASE,
+    rpc: SOROBAN_RPC_URL,
+  };
+  const client = createLimitedRegistryClient({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+  });
+  let config: Awaited<ReturnType<typeof client.get_fee_config>>["result"];
+  try {
+    config = _isMock()
+      ? { platform_fee_bps: 250, royalty_bps: 500, fee_recipient: undefined }
+      : (await client.get_fee_config()).result;
+  } catch (error) {
+    throw mcpError(
+      mapTransportError({
+        operation: "Read fee config failed",
+        source: "soroban",
+        error,
+      }),
+    );
+  }
+  if (!config) {
+    return JSON.stringify({ ...context, configured: false, message: "Fee config is not set." });
+  }
+
+  const platformFeeBps = config.platform_fee_bps;
+  const royaltyBps = config.royalty_bps;
+  const totalFeeBps = platformFeeBps + royaltyBps;
+  const creatorPayoutBps = 10_000 - totalFeeBps;
+  return JSON.stringify({
+    ...context,
+    source: _isMock() ? "on-chain (mock)" : context.source,
+    configured: true,
+    platformFeeBps,
+    royaltyBps,
+    totalFeeBps,
+    creatorPayoutBps,
+    creatorPayoutPercent: (creatorPayoutBps / 100).toFixed(2),
+    feeRecipient: config.fee_recipient ?? null,
+  });
 }
 
 export async function updateMetadata(resourceId: string, metadata: string): Promise<string> {
@@ -4852,7 +5067,7 @@ async function executeTool(
       case "mindvault_lease_status":
         return leaseStatus(requiredString(args, "resourceId"), optionalString(args, "holder"));
       case "mindvault_purchase_history":
-        return purchaseHistoryTool(rawRecord, { profile: activeProfileName });
+        return purchaseHistoryTool(args, { profile: activeProfileName });
       case "mindvault_export_receipts":
         return exportReceiptsToolWithTimeout(
           rawRecord,
@@ -4939,6 +5154,21 @@ async function executeTool(
         return pendingTransfer(requiredString(args, "resourceId"));
       case "mindvault_set_listed":
         return setListed(requiredString(args, "resourceId"), flag(args, "listed"));
+      case "mindvault_freeze":
+        return updateRegistryResource(requiredString(args, "resourceId"), { kind: "freeze" });
+      case "mindvault_fee_config":
+        return feeConfig();
+      case "mindvault_royalty": {
+        const clear = flag(args, "clear");
+        const recipient = optionalString(args, "royaltyRecipient");
+        if (!clear && !recipient) {
+          throw new Error("royaltyRecipient is required unless clear is true.");
+        }
+        return updateRegistryResource(requiredString(args, "resourceId"), {
+          kind: "royalty",
+          recipient: clear ? null : (recipient ?? null),
+        });
+      }
       case "mindvault_set_tags":
         return setTags(requiredString(args, "resourceId"), requiredTagArray(args, "tags"));
       case "mindvault_tx_status":

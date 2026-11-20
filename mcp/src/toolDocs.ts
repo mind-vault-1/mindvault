@@ -63,6 +63,8 @@ export function groupOf(name: string): string {
       "mindvault_browse",
       "mindvault_search",
       "mindvault_preview",
+      "mindvault_batch_catalog_lookup",
+      "mindvault_preview_metadata_hash",
       "mindvault_prewarm_catalog",
     ].includes(name)
   )

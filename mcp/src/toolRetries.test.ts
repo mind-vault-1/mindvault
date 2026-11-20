@@ -61,16 +61,11 @@ const { browse, buy, dispatchTool, walletInfo, txStatus, networkProfile, _setAge
 
 function mockResponse(data: unknown, ok = true, status = 200, headers?: Record<string, string>) {
   const body = typeof data === "string" ? data : JSON.stringify(data);
-  return {
-    ok,
+  return new Response(body, {
     status,
     statusText: ok ? "OK" : "Error",
-    text: () => Promise.resolve(body),
-    json: () => Promise.resolve(data),
-    // jsonFetch reads bodies through readBoundedResponse, which needs bytes.
-    arrayBuffer: () => Promise.resolve(new TextEncoder().encode(body).buffer),
-    headers: new Headers({ "content-type": "application/json", ...headers }),
-  } as Response;
+    headers: { "content-type": "application/json", ...headers },
+  });
 }
 
 const testWallet = {
