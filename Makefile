@@ -1,4 +1,4 @@
-.PHONY: setup setup-usdc dev dev-server dev-web test install migrate wallets seed validate
+.PHONY: setup setup-usdc dev dev-server dev-web test install migrate wallets seed validate bindings reset
 
 # MindVault local development entrypoints.
 # Prerequisites: Node.js 20+, pnpm, and a configured server/.env (see server/.env.example).
@@ -63,6 +63,34 @@ validate:
 	pnpm run docs:links
 	@echo ""
 	@echo "All checks passed."
+
+# Print the SQL and commands needed for a partial DB+storage reset, then reseed.
+# This target is informational — it does not modify Supabase directly.
+# For the full reset process see docs/local-testnet-reset.md.
+reset:
+	@echo ""
+	@echo "=== MindVault local testnet reset ==="
+	@echo ""
+	@echo "Step 1 — Truncate all tables in the Supabase SQL editor:"
+	@echo "  TRUNCATE TABLE payments, verifications, resources, publishers RESTART IDENTITY CASCADE;"
+	@echo ""
+	@echo "Step 2 — Clear storage objects in the Supabase dashboard:"
+	@echo "  Storage → resources bucket → select all → Delete"
+	@echo "  (or: supabase storage rm \"ss:///resources\" --project-ref <ref> --recursive)"
+	@echo ""
+	@echo "Step 3 — Reseed:"
+	@echo "  make seed"
+	@echo "  make seed ONCHAIN=1   # also register on Stellar testnet"
+	@echo ""
+	@echo "For full reset (new wallets) or MCP-only reset see docs/local-testnet-reset.md"
+	@echo ""
+
+# Regenerate TypeScript bindings from the deployed testnet contract.
+# To generate from a local WASM instead (after `make contract-build`):
+#   CONTRACT_WASM=contract/target/wasm32v1-none/release/vault_registry.wasm make bindings
+# See docs/regenerating-bindings.md for the full review process.
+bindings:
+	pnpm contract:bindings
 
 # Populate the catalog with sample resources for local development.
 # Safe to re-run. Pass ONCHAIN=1 to also register on Stellar testnet.
