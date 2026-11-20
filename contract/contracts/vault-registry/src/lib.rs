@@ -2337,16 +2337,15 @@ impl VaultRegistry {
         // Capture previous tags before replacement for event emission and index
         let prev_tags = resource.tags.clone();
 
+        // Update the tag index: remove the resource from each old tag's index
+        // entry, then add it to each new tag's entry. Only done once — the
+        // duplicate pair that appeared here previously was a bug introduced when
+        // moving the index update before the save (issue #1175).
         Self::tag_index_remove(&env, &prev_tags, &id);
         Self::tag_index_add(&env, &norm_tags, &id);
 
         resource.tags = norm_tags.clone();
         Self::save(&env, &mut resource);
-
-        // Keep the derived tag index in sync: drop the id from every tag it
-        // no longer carries, then add it to the new set (adds are idempotent).
-        Self::tag_index_remove(&env, &prev_tags, &id);
-        Self::tag_index_add(&env, &norm_tags, &id);
 
         // Emit event with both previous and next tags for indexer reconciliation
         env.events()
@@ -2426,8 +2425,14 @@ impl VaultRegistry {
     }
 
     /// Accept a proposed transfer. Only the pending owner can call this.
+    ///
+    /// **Hardened** (issue #1176): validates `id` format, verifies the
+    /// resource still exists, and checks mutability before accepting. This
+    /// prevents accepting a transfer on a tombstoned, frozen, or disputed
+    /// resource that was frozen after the proposal was made.
     pub fn accept_transfer(env: Env, id: String) -> Result<(), Error> {
         Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&id)?;
         let key = DataKey::PendingTransfer(id.clone());
         let pending_owner: Address = env
             .storage()
@@ -2437,7 +2442,17 @@ impl VaultRegistry {
         pending_owner.require_auth();
 
         let mut resource = Self::load(&env, &id)?;
+        // Verify the pending recipient is not already the owner (e.g. a
+        // direct `transfer_ownership` happened between propose and accept).
+        if resource.creator == pending_owner {
+            env.storage().persistent().remove(&key);
+            return Err(Error::AlreadyOwner);
+        }
+        // Reject the acceptance if the resource has since been frozen,
+        // disputed, or tombstoned — the proposing owner must resolve the
+        // lifecycle first.
         Self::ensure_mutable(&resource)?;
+
         let previous_owner = resource.creator.clone();
         resource.creator = pending_owner.clone();
 
@@ -5619,10 +5634,13 @@ impl VaultRegistry {
     /// Flag a resource for dispute. Only an address currently holding the
     /// moderator role (see `add_moderator`) may call this.
     ///
-    /// Sets `Resource.dispute_flag` to `Some(reason)`. Flagging is informational:
+    /// Sets `Resource.dispute_flag` to `Flagged(reason)`. Flagging is informational:
     /// it does not delist, delete, or restrict the resource — callers may filter
-    /// on this field. Calling `flag_resource` on an already-flagged resource
-    /// replaces the existing flag with the new reason.
+    /// on this field.
+    ///
+    /// **Idempotent**: if the resource already carries the same flag reason, the
+    /// call returns `Ok(())` immediately without touching storage or emitting an
+    /// event (issue #1173). A new reason replaces the existing one.
     ///
     /// Emits a `flag` event with `FlagEvent { id, moderator, reason }`.
     ///
@@ -5642,6 +5660,12 @@ impl VaultRegistry {
         }
         Self::validate_resource_id(&id)?;
         let mut resource = Self::load(&env, &id)?;
+
+        // Idempotent: skip storage write and event when nothing changes.
+        if resource.dispute_flag == DisputeFlag::Flagged(reason) {
+            return Ok(());
+        }
+
         resource.dispute_flag = DisputeFlag::Flagged(reason);
         Self::save(&env, &mut resource);
         Self::record_flag_moderator(&env, &id, &moderator);
@@ -5659,9 +5683,10 @@ impl VaultRegistry {
     /// Remove the dispute flag from a resource. Only an address currently holding
     /// the moderator role (see `add_moderator`) may call this.
     ///
-    /// Clears `Resource.dispute_flag` to `None`. If the resource is not currently
-    /// flagged this is a no-op (the event is still emitted so off-chain indexers
-    /// have a complete audit trail).
+    /// **Idempotent**: if the resource is not currently flagged, the call returns
+    /// `Ok(())` immediately without touching storage or emitting an event
+    /// (issue #1173). This preserves atomic failure semantics — storage and
+    /// events are unchanged on no-op calls.
     ///
     /// Emits an `unflag` event with the resource `id` as the data payload.
     ///
@@ -5676,6 +5701,12 @@ impl VaultRegistry {
         }
         Self::validate_resource_id(&id)?;
         let mut resource = Self::load(&env, &id)?;
+
+        // Idempotent: skip storage write and event when already not flagged.
+        if resource.dispute_flag == DisputeFlag::NoFlag {
+            return Ok(());
+        }
+
         resource.dispute_flag = DisputeFlag::NoFlag;
         Self::save(&env, &mut resource);
         Self::record_flag_moderator(&env, &id, &moderator);
@@ -6729,6 +6760,36 @@ impl VaultRegistry {
         let key = DataKey::Resource(resource.id.clone());
         env.storage().persistent().set(&key, resource as &Resource);
         Self::bump_persistent(env, &key);
+
+        // Append a revision snapshot for bounded history (issue #1174).
+        // The buffer is capped at MAX_RESOURCE_HISTORY; when full, the oldest
+        // entry is evicted so storage growth stays bounded.
+        let hist_key = DataKey::ResourceHistory(resource.id.clone());
+        let mut history: Vec<ResourceRevision> = env
+            .storage()
+            .persistent()
+            .get(&hist_key)
+            .unwrap_or_else(|| Vec::new(env));
+        let snapshot = ResourceRevision {
+            revision: resource.version,
+            ledger: resource.updated_at,
+            price: resource.price,
+            metadata: resource.metadata.clone(),
+            listed: resource.listed,
+            verified: resource.verified,
+            tags: resource.tags.clone(),
+        };
+        history.push_back(snapshot);
+        // Evict oldest entry when the ring-buffer is full.
+        if history.len() > MAX_RESOURCE_HISTORY {
+            let mut trimmed: Vec<ResourceRevision> = Vec::new(env);
+            for i in (history.len() - MAX_RESOURCE_HISTORY)..history.len() {
+                trimmed.push_back(history.get(i).unwrap());
+            }
+            history = trimmed;
+        }
+        env.storage().persistent().set(&hist_key, &history);
+        Self::bump_persistent(env, &hist_key);
     }
 
     /// Increment the listing revision for `id` by one. Fails with
