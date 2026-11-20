@@ -1019,6 +1019,9 @@ pub struct VerifierStatusEntry {
     pub revocation_reason_hash: Option<String>,
     /// Ledger sequence at which this change was recorded.
     pub ledger: u32,
+    /// Monotonic 0-based position within this verifier's history.
+    /// Provides a unique tie-breaker for updates recorded in the same ledger.
+    pub seq: u32,
 }
 
 /// One page of verifier status history with a cursor for the next page.
@@ -2166,7 +2169,8 @@ impl VaultRegistry {
     /// this. Only `Pending -> Verified`, `Pending -> Rejected`,
     /// `Verified -> Rejected`, and `Rejected -> Verified` are allowed;
     /// self-transitions and reverting to `Pending` error with
-    /// `InvalidVerificationTransition`.
+    /// `InvalidVerificationTransition`. Each accepted change appends one
+    /// verifier-history entry with a monotonic per-verifier `seq`.
     pub fn set_verification_status(
         env: Env,
         id: String,
@@ -2210,12 +2214,15 @@ impl VaultRegistry {
         Self::save(&env, &mut resource);
 
         // Append to the verifier's status-change history for paginated reads.
+        // `seq` is assigned before the push so it always matches the entry's
+        // insertion position, even when several updates share one ledger.
         let hist_key = DataKey::VerifierHistory(verifier.clone());
         let mut history: Vec<VerifierStatusEntry> = env
             .storage()
             .persistent()
             .get(&hist_key)
             .unwrap_or_else(|| Vec::new(&env));
+        let seq = history.len();
         history.push_back(VerifierStatusEntry {
             resource_id: id.clone(),
             old_status,
@@ -2223,6 +2230,7 @@ impl VaultRegistry {
             attestation_hash: stored_attestation_hash.clone(),
             revocation_reason_hash: None, // TODO: Will be populated when revocation is implemented
             ledger: env.ledger().sequence(),
+            seq,
         });
         env.storage().persistent().set(&hist_key, &history);
         Self::bump_persistent(&env, &hist_key);
@@ -5983,12 +5991,16 @@ impl VaultRegistry {
     // ── Issue #805: paginated verifier status history reads ───────────────
 
     /// Return a page of verification status changes performed by `verifier`,
-    /// in chronological order (oldest first).
+    /// in deterministic chronological `(ledger, seq)` order (oldest first).
     ///
-    /// - `cursor` is a 0-based index into the verifier's history list.
+    /// - `cursor` is a 0-based index into that ordered history; its type and
+    ///   meaning are unchanged for existing clients.
     /// - `limit` is capped at [`LIST_PAGE_CAP`] (20).
     /// - `next_cursor` is `Some(next_index)` when more entries exist, or
     ///   `None` at end-of-list.
+    /// - Updates recorded in the same ledger are disambiguated by their
+    ///   monotonic per-verifier `seq`, so a page boundary cannot skip or
+    ///   duplicate an entry just because it shares a ledger with its neighbors.
     ///
     /// A verifier with no recorded history returns an empty page — not an error.
     pub fn get_verifier_status_history(
@@ -6005,10 +6017,22 @@ impl VaultRegistry {
             .unwrap_or_else(|| Vec::new(&env));
         let page_size = limit.min(LIST_PAGE_CAP);
         let total = history.len();
+        let mut ordered: alloc::vec::Vec<(u32, VerifierStatusEntry)> =
+            alloc::vec::Vec::with_capacity(total as usize);
+        for idx in 0..total {
+            ordered.push((idx, history.get(idx).unwrap()));
+        }
+        ordered.sort_by(|(idx_a, a), (idx_b, b)| {
+            a.ledger
+                .cmp(&b.ledger)
+                .then_with(|| a.seq.cmp(&b.seq))
+                .then_with(|| idx_a.cmp(idx_b))
+        });
+
         let mut items: Vec<VerifierStatusEntry> = Vec::new(&env);
         let mut i = cursor;
         while i < total && items.len() < page_size {
-            items.push_back(history.get(i).unwrap());
+            items.push_back(ordered[i as usize].1.clone());
             i += 1;
         }
         let next_cursor = if i < total { Some(i) } else { None };
