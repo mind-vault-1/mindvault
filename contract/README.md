@@ -384,8 +384,9 @@ See [`docs/adr-fee-config.md`](../docs/adr-fee-config.md) for the full design ra
 | `get_purchase_receipt(resource_id, buyer)`                                   | —                                                        | `resource_id: String`; `buyer: Address`                                                                                                                                                                                                              | `Result<PurchaseReceiptAnchor, Error>` | Fetch a purchase receipt anchor. Errors `NotFound` if absent.                                                                                                                                                                                                                                            |
 | `get_anchor_attempts(resource_id, buyer)`                                    | —                                                        | `resource_id: String`; `buyer: Address`                                                                                                                                                                                                              | `Result<AnchorAttempts, Error>`        | Rejected `attempt_anchor_purchase_receipt` count and last-attempt ledger for the pair; both `0` when it was never rejected or its anchor has since been written.                                                                                                                                         |
 | `buy_lease(holder, resource_id, tier, amount, tx_hash)`                      | `holder`                                                 | `holder: Address`; `resource_id: String`; `tier: LeaseTier` — `Hour`, `Day`, or `Week`; `amount: i128` — must equal `lease_price(resource_id, tier)`; `tx_hash: String` — 1-128 bytes                                                                 | `Result<Lease, Error>`                 | Record a time-limited access lease in `Pending` state, to be confirmed by `settle_lease`. Requires a `Listed` resource (`ResourceNotMutable`), the exact lease price (`PaymentAmountMismatch`), and no pending or unexpired active lease for the pair (`AlreadyRegistered`). Emits `lease`.                |
+| `extend_lease(holder, resource_id, tier, amount, tx_hash)`                   | `holder`                                                 | As `buy_lease`                                                                                                                                                                                                                                          | `Result<Lease, Error>`                 | Extend an existing `Active` lease while retaining its original `holder` and `resource_id`. Rejects `Pending`/`Revoked` leases (`InvalidPaymentTransition`), a mismatched stored binding (`Unauthorized`), and a reused `tx_hash` (`DuplicateTxHash`). Emits `lease`.                                       |
 | `record_lease(settler, holder, resource_id, tier, amount, tx_hash)`          | `settler` + `holder`                                     | `settler: Address` — holder of the settler role; then as `buy_lease`                                                                                                                                                                                 | `Result<Lease, Error>`                 | Settler-recorded lease: the same checks as `buy_lease`, written directly in `Active` state because the settler has already confirmed the payment. Emits `lease`.                                                                                                                                         |
-| `settle_lease(settler, resource_id, holder)`                                 | `settler`                                                | `settler: Address`; `resource_id: String`; `holder: Address`                                                                                                                                                                                         | `Result<Lease, Error>`                 | Advance a `Pending` lease to `Active`. Errors `NotFound` without a lease and `InvalidPaymentTransition` if it is not `Pending`. Emits `leasesetl`.                                                                                                                                                        |
+| `settle_lease(settler, resource_id, holder)`                                 | `settler`                                                | `settler: Address`; `resource_id: String`; `holder: Address`                                                                                                                                                                                         | `Result<Lease, Error>`                 | Advance a `Pending` lease to `Active`. Errors `NotFound` without a lease, `Unauthorized` on a mismatched stored binding, and `InvalidPaymentTransition` if it is not `Pending`. Emits `leasesetl`.                                                                                                      |
 | `revoke_lease(resource_id, holder)`                                          | `creator`                                                | `resource_id: String`; `holder: Address`                                                                                                                                                                                                             | `Result<Lease, Error>`                 | Revoke a `Pending` or `Active` lease; terminal and immediate. Errors `NotFound` without a lease and `InvalidPaymentTransition` if already `Revoked`. Emits `leaserevk`.                                                                                                                                  |
 | `get_lease(resource_id, holder)`                                             | —                                                        | `resource_id: String`; `holder: Address`                                                                                                                                                                                                             | `Result<Lease, Error>`                 | Fetch the lease recorded for the pair, whatever its state. Errors `NotFound` if none exists. Bumps the entry's TTL.                                                                                                                                                                                      |
 | `lease_is_active(resource_id, holder)`                                       | —                                                        | `resource_id: String`; `holder: Address`                                                                                                                                                                                                             | `bool`                                 | `true` while a lease exists for the pair, is `Active`, and the current ledger is below its `expiry_ledger`. Never errors.                                                                                                                                                                                 |
@@ -1156,26 +1157,41 @@ pub struct Lease {
 | `Day`  | 17 280 ledgers                  | 5 × per-request price  |
 | `Week` | 120 960 ledgers                 | 20 × per-request price |
 
-Two entry points write a lease. `buy_lease` is the holder's own path: it
+Three entry points write a lease. `buy_lease` is the holder's own path: it
 records the lease as `Pending` with the hash of the USDC transfer the holder
 made, and a settler promotes it with `settle_lease` once that transfer is
 confirmed. `record_lease` is the settler's path for payments it has already
 confirmed (an x402 settlement, for example) and writes the lease `Active`
-directly. Both require a `Listed` resource, `amount == lease_price`, and no
-pending or unexpired active lease for the pair; an expired or revoked lease
+directly. `extend_lease` renews an existing `Active` lease, including one whose
+window has expired. All three require a `Listed` resource and
+`amount == lease_price`; `buy_lease` and `record_lease` additionally require no
+pending or unexpired active lease for the pair, so an expired or revoked lease
 is replaced.
 
+Every renewal write keys the record by `(resource_id, holder)` and checks the
+stored record's binding before updating it. `extend_lease` copies the original
+`holder` and `resource_id` from storage, so a resource ownership transfer does
+not rebind an existing lease to the new owner and another holder cannot take it
+over. It adds the new payment to `amount`, extends the window from the later of
+the current ledger and the old `expiry_ledger`, and preserves `start_ledger`.
+A stored record whose binding disagrees with its key is rejected with
+`Unauthorized` instead of being rewritten.
+
 ```text
-Pending --settle_lease--> Active --(ledger >= expiry_ledger)--> expired
+Pending --settle_lease--> Active --extend_lease--> Active
+   |                        |                        |
+   |                        +--(ledger >= expiry)----+ (still Active, not granting)
    |                        |
-   +------revoke_lease------+--> Revoked (terminal)
+   +------revoke_lease------+--> Revoked (terminal; cannot be extended)
 ```
 
 `lease_is_active` is the read a paywall needs: `true` only while the lease is
 `Active` and the current ledger is below `expiry_ledger`. Expiry is purely
-ledger-based; nothing renews a lease. The creator revokes with `revoke_lease`,
-which takes effect in the same ledger. `get_lease` returns the record in any
-state for audit.
+ledger-based; `extend_lease` is the renewal path, while revocation remains
+terminal. The creator revokes with `revoke_lease`, which takes effect in the
+same ledger. `get_lease` returns the record in any state for audit. The MCP
+server's `mindvault_lease_status` reads the same `(resource_id, holder)` key,
+so a renewed lease is reported under its original binding.
 
 ### Retry-safe payment recording
 
@@ -1426,6 +1442,7 @@ that matrix drift apart.
 | `record_creator_refund` | refund | creator | yes |
 | `record_admin_refund` | refund | admin | yes |
 | `buy_lease` | lease | holder | yes |
+| `extend_lease` | lease | holder | yes |
 | `record_lease` | lease | settler, holder | yes |
 | `settle_lease` | lease | settler | yes |
 | `revoke_lease` | lease | creator | yes |

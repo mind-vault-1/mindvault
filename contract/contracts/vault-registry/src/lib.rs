@@ -363,6 +363,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("get_anchor_attempts", "—"),
     // ── Access leases ─────────────────────────────────────────────────────
     ("buy_lease", "holder"),
+    ("extend_lease", "holder"),
     ("record_lease", "settler + holder"),
     ("settle_lease", "settler"),
     ("revoke_lease", "creator"),
@@ -5835,10 +5836,80 @@ impl VaultRegistry {
         )
     }
 
+    /// Extend an existing `Active` lease for `(resource_id, holder)` without
+    /// changing the holder or resource it is bound to. The original binding is
+    /// read from storage rather than inferred from the call arguments, so a
+    /// resource ownership transfer cannot move a lease to a new owner and a
+    /// different holder cannot take one over.
+    ///
+    /// Requires the holder's authorization, a `Listed` resource, and the exact
+    /// price of `tier`. `Pending` and `Revoked` leases are rejected with
+    /// `InvalidPaymentTransition`; a mismatched stored binding is rejected
+    /// with `Unauthorized`; reusing the recorded `tx_hash` is rejected with
+    /// `DuplicateTxHash`. The new payment is added to `amount`, the window is
+    /// extended from the later of the current ledger and the old expiry, and
+    /// the original `start_ledger` is retained. Emits `lease`.
+    pub fn extend_lease(
+        env: Env,
+        holder: Address,
+        resource_id: String,
+        tier: LeaseTier,
+        amount: i128,
+        tx_hash: String,
+    ) -> Result<Lease, Error> {
+        holder.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::require_payment_not_paused(&env)?;
+        Self::validate_resource_id(&resource_id)?;
+        Self::validate_payment_amount(amount)?;
+        Self::validate_tx_hash(&tx_hash)?;
+
+        let resource = Self::load(&env, &resource_id)?;
+        if resource.state != ResourceState::Listed {
+            return Err(Error::ResourceNotMutable);
+        }
+        if amount != Self::tier_price(resource.price, tier)? {
+            return Err(Error::PaymentAmountMismatch);
+        }
+
+        let key = DataKey::Lease(resource_id.clone(), holder.clone());
+        let existing: Lease = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::NotFound)?;
+        Self::require_lease_binding(&existing, &resource_id, &holder)?;
+        if existing.state != LeaseState::Active {
+            return Err(Error::InvalidPaymentTransition);
+        }
+        if existing.tx_hash == tx_hash {
+            return Err(Error::DuplicateTxHash);
+        }
+
+        let now = env.ledger().sequence();
+        let base_ledger = existing.expiry_ledger.max(now);
+        let extended = Lease {
+            resource_id: existing.resource_id,
+            holder: existing.holder,
+            tier,
+            start_ledger: existing.start_ledger,
+            expiry_ledger: base_ledger.saturating_add(Self::tier_ledgers(tier)),
+            amount: existing.amount.saturating_add(amount),
+            tx_hash,
+            state: LeaseState::Active,
+            recorded_at: now,
+        };
+        env.storage().persistent().set(&key, &extended);
+        Self::bump_persistent(&env, &key);
+        env.events()
+            .publish((symbol_short!("lease"), resource_id), extended.clone());
+        Ok(extended)
+    }
+
     /// Advance a `Pending` lease to `Active` once its payment is confirmed.
     /// Requires the settler role. Errors `NotFound` if no lease exists for
-    /// the pair and `InvalidLeaseTransition` if it is not `Pending`. Emits
-    /// `leasesetl`.
+    /// the pair, `Unauthorized` if the stored binding does not match the pair,
+    /// and `InvalidPaymentTransition` if it is not `Pending`. Emits `leasesetl`.
     pub fn settle_lease(
         env: Env,
         settler: Address,
@@ -5852,12 +5923,13 @@ impl VaultRegistry {
         Self::require_not_paused(&env)?;
         Self::require_payment_not_paused(&env)?;
         Self::validate_resource_id(&resource_id)?;
-        let key = DataKey::Lease(resource_id.clone(), holder);
+        let key = DataKey::Lease(resource_id.clone(), holder.clone());
         let mut lease: Lease = env
             .storage()
             .persistent()
             .get(&key)
             .ok_or(Error::NotFound)?;
+        Self::require_lease_binding(&lease, &resource_id, &holder)?;
         if lease.state != LeaseState::Pending {
             return Err(Error::InvalidPaymentTransition);
         }
@@ -7190,7 +7262,23 @@ impl VaultRegistry {
         lease.state == LeaseState::Active && env.ledger().sequence() < lease.expiry_ledger
     }
 
+    /// A lease is always addressed by `(resource_id, holder)`. Refuse to write
+    /// through that key when the stored record claims a different binding, so
+    /// renewal cannot silently move a lease to another resource or holder.
+    fn require_lease_binding(
+        lease: &Lease,
+        resource_id: &String,
+        holder: &Address,
+    ) -> Result<(), Error> {
+        if &lease.holder != holder || &lease.resource_id != resource_id {
+            return Err(Error::Unauthorized);
+        }
+        Ok(())
+    }
+
     /// Validation and storage shared by `buy_lease` and `record_lease`.
+    /// A stored record whose binding disagrees with the key is rejected rather
+    /// than overwritten, so replacement leases cannot inherit a stale binding.
     fn write_lease(
         env: &Env,
         holder: Address,
@@ -7216,6 +7304,7 @@ impl VaultRegistry {
 
         let key = DataKey::Lease(resource_id.clone(), holder.clone());
         if let Some(existing) = env.storage().persistent().get::<DataKey, Lease>(&key) {
+            Self::require_lease_binding(&existing, &resource_id, &holder)?;
             let still_open =
                 existing.state == LeaseState::Pending || Self::lease_grants_access(env, &existing);
             if still_open {
