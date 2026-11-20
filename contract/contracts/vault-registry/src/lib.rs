@@ -522,8 +522,8 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("rmsettlr", "RoleChange { admin, target, granted: false }"),
     ("pause", "(paused: bool, admin: Address)"),
     ("pause_until", "(pause_until: u64, admin: Address)"),
-    ("payment_pause", "(paused: bool, admin: Address)"),
     ("payment_pause_until", "(pause_until: u64, admin: Address)"),
+    ("pay_pause", "(paused: bool, admin: Address)"),
     (
         "mntstat",
         "MaintenanceStatusEvent { kind, reason_code, admin }",
@@ -1119,8 +1119,6 @@ pub enum DataKey {
     RefundedAmount(String),
     /// Configured creator-refund window length, in ledgers.
     RefundWindow,
-    /// Ordered history of verification status changes for a verifier address.
-    VerifierHistory(Address),
     /// Aggregated settled-payment earnings for a creator wallet address.
     CreatorEarnings(Address),
     /// Moderator who last set a resource's dispute flag or reason hash.
@@ -1158,9 +1156,6 @@ pub enum DataKey {
     /// enum code): this carries a digest of free-form detail a moderator
     /// recorded off-chain, analogous to `CreatorTerms`.
     FlagReasonHash(String),
-    /// Last moderator address that acted on the moderation state of a resource,
-    /// stored by resource id. Read by `flag_details`.
-    FlagModerator(String),
     /// Hash of a verifier's off-chain attestation document, provided during a
     /// status change via `set_verification_status`.
     AttestationHash(String),
@@ -1652,7 +1647,11 @@ pub enum Error {
     /// A fee-recipient or fee-destination change was attempted while accrued
     /// fees remain unclaimed. Call `claim_fees` first to acknowledge receipt
     /// of outstanding fees, then retry the change.
-    UnclaimedFees = 56,
+    UnclaimedFees = 57,
+    /// Setting a fee config would create a conflict with an active lease whose
+    /// price would no longer exceed the combined fee basis points, violating
+    /// the creator-share invariant.
+    LeaseFeeConfigConflict = 58,
 }
 
 #[contract]
@@ -4112,15 +4111,19 @@ impl VaultRegistry {
     /// admin has been set yet, and `Unauthorized` if `admin` is not the
     /// current admin.
     ///
-    /// Emits a `payment_pause` event with data `(paused: bool, admin: Address)` on
+    /// Emits a `pay_pause` event with data `(paused: bool, admin: Address)` on
     /// every call, including no-op transitions.
     pub fn set_payment_paused(env: Env, admin: Address, paused: bool) -> Result<(), Error> {
         Self::require_current_admin(&env, &admin)?;
-        env.storage().instance().set(&DataKey::PaymentPaused, &paused);
+        env.storage()
+            .instance()
+            .set(&DataKey::PaymentPaused, &paused);
         env.storage().instance().remove(&DataKey::PaymentPauseUntil);
         Self::bump_instance(&env);
-        env.events()
-            .publish((symbol_short!("payment_pause"), admin.clone()), (paused, admin));
+        env.events().publish(
+            (symbol_short!("pay_pause"), admin.clone()),
+            (paused, admin),
+        );
         Ok(())
     }
 
@@ -4130,10 +4133,16 @@ impl VaultRegistry {
     /// clock. The existing `set_payment_paused(admin, true)` entry point remains the
     /// way to create an indefinite pause. A deadline at or before the current
     /// ledger timestamp takes effect as an immediate resume.
-    pub fn set_payment_paused_until(env: Env, admin: Address, pause_until: u64) -> Result<(), Error> {
+    pub fn set_payment_paused_until(
+        env: Env,
+        admin: Address,
+        pause_until: u64,
+    ) -> Result<(), Error> {
         Self::require_current_admin(&env, &admin)?;
         let active = pause_until > env.ledger().timestamp();
-        env.storage().instance().set(&DataKey::PaymentPaused, &active);
+        env.storage()
+            .instance()
+            .set(&DataKey::PaymentPaused, &active);
         if active {
             env.storage()
                 .instance()
@@ -4143,7 +4152,7 @@ impl VaultRegistry {
         }
         Self::bump_instance(&env);
         env.events().publish(
-            (symbol_short!("payment_pause"), admin.clone()),
+            (symbol_short!("pay_pause"), admin.clone()),
             (active, admin.clone()),
         );
         env.events().publish(
@@ -4350,8 +4359,7 @@ impl VaultRegistry {
         Self::validate_fee_destination_for_fee_config(&config, &destination)?;
 
         // Reject fee-recipient rotation when accrued fees are unclaimed.
-        let existing: Option<FeeConfig> =
-            env.storage().instance().get(&DataKey::FeeConfig);
+        let existing: Option<FeeConfig> = env.storage().instance().get(&DataKey::FeeConfig);
         if let Some(ref old) = existing {
             if old.fee_recipient != config.fee_recipient {
                 Self::require_no_unclaimed_fees(&env)?;
@@ -4378,6 +4386,61 @@ impl VaultRegistry {
     /// if `set_fee_config` has never been called.
     pub fn get_fee_config(env: Env) -> Option<FeeConfig> {
         env.storage().instance().get(&DataKey::FeeConfig)
+    }
+
+    /// Preview how `amount` would be split between the platform, any royalty
+    /// recipient, and the resource creator, using the current fee configuration.
+    ///
+    /// **Read-only.** No transaction is recorded, no state is written, and no
+    /// authentication is required. The calculation is identical to the integer
+    /// arithmetic used by `settle_payment` (truncation, `FEE_BPS_DENOM = 10_000`),
+    /// so the preview is exact for any amount that settlement would accept.
+    ///
+    /// Returns `Err(InvalidPrice)` when `amount <= 0` or `amount > MAX_PRICE`.
+    /// When no fee config has been set, all fees are zero and
+    /// `creator_amount == amount`.
+    pub fn preview_fee_split(env: Env, amount: i128) -> Result<FeeSplitPreview, Error> {
+        if amount <= 0 || amount > MAX_PRICE {
+            return Err(Error::InvalidPrice);
+        }
+
+        let fee_config: Option<FeeConfig> = env.storage().instance().get(&DataKey::FeeConfig);
+
+        match fee_config {
+            None => {
+                // No fee config set: creator keeps everything.
+                Ok(FeeSplitPreview {
+                    amount,
+                    platform_fee: 0,
+                    royalty_amount: 0,
+                    creator_amount: amount,
+                    platform_fee_bps: 0,
+                    royalty_bps: 0,
+                })
+            }
+            Some(config) => {
+                let denom = i128::from(FEE_BPS_DENOM);
+                let platform_fee = if config.platform_fee_bps > 0 {
+                    amount * i128::from(config.platform_fee_bps) / denom
+                } else {
+                    0
+                };
+                let royalty_amount = if config.royalty_bps > 0 {
+                    amount * i128::from(config.royalty_bps) / denom
+                } else {
+                    0
+                };
+                let creator_amount = amount - platform_fee - royalty_amount;
+                Ok(FeeSplitPreview {
+                    amount,
+                    platform_fee,
+                    royalty_amount,
+                    creator_amount,
+                    platform_fee_bps: config.platform_fee_bps,
+                    royalty_bps: config.royalty_bps,
+                })
+            }
+        }
     }
 
     /// Update only the fee recipient address without changing fee rates.
@@ -4585,7 +4648,7 @@ impl VaultRegistry {
     /// assumptions, which we prevent here.
     fn validate_fee_config_for_leases(env: &Env, config: &FeeConfig) -> Result<(), Error> {
         let combined_fee_bps = config.platform_fee_bps + config.royalty_bps;
-        
+
         // If there are no fees, there's no conflict
         if combined_fee_bps == 0 {
             return Ok(());
@@ -4594,10 +4657,14 @@ impl VaultRegistry {
         // Scan listed resources to find minimum price. We check listed resources
         // because only listed resources can have leases sold on them.
         let count: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
-        
+
         for i in 0..count {
             let index_key = DataKey::Index(i);
-            if let Some(resource_id) = env.storage().persistent().get::<DataKey, String>(&index_key) {
+            if let Some(resource_id) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, String>(&index_key)
+            {
                 if let Ok(resource) = Self::load(env, &resource_id) {
                     // Only check listed resources (leases can only be created on listed resources)
                     if resource.state == ResourceState::Listed {
@@ -4788,10 +4855,8 @@ impl VaultRegistry {
 
         match validation_result {
             Ok(()) => {
-                env.events().publish(
-                    (symbol_short!("simvalid"),),
-                    (true, Option::<u32>::None),
-                );
+                env.events()
+                    .publish((symbol_short!("simvalid"),), (true, Option::<u32>::None));
                 Ok(PaymentReceipt {
                     receipt_id: receipt_id.clone(),
                     resource_id,
@@ -4800,6 +4865,7 @@ impl VaultRegistry {
                     state: PaymentState::Escrowed,
                     tx_hash,
                     recorded_at: env.ledger().sequence(),
+                    ledger: env.ledger().sequence(),
                 })
             }
             Err(e) => {
@@ -4812,10 +4878,8 @@ impl VaultRegistry {
                     Error::InvalidTxHash => Some(24u32),
                     _ => None,
                 };
-                env.events().publish(
-                    (symbol_short!("simvalid"),),
-                    (false, error_code),
-                );
+                env.events()
+                    .publish((symbol_short!("simvalid"),), (false, error_code));
                 Err(e)
             }
         }
@@ -4969,7 +5033,11 @@ impl VaultRegistry {
         // in integer arithmetic (truncation is fine — leftover sub-stroop
         // dust is not tracked). Only non-zero fees are accrued so the
         // guard is inactive when no platform fee is configured.
-        if let Some(fee_config) = env.storage().instance().get::<DataKey, FeeConfig>(&DataKey::FeeConfig) {
+        if let Some(fee_config) = env
+            .storage()
+            .instance()
+            .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
+        {
             if fee_config.platform_fee_bps > 0 && fee_config.fee_recipient.is_some() {
                 let fee_amount = receipt.amount * i128::from(fee_config.platform_fee_bps)
                     / i128::from(FEE_BPS_DENOM);
@@ -6244,7 +6312,7 @@ impl VaultRegistry {
         let next_refunded = refunded
             .checked_add(amount)
             .ok_or(Error::PaymentAmountMismatch)?;
-        
+
         // Calculate remaining balance after this refund
         let remaining_balance = payment.amount.saturating_sub(next_refunded).max(0);
 
@@ -7007,11 +7075,20 @@ impl VaultRegistry {
         Self::bump_instance(env);
     }
 
-    fn add_verifier_internal(
-        env: &Env,
-        admin: &Address,
-        verifier: Address,
-    ) -> Result<(), Error> {
+    /// Record the price of a newly created lease so the fee-config guard can
+    /// verify that any subsequent `set_fee_config` call respects the
+    /// creator-share invariant for all active leases (#991).
+    ///
+    /// Currently a no-op placeholder; `validate_fee_config_for_leases`
+    /// performs the actual scan on demand.
+    #[allow(unused_variables)]
+    fn update_lease_price_floor(_env: &Env, _price: i128) {
+        // Intentionally empty: the full scan in `validate_fee_config_for_leases`
+        // handles this invariant. A cached floor value may be added in a future
+        // optimisation once the lease volume warrants it.
+    }
+
+    fn add_verifier_internal(env: &Env, admin: &Address, verifier: Address) -> Result<(), Error> {
         Self::role_index_add(env, RoleKind::Verifier, &verifier)?;
         env.storage()
             .instance()
