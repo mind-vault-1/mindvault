@@ -514,11 +514,11 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("reindex", "new_count: u32 (topic carries old_count: u32)"),
     (
         "payment",
-        "PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at }",
+        "PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at, ledger }",
     ),
     (
         "settle",
-        "PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at }",
+        "PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at, ledger }",
     ),
     ("addsettlr", "RoleChange { admin, target, granted: true }"),
     ("rmsettlr", "RoleChange { admin, target, granted: false }"),
@@ -557,16 +557,18 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
         "setdest",
         "FeeDestinationUpdated { old_destination, new_destination, ledger }",
     ),
-    ("claimfee", "(claimed_amount: i128, remaining_amount: i128)"),
+    ("claimfee", "FeesClaimed { claimed_amount, remaining_amount }"),
     ("ttlext", "()"),
     (
         "txfrterms",
         "TransferWithTermsEvent { id, previous_owner, new_owner, terms_hash, attestation_reset }",
     ),
-    ("lease", "(resource_id: String, lease: Lease)"),
-    ("leasesetl", "(resource_id: String, lease: Lease)"),
+    ("lease", "Lease (topic also carries resource_id)"),
+    ("leasesetl", "Lease (topic also carries resource_id)"),
     ("simvalid", "(passed: bool, error_code: Option<u32>)"),
-    ("leaserevk", "(resource_id: String, lease: Lease)"),
+    ("refund", "RefundReceipt { refund_id, payment_receipt_id, resource_id, recipient, amount, tx_hash, initiated_by, recorded_at, admin_override, remaining_balance }"),
+    ("refwin", "(old_window: u32, new_window: u32)"),
+    ("leaserevk", "Lease (topic also carries resource_id)"),
 ];
 
 /// Registry discovery metadata returned by [`VaultRegistry::registry_info`].

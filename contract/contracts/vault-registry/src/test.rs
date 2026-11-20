@@ -4978,6 +4978,17 @@ fn full_workflow_emits_exactly_the_documented_events() {
     record(&env, &client, &mut observed);
     client.claim_fees(); // -> "claimfee"
     record(&env, &client, &mut observed);
+    client.set_refund_window(&admin2, &(DAY_IN_LEDGERS * 2)); // -> "refwin"
+    record(&env, &client, &mut observed);
+    client.record_admin_refund(
+        &admin2,
+        &String::from_str(&env, "wfrefund1"),
+        &workflow_receipt,
+        &payer,
+        &50i128,
+        &String::from_str(&env, "refundtx1"),
+    ); // -> "refund"
+    record(&env, &client, &mut observed);
     // Time-limited access leases: buy (pending), settle, revoke.
     let lease_amount = client.lease_price(&r0, &LeaseTier::Hour);
     client.buy_lease(
@@ -11829,4 +11840,5 @@ include!("test/stellar_wave_977_978_979_980.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
 include!("test/verifier_key_history.rs");
+include!("test/event_indexing_guide.rs");
 include!("test/pause_scope_matrix.rs");

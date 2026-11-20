@@ -843,6 +843,9 @@ for colliding with a reserved word. Client code must handle both errors.
 
 ### Events
 
+Writing an indexer? [`docs/contract-event-indexing.md`](../docs/contract-event-indexing.md)
+covers payload encoding, ordering, checkpointing and gap recovery.
+
 All events use the topic `(symbol, id)` for resource-scoped actions, or
 `(symbol,)` (or `(symbol, address)`) for account-scoped actions (admin, terms).
 This table is the canonical, human-readable mirror of `EVENT_SCHEMA` in
@@ -880,9 +883,11 @@ apart, so update all three together.
 | `verrot`              | `VerifierRotation { admin, old_verifier, new_verifier, ledger }`                                     | `rotate_verifier()` succeeds                                                           |
 | `reindex`             | `new_count: u32 (topic carries old_count: u32)`                                                      | `repair_index()` succeeds                                                              |
 | `nomemo`              | `(receipt_id: String, tx_hash: String)`                                                              | `record_payment()` records a payment that carries no canonical `mv:<resource_id>` memo |
-| `payment`             | `PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at }`             | `record_payment()` succeeds                                                            |
+| `payment`             | `PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at, ledger }`             | `record_payment()` succeeds                                                            |
 | `setregt`             | `terms_hash: String`                                                                                 | `set_registry_terms()` updates the registry-wide listing terms hash                    |
-| `settle`              | `PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at }`             | `settle_payment()` succeeds                                                            |
+| `settle`              | `PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at, ledger }`             | `settle_payment()` succeeds                                                            |
+| `refund` | `RefundReceipt { refund_id, payment_receipt_id, resource_id, recipient, amount, tx_hash, initiated_by, recorded_at, admin_override, remaining_balance }` (topic also carries `refund_id`) | `record_creator_refund()` or `record_admin_refund()` succeeds |
+| `refwin` | `(old_window: u32, new_window: u32)` (topic also carries the admin) | `set_refund_window()` succeeds |
 | `simvalid`            | `(passed: bool, error_code: Option<u32>)`                                                            | `simulate_record_payment()` is called                                                  |
 | `addsettlr`           | `RoleChange { admin, target, granted: true }` (topic also carries target)                            | `add_settler()` succeeds                                                               |
 | `rmsettlr`            | `RoleChange { admin, target, granted: false }` (topic also carries target)                           | `remove_settler()` succeeds                                                            |
@@ -910,9 +915,9 @@ The `setlisted` event payload is a two-element tuple `(old_listed, new_listed)` 
 listeners can determine the transition direction without querying additional state:
 
 | `anchrxhst` | `(resource_id: String, buyer: Address)` — data is the final `AnchorAttempts` | `attempt_anchor_purchase_receipt()` hits the retry cap |
-| `lease` | `(resource_id: String, lease: Lease)` | `buy_lease()` succeeds |
-| `leasesetl` | `(resource_id: String, lease: Lease)` | `settle_lease()` succeeds |
-| `leaserevk` | `(resource_id: String, lease: Lease)` | `revoke_lease()` succeeds |
+| `lease` | `Lease` (topic also carries `resource_id`) | `buy_lease()` succeeds |
+| `leasesetl` | `Lease` (topic also carries `resource_id`) | `settle_lease()` succeeds |
+| `leaserevk` | `Lease` (topic also carries `resource_id`) | `revoke_lease()` succeeds |
 | Transition | `(old, new)` |
 | --------------------- | ---------------- |
 | Delist (was listed) | `(true, false)` |
