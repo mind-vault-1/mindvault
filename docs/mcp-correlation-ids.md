@@ -1,6 +1,7 @@
 # MCP Correlation IDs
 
-Issue [#572](https://github.com/mind-vault-1/mindvault/issues/572).
+Issue [#572](https://github.com/mind-vault-1/mindvault/issues/572), extended by
+[#1074](https://github.com/mind-vault-1/mindvault/issues/1074).
 
 The audit log records a tool call as several independent entries: a `start`,
 every network request the tool made, and a `success` or `error`. Nothing tied
@@ -14,7 +15,8 @@ Every tool call now runs under a correlation ID.
 ## Shape
 
 ```
-mv-1a2b3c4d-e5f6
+mv-1a2b3c4d-e5f6-k7q2p1
+│  │        │    └── salt, base36, fixed width — distinguishes worker processes
 │  │        └── random, base36, fixed width
 │  └── timestamp, base36 — sorts chronologically as a string
 └── prefix, so it is recognisable in a mixed log
@@ -29,10 +31,10 @@ into a `grep`.
 requests made underneath it:
 
 ```
-$ jq -c 'select(.correlationId == "mv-1a2b3c4d-e5f6")' audit.jsonl
-{"timestamp":"…","toolName":"mindvault_buy","status":"start","correlationId":"mv-1a2b3c4d-e5f6"}
-{"timestamp":"…","method":"GET","endpoint":"…","source":"api","correlationId":"mv-1a2b3c4d-e5f6"}
-{"timestamp":"…","toolName":"mindvault_buy","status":"error","correlationId":"mv-1a2b3c4d-e5f6"}
+$ jq -c 'select(.correlationId == "mv-1a2b3c4d-e5f6-k7q2p1")' audit.jsonl
+{"timestamp":"…","toolName":"mindvault_buy","status":"start","correlationId":"mv-1a2b3c4d-e5f6-k7q2p1"}
+{"timestamp":"…","method":"GET","endpoint":"…","source":"api","correlationId":"mv-1a2b3c4d-e5f6-k7q2p1"}
+{"timestamp":"…","toolName":"mindvault_buy","status":"error","correlationId":"mv-1a2b3c4d-e5f6-k7q2p1"}
 ```
 
 **In the tool result's `_meta`**, under `mindvault/correlationId` — the key MCP
@@ -41,7 +43,7 @@ reserves for out-of-band annotation:
 ```json
 {
   "content": [{ "type": "text", "text": "…" }],
-  "_meta": { "mindvault/correlationId": "mv-1a2b3c4d-e5f6" }
+  "_meta": { "mindvault/correlationId": "mv-1a2b3c4d-e5f6-k7q2p1" }
 }
 ```
 
@@ -52,7 +54,7 @@ every successful call, for no benefit.
 **In the error text**, on failures only:
 
 ```
-Error: Payment failed: insufficient balance [correlation: mv-1a2b3c4d-e5f6]
+Error: Payment failed: insufficient balance [correlation: mv-1a2b3c4d-e5f6-k7q2p1]
 ```
 
 A failure is the one case where a human is likely to quote the ID back, so it
@@ -70,6 +72,28 @@ context, and it survives `await` boundaries and nested helpers.
 Outside a tool call there is no ID and the field is omitted, rather than filled
 with a placeholder. An entry with no ID is honest about not belonging to a
 call.
+
+### Across processes
+
+Several MCP server processes may share a host, or start at the same instant.
+So that their IDs cannot collide even when their clocks and randomness line up,
+each process seeds a per-process **salt** — six base36 digits drawn from the
+CSPRNG and mixed with the pid and worker-thread id.
+
+A collision across processes therefore requires both the four-digit random
+component _and_ the six-digit salt to match: about one in 6×10¹⁵ for a pair
+minting in the same millisecond. The salt is fixed for the life of the process,
+so every ID one process mints is trivially recognisable as its own when a log
+from several processes is merged.
+
+Code that runs several generators in one process — tests, or an embedded
+multi-tenant server — can ask for an independent stream explicitly:
+
+```ts
+import { createCorrelationIdGenerator } from "./correlation.js";
+
+const nextId = createCorrelationIdGenerator(); // own salt, own namespace
+```
 
 ## Using it from a tool
 
@@ -97,6 +121,7 @@ await withNewCorrelationId(async (id) => {
 
 - [`mcp/src/correlation.test.ts`](../mcp/src/correlation.test.ts) — ID format
   and determinism, context propagation across `await`, isolation between
-  concurrent calls, and audit-log stamping
+  concurrent calls, cross-generator and cross-process collision resistance, and
+  audit-log stamping
 - [`mcp/src/serverFactory.test.ts`](../mcp/src/serverFactory.test.ts) — the ID
   attached to a real MCP result over an in-memory session

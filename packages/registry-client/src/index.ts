@@ -40,6 +40,16 @@ export {
 } from "./validateNetwork.js";
 
 export {
+  Errors,
+  ERROR_DESCRIPTIONS,
+  registryErrorName,
+  registryErrorDescription,
+  registryErrorCodeForName,
+  type RegistryErrorCode,
+  type RegistryErrorName,
+} from "./errors.js";
+
+export {
   REGISTRY_CLIENT_VERSION,
   getBindingMethodNames,
   fetchDeployedMethodNames,
@@ -52,6 +62,14 @@ export {
   type BindingReportContext,
   type DeployedMethodsQuery,
 } from "./bindingCheck.js";
+
+export {
+  CURRENT_RESOURCE_SCHEMA_VERSION,
+  RESOURCE_SCHEMA_VERSION,
+  PREVIOUS_RESOURCE_SCHEMA_VERSION,
+  SUPPORTED_RESOURCE_SCHEMA_VERSIONS,
+  isSupportedResourceSchemaVersion,
+} from "./schemaVersion.js";
 
 // Re-export everything the bindings generator produced. The Client class,
 // the Resource type, error variants, and network defaults all flow through.

@@ -14,7 +14,7 @@
  * Reset behavior is intentionally untouched — this module only adds export/import.
  */
 
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "crypto";
 import {
   chmodSync,
   existsSync,
@@ -59,6 +59,66 @@ export interface RestoreStateOptions {
 export interface PersistedStateSecretMatch {
   path: string;
   kind: "wallet-secret-key" | "api-key";
+}
+
+export interface StateBackupComparison {
+  localVersion: number;
+  backupVersion: number;
+  integrityVerified: true;
+  digestMatches: boolean;
+  differences: string[];
+}
+
+export function compareStateSnapshots(
+  local: ProfileState,
+  backup: ProfileState,
+): StateBackupComparison {
+  return {
+    localVersion: local.version,
+    backupVersion: backup.version,
+    integrityVerified: true,
+    digestMatches: stateDigest(local) === stateDigest(backup),
+    differences: compareStructure(local, backup),
+  };
+}
+
+function canonicalState(state: ProfileState): string {
+  const sort = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(sort);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, child]) => [key, sort(child)]),
+    );
+  };
+  return JSON.stringify(sort(state));
+}
+
+function stateDigest(state: ProfileState): string {
+  return createHash("sha256").update(canonicalState(state)).digest("hex");
+}
+
+function structuralSummary(state: ProfileState): Record<string, string> {
+  const result: Record<string, string> = { activeProfile: state.activeProfile };
+  for (const [name, profile] of Object.entries(state.profiles).sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    result[`profiles.${name}`] = [
+      profile.network ?? "none",
+      profile.wallet ? "wallet" : "no-wallet",
+      profile.apiKey ? "api-key" : "no-api-key",
+    ].join(":");
+  }
+  return result;
+}
+
+function compareStructure(local: ProfileState, backup: ProfileState): string[] {
+  const left = structuralSummary(local);
+  const right = structuralSummary(backup);
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])]
+    .sort()
+    .filter((key) => left[key] !== right[key]);
 }
 
 /**
@@ -142,9 +202,95 @@ export function exportStateFile(
 }
 
 /**
+ * Validation result for a backup's profile structure.
+ * Errors are field-level: each entry names the offending profile key.
+ */
+export interface BackupValidationResult {
+  valid: boolean;
+  errors: BackupValidationError[];
+}
+
+export interface BackupValidationError {
+  /** Dot-path to the field that caused the error (e.g. "profiles.Default"). */
+  field: string;
+  message: string;
+}
+
+/**
+ * Validate the profile map inside a decrypted backup payload before any state
+ * is written.
+ *
+ * Checks performed:
+ * 1. The profiles value must be an object (or absent — an empty object is fine).
+ * 2. Every key must satisfy the profile-name pattern; invalid names are
+ *    enumerated so the agent knows exactly what to fix.
+ * 3. No two profile names may be case-insensitively equivalent (e.g. "default"
+ *    and "Default") — such a backup cannot be imported without silent data loss
+ *    because one entry would overwrite the other.
+ */
+export function validateBackupProfiles(raw: unknown): BackupValidationResult {
+  const errors: BackupValidationError[] = [];
+
+  if (!raw || typeof raw !== "object") {
+    // A non-object is coerced to an empty state by normalizePersisted, so it
+    // is valid in the sense that no profiles are present.
+    return { valid: true, errors: [] };
+  }
+
+  const obj = raw as Record<string, unknown>;
+  const rawProfiles = obj.profiles;
+
+  if (
+    rawProfiles !== undefined &&
+    (typeof rawProfiles !== "object" || Array.isArray(rawProfiles))
+  ) {
+    errors.push({
+      field: "profiles",
+      message: "profiles must be a plain object mapping profile names to profile objects.",
+    });
+    return { valid: false, errors };
+  }
+
+  const profileMap = (rawProfiles ?? {}) as Record<string, unknown>;
+  const PROFILE_NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
+
+  // Collect all keys for duplicate detection before validating each one so the
+  // error list is complete rather than stopping at the first bad name.
+  const seen = new Map<string, string>(); // lowercase → original key
+
+  for (const name of Object.keys(profileMap)) {
+    // 1. Validate name format.
+    if (!PROFILE_NAME_PATTERN.test(name)) {
+      errors.push({
+        field: `profiles.${name}`,
+        message: `"${name}" is not a valid profile name. Profile names must be 1–64 characters (letters, digits, dot, dash, or underscore).`,
+      });
+      continue;
+    }
+
+    // 2. Case-insensitive collision check.
+    const lower = name.toLowerCase();
+    if (seen.has(lower)) {
+      const first = seen.get(lower)!;
+      errors.push({
+        field: `profiles.${name}`,
+        message: `Profile name "${name}" conflicts with existing profile "${first}" (case-insensitive duplicate). Remove one before importing.`,
+      });
+    } else {
+      seen.set(lower, name);
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+/**
  * Restore state from an encrypted backup string.
  *
  * Validates the passphrase and integrity (GCM auth tag) before writing anything.
+ * After decryption, the backup's profile structure is validated for duplicate or
+ * conflicting profile identifiers before any state is touched — malformed backups
+ * fail with field-level errors and leave the current state unchanged.
  * On success the in-memory state is replaced and re-persisted (mode 0600).
  * On any failure no state is modified and a deterministic error is thrown.
  */
@@ -192,9 +338,25 @@ export function restoreState(
       "Backup integrity check failed (wrong passphrase or tampered data).",
     );
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(plaintext);
+  } catch {
+    throw new StateBackupError("Backup contents are not valid state.");
+  }
+
+  // Validate profile structure before normalizing or writing.
+  const validation = validateBackupProfiles(parsed);
+  if (!validation.valid) {
+    const fieldList = validation.errors.map((e) => `  • ${e.field}: ${e.message}`).join("\n");
+    throw new StateBackupError(
+      `Backup contains invalid profile identifiers and cannot be imported:\n${fieldList}`,
+    );
+  }
+
   let state: ProfileState;
   try {
-    state = normalizePersisted(JSON.parse(plaintext));
+    state = normalizePersisted(parsed);
   } catch {
     throw new StateBackupError("Backup contents are not valid state.");
   }
@@ -210,6 +372,17 @@ export function restoreState(
   }
   write(state);
   return `State restored: ${Object.keys(state.profiles).length} profile(s), active "${state.activeProfile}".`;
+}
+
+/** Compare state with an encrypted backup without restoring or exposing secret values. */
+export function compareStateWithBackup(blob: string, passphrase: string): StateBackupComparison {
+  const local = readPersistedState();
+  let backup: ProfileState | undefined;
+  restoreState(blob, passphrase, (state) => {
+    backup = state;
+  });
+  if (!backup) throw new StateBackupError("Backup contents are not valid state.");
+  return compareStateSnapshots(local, backup);
 }
 
 /**
@@ -245,6 +418,21 @@ function normalizePersisted(raw: unknown): ProfileState {
     }
     if (typeof v.apiKey === "string" && v.apiKey.length > 0) profile.apiKey = v.apiKey;
     if (v.network === "testnet" || v.network === "mainnet") profile.network = v.network;
+    if (v.preferences && typeof v.preferences === "object" && !Array.isArray(v.preferences)) {
+      profile.preferences = {};
+      for (const [key, item] of Object.entries(v.preferences as Record<string, unknown>)) {
+        if (/secret|private|seed|credential|apikey|token|password/i.test(key)) continue;
+        if (
+          item === null ||
+          typeof item === "string" ||
+          typeof item === "number" ||
+          typeof item === "boolean"
+        ) {
+          profile.preferences[key] = item;
+        }
+      }
+      if (Object.keys(profile.preferences).length === 0) delete profile.preferences;
+    }
     profiles[name] = profile;
   }
   const requested = typeof obj.activeProfile === "string" ? obj.activeProfile : "default";

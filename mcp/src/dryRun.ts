@@ -6,11 +6,35 @@
  * are deterministic and agent-safe.
  */
 
+import {
+  isBlockedAddress,
+  isBlockedHostname,
+  isHostAllowlisted,
+  parseUrlAllowlist,
+} from "./outboundUrl.js";
+
 export interface DryRunPublishInput {
   title: string;
   description?: string;
   price: string;
   externalUrl: string;
+}
+
+/**
+ * Live facts a publish dry run can read before it reports.
+ *
+ * Every field is optional: a dry run must still succeed when the read behind a
+ * field failed, and a caller that has nothing to say simply omits it. What a
+ * field cannot be is a guess — the fee below is only ever a published price, and
+ * the balance is only ever a balance Horizon actually returned.
+ */
+export interface DryRunPublishLive {
+  /** `agent.pricePerVerification` from the read-only `GET /agent/status`. */
+  verificationFee?: number | string | null;
+  /** Wallet USDC balance, or null when it could not be read. */
+  usdcBalance?: string | null;
+  /** Set when a live read failed, so the agent knows the value is missing. */
+  readError?: string | null;
 }
 
 export interface DryRunPublishResult {
@@ -24,14 +48,34 @@ export interface DryRunPublishResult {
   intentions: {
     network: string;
     endpoint: string;
+    /** The paid endpoint a real publish would hit for content verification. */
+    verificationEndpoint: string;
     requiresPublisherRegistration: boolean;
     estimatedVerificationFee: string;
+    /** Where `estimatedVerificationFee` came from, so it is never mistaken for a quote. */
+    verificationFeeSource: "live" | "default";
+    /** Estimated network fee in XLM (if known). */
+    estimatedNetworkFeeXlm?: string | null;
+    /** Resource price component (USDC). */
+    resourcePrice?: string | null;
+    /** Protocol/x402 fee component (USDC). */
+    protocolFeeUsdc?: string | null;
+    /** Total estimated cost (USDC) before final settlement. */
+    estimatedTotalUsdc?: string | null;
+    /** Whether the values above are estimates vs final settlement. */
+    costSummaryKind?: "estimate";
+    /** Payment ceilings respected by this preview (no transaction made). */
+    respectsPaymentCeiling?: boolean;
     requiredWalletState: {
       wallet: boolean;
       publisherApiKey: boolean;
       usdcBalance: string | null;
+      /** True only when the live balance is known to cover the fee. */
+      coversVerificationFee: boolean | null;
     };
   };
+  /** Non-fatal facts the agent should know before a real publish. */
+  warnings: string[];
   steps: string[];
 }
 
@@ -46,6 +90,18 @@ export interface DryRunBuyResult {
     network: string;
     endpoint: string;
     estimatedPrice: string | null;
+    /** Estimated network fee in XLM (if known). */
+    estimatedNetworkFeeXlm?: string | null;
+    /** Resource price component (USDC). */
+    resourcePrice?: string | null;
+    /** Protocol/x402 fee component (USDC). */
+    protocolFeeUsdc?: string | null;
+    /** Total estimated cost (USDC) before final settlement. */
+    estimatedTotalUsdc?: string | null;
+    /** Whether the values above are estimates vs final settlement. */
+    costSummaryKind?: "estimate";
+    /** Payment ceiling respected by this preview (no transaction made). */
+    respectsPaymentCeiling?: boolean;
     requiredWalletState: {
       wallet: boolean;
       usdcBalance: string | null;
@@ -105,20 +161,33 @@ function validatePrice(price: unknown): { valid: boolean; error?: string } {
   return { valid: true };
 }
 
-/** Validate a URL (http/https only). */
+/** Validate a URL (http/https only, host not local or reserved). */
 function validateUrl(url: unknown): { valid: boolean; error?: string } {
   if (!url || typeof url !== "string") {
     return { valid: false, error: "URL must be a non-empty string" };
   }
+  let parsed: URL;
   try {
-    const parsed = new URL(url);
-    if (!parsed.protocol.startsWith("http")) {
-      return { valid: false, error: "URL must use http or https protocol" };
-    }
-    return { valid: true };
+    parsed = new URL(url);
   } catch {
     return { valid: false, error: "Invalid URL format" };
   }
+  if (!parsed.protocol.startsWith("http")) {
+    return { valid: false, error: "URL must use http or https protocol" };
+  }
+  const allowlist = parseUrlAllowlist(process.env.MINDVAULT_URL_ALLOWLIST);
+  const host = parsed.hostname;
+  if (!isHostAllowlisted(host, allowlist)) {
+    if (isBlockedHostname(host)) {
+      return { valid: false, error: "URL host is a local or reserved name" };
+    }
+    const literal = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+    const isLiteral = literal.includes(":") || /^\d{1,3}(\.\d{1,3}){3}$/.test(literal);
+    if (isLiteral && isBlockedAddress(literal)) {
+      return { valid: false, error: "URL host is a private, loopback, or reserved address" };
+    }
+  }
+  return { valid: true };
 }
 
 /** Validate a resource ID (alphanumeric + dash/dot/underscore). */
@@ -138,6 +207,32 @@ function validateResourceId(id: unknown): { valid: boolean; error?: string } {
   return { valid: true };
 }
 
+/**
+ * Fee reported when the live price could not be read.
+ *
+ * Deliberately a string, not a number: the point is to signal "this is the
+ * commonly configured value, not what the server charges right now". The
+ * `verificationFeeSource` field on the result says so explicitly.
+ */
+export const DEFAULT_VERIFICATION_FEE = "~0.10";
+
+/** Format a live fee for display, preserving the server's own precision. */
+function formatVerificationFee(fee: number | string): string {
+  return typeof fee === "number" ? String(fee) : fee;
+}
+
+/**
+ * Render the fee for the step list.
+ *
+ * The value is passed through unqualified: whether it is live or the default is
+ * reported structurally in `intentions.verificationFeeSource` and in
+ * `warnings`, so the agent does not have to parse prose to tell a quote from a
+ * placeholder.
+ */
+function renderFeeText(fee: string): string {
+  return fee;
+}
+
 /** Perform dry-run validation for publish. */
 export function dryRunPublish(
   input: DryRunPublishInput,
@@ -145,13 +240,52 @@ export function dryRunPublish(
   baseUrl: string,
   hasWallet: boolean,
   hasApiKey: boolean,
-  estimatedVerificationFee: string = "~0.10",
+  live: DryRunPublishLive = {},
 ): DryRunPublishResult {
   const titleVal = validateTitle(input.title);
   const priceVal = validatePrice(input.price);
   const urlVal = validateUrl(input.externalUrl);
 
   const allValid = titleVal.valid && priceVal.valid && urlVal.valid;
+
+  // A fee is only reported as live when the server actually returned one.
+  const liveFee = live.verificationFee;
+  const hasLiveFee = liveFee !== undefined && liveFee !== null && liveFee !== "";
+  const feeSource: "live" | "default" = hasLiveFee ? "live" : "default";
+  const estimatedVerificationFee = hasLiveFee
+    ? formatVerificationFee(liveFee as number | string)
+    : DEFAULT_VERIFICATION_FEE;
+  const feeText = renderFeeText(estimatedVerificationFee);
+
+  // The balance is only ever what Horizon returned. `undefined` means the read
+  // did not happen or failed, which is not the same claim as a zero balance.
+  const usdcBalance = live.usdcBalance ?? null;
+  const coversVerificationFee =
+    usdcBalance === null || !hasLiveFee ? null : Number(usdcBalance) >= Number(liveFee);
+
+  const warnings: string[] = [];
+  if (live.readError) {
+    warnings.push(
+      `Live fee and balance could not be read: ${live.readError}. Fee shown is the default, not a quote.`,
+    );
+  } else if (!hasLiveFee) {
+    warnings.push(
+      "Verification fee was not returned by /agent/status; the default is shown, not a quote.",
+    );
+  }
+  if (hasWallet && coversVerificationFee === false) {
+    warnings.push(
+      `Wallet holds ${usdcBalance} USDC, which does not cover the ${estimatedVerificationFee} USDC verification fee. Publish will create the resource but stop before verification.`,
+    );
+  }
+  if (hasWallet && usdcBalance !== null && !hasLiveFee) {
+    warnings.push(
+      "Balance was read but the fee was not, so affordability could not be determined. Check with mindvault_agent_status.",
+    );
+  }
+  if (!hasApiKey) {
+    warnings.push("No publisher API key in the active profile; run mindvault_register first.");
+  }
 
   return {
     mode: "dry-run",
@@ -164,18 +298,29 @@ export function dryRunPublish(
     intentions: {
       network,
       endpoint: `POST ${baseUrl}/resources (then verify, then register on-chain)`,
+      verificationEndpoint: `POST ${baseUrl}/verify-content (x402 payment, paid)`,
       requiresPublisherRegistration: !hasApiKey,
       estimatedVerificationFee,
+      verificationFeeSource: feeSource,
+      estimatedNetworkFeeXlm: null,
+      resourcePrice: input.price ?? null,
+      protocolFeeUsdc: estimatedVerificationFee,
+      estimatedTotalUsdc:
+        estimatedVerificationFee.replace(/[^0-9.]/g, "") || estimatedVerificationFee,
+      costSummaryKind: "estimate",
+      respectsPaymentCeiling: true,
       requiredWalletState: {
         wallet: hasWallet,
         publisherApiKey: hasApiKey,
-        usdcBalance: "Check with mindvault_wallet_info",
+        usdcBalance,
+        coversVerificationFee,
       },
     },
+    warnings,
     steps: allValid
       ? [
           "1. Create resource record via POST /resources",
-          `2. Sign x402 payment for verification (${estimatedVerificationFee} USDC)`,
+          `2. Sign x402 payment for verification (${feeText} USDC)`,
           "3. Submit payment-signed request to POST /verify-content",
           "4. Await AI verification result (isOriginal flag)",
           "5. If approved, trigger on-chain registration (best-effort)",
@@ -194,6 +339,11 @@ export function dryRunBuy(
   estimatedPrice: string | null = null,
 ): DryRunBuyResult {
   const idVal = validateResourceId(resourceId);
+  const resourcePrice = estimatedPrice ?? null;
+  const estimatedTotalUsdc =
+    resourcePrice && resourcePrice !== "Fetch from mindvault_preview before buying"
+      ? resourcePrice
+      : null;
 
   return {
     mode: "dry-run",
@@ -205,7 +355,13 @@ export function dryRunBuy(
     intentions: {
       network,
       endpoint: `GET ${baseUrl}/resources/${resourceId} (with x402 payment proof)`,
-      estimatedPrice: estimatedPrice ?? "Fetch from mindvault_preview before buying",
+      estimatedPrice: resourcePrice ?? "Fetch from mindvault_preview before buying",
+      estimatedNetworkFeeXlm: null,
+      resourcePrice,
+      protocolFeeUsdc: null,
+      estimatedTotalUsdc,
+      costSummaryKind: "estimate",
+      respectsPaymentCeiling: true,
       requiredWalletState: {
         wallet: hasWallet,
         usdcBalance: "Must be >= estimated price",

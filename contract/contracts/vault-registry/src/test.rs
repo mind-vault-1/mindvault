@@ -322,10 +322,14 @@ fn register_batch_handles_empty_batch() {
     let (env, creator, client) = setup();
 
     let items = Vec::new(&env);
-    let result = client.register_batch(&creator, &items);
-
-    assert_eq!(result.succeeded.len(), 0);
-    assert_eq!(result.failed.len(), 0);
+    // An empty batch is now rejected with BatchTooLarge to prevent callers
+    // from silently succeeding on an unintended no-op (#1014).
+    let res = client.try_register_batch(&creator, &items);
+    assert_eq!(
+        res,
+        Err(Ok(Error::BatchTooLarge)),
+        "empty register_batch must be rejected, not silently succeed"
+    );
 }
 
 #[test]
@@ -361,6 +365,174 @@ fn register_batch_with_content_hashes() {
 
     let r1 = client.get(&String::from_str(&env, "batch1"));
     assert_eq!(r1.content_hash, None);
+}
+
+// ─── register_batch within-batch duplicate ids (#967) ─────────────────────
+
+#[test]
+fn register_batch_rejects_duplicate_ids_within_batch() {
+    let (env, creator, client) = setup();
+
+    let mut items = Vec::new(&env);
+    for _ in 0..2 {
+        items.push_back(BatchRegisterItem {
+            id: String::from_str(&env, "dup0"),
+            price: 100i128,
+            metadata: String::from_str(&env, "ipfs://QmDup"),
+            tags: empty_tags(&env),
+            content_hash: None,
+        });
+    }
+
+    let res = client.try_register_batch(&creator, &items);
+    assert_eq!(
+        res,
+        Err(Ok(Error::AlreadyRegistered)),
+        "a repeated id inside one register_batch call must abort with a stable error"
+    );
+
+    // No partial effects: the id was not registered, and the counter is intact.
+    assert!(!client.exists(&String::from_str(&env, "dup0")));
+    assert_eq!(client.count(), 0);
+}
+
+#[test]
+fn register_batch_duplicate_ids_leave_no_events() {
+    let (env, creator, client) = setup();
+
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "dup1"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmA"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "dup1"),
+        price: 200i128,
+        metadata: String::from_str(&env, "ipfs://QmB"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+
+    let res = client.try_register_batch(&creator, &items);
+    assert_eq!(res, Err(Ok(Error::AlreadyRegistered)));
+    // A rejected call must not emit register events.
+    assert_eq!(env.events().all().len(), 0);
+}
+
+#[test]
+fn register_batch_rejects_duplicates_even_when_other_items_valid() {
+    let (env, creator, client) = setup();
+
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "good0"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmGood"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "dup2"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmDup"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "dup2"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmDup"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+
+    let res = client.try_register_batch(&creator, &items);
+    assert_eq!(res, Err(Ok(Error::AlreadyRegistered)));
+    // The valid sibling is also left unregistered — the whole call is atomic
+    // with respect to within-batch duplicate detection.
+    assert!(!client.exists(&String::from_str(&env, "good0")));
+    assert!(!client.exists(&String::from_str(&env, "dup2")));
+    assert_eq!(client.count(), 0);
+}
+
+#[test]
+fn register_batch_allows_distinct_ids_as_before() {
+    let (env, creator, client) = setup();
+
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "dist0"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://Qm0"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "dist1"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://Qm1"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+
+    let result = client.register_batch(&creator, &items);
+    assert_eq!(result.succeeded.len(), 2);
+    assert_eq!(result.failed.len(), 0);
+    assert_eq!(client.count(), 2);
+}
+
+// ─── register_batch listing-default parity (#773) ─────────────────────────
+
+#[test]
+fn register_batch_contract_paused_aborts_entire_batch() {
+    // ContractPaused must be a hard abort for register_batch, identical to the
+    // single-register path.  It must NOT be silently swallowed as a per-item
+    // failure, which would diverge from the single-register contract.
+    let (env, creator, admin, client) = setup_with_admin();
+
+    // Pre-register one item so the batch has something before the paused item.
+    client.register(
+        &creator,
+        &String::from_str(&env, "beforepause"),
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &empty_tags(&env),
+    );
+
+    // Pause the contract after the pre-registration.
+    client.set_paused(&admin, &true);
+
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "paused0"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmBatch"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "paused1"),
+        price: 100i128,
+        metadata: String::from_str(&env, "ipfs://QmBatch"),
+        tags: empty_tags(&env),
+        content_hash: None,
+    });
+
+    // The batch itself is rejected immediately with ContractPaused, not a
+    // partial result with per-item failures.
+    let res = client.try_register_batch(&creator, &items);
+    assert_eq!(
+        res,
+        Err(Ok(Error::ContractPaused)),
+        "register_batch must abort with ContractPaused, not return a partial result"
+    );
+
+    // Neither item was registered.
+    assert!(!client.exists(&String::from_str(&env, "paused0")));
+    assert!(!client.exists(&String::from_str(&env, "paused1")));
 }
 
 #[test]
@@ -1024,6 +1196,19 @@ fn set_price_many_rejects_oversized_batches() {
     assert_eq!(
         client.try_set_price_many(&creator, &updates),
         Err(Ok(Error::BatchTooLarge))
+    );
+}
+
+#[test]
+fn set_price_many_rejects_empty_batch() {
+    // An empty batch is rejected with BatchTooLarge to prevent callers from
+    // silently succeeding on an unintended no-op (#1014).
+    let (env, creator, client) = setup();
+    let updates: Vec<BatchPriceUpdate> = Vec::new(&env);
+    assert_eq!(
+        client.try_set_price_many(&creator, &updates),
+        Err(Ok(Error::BatchTooLarge)),
+        "empty set_price_many must be rejected, not silently succeed"
     );
 }
 
@@ -2417,6 +2602,10 @@ fn admin_transfer_nominate_then_accept() {
         Some(env.ledger().sequence() + ADMIN_NOMINATION_DURATION)
     );
 
+    // Advance past the mandatory gap before accepting.
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ADMIN_NOMINATION_MIN_GAP);
+
     // Accept admin nomination
     client.accept_admin(&new_admin);
     assert_eq!(client.admin(), Some(new_admin));
@@ -2437,7 +2626,12 @@ fn expired_admin_nomination_can_be_replaced() {
     env.ledger().set_sequence_number(expiry);
 
     assert_eq!(client.try_nominate_new_admin(&replacement), Ok(Ok(())));
-    assert_eq!(client.pending_admin(), Some(replacement));
+    assert_eq!(client.pending_admin(), Some(replacement.clone()));
+    assert!(client.pending_admin_expiry().unwrap() > expiry);
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ADMIN_NOMINATION_MIN_GAP);
+    client.accept_admin(&replacement);
+    assert_eq!(client.admin(), Some(replacement));
 }
 
 #[test]
@@ -2469,6 +2663,11 @@ fn accept_admin_rejects_wrong_caller() {
     client.nominate_new_admin(&admin);
     client.nominate_new_admin(&pending);
 
+    // Advance past the gap so the wrong-caller check, not the too-soon check,
+    // is what fires.
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ADMIN_NOMINATION_MIN_GAP);
+
     assert_eq!(
         client.try_accept_admin(&wrong),
         Err(Ok(Error::PendingAdminNotSet))
@@ -2486,6 +2685,105 @@ fn accept_admin_without_pending_returns_not_set() {
         client.try_accept_admin(&caller),
         Err(Ok(Error::AdminNominationExpired))
     );
+}
+
+// ─── Ledger-gap enforcement (#ledger-gap) ───────────────────────────────────
+
+#[test]
+fn accept_admin_before_gap_returns_nomination_expired() {
+    let (env, _creator, client) = setup();
+    let admin = Address::generate(&env);
+    let pending = Address::generate(&env);
+
+    client.nominate_new_admin(&admin);
+    client.nominate_new_admin(&pending);
+
+    // One ledger short of the required gap must still be rejected.
+    let nominated_at = env.ledger().sequence();
+    env.ledger()
+        .set_sequence_number(nominated_at + ADMIN_NOMINATION_MIN_GAP - 1);
+
+    assert_eq!(
+        client.try_accept_admin(&pending),
+        Err(Ok(Error::AdminNominationExpired)),
+        "accept_admin must be rejected before ADMIN_NOMINATION_MIN_GAP ledgers have elapsed"
+    );
+    // Admin unchanged.
+    assert_eq!(client.admin(), Some(admin));
+    assert_eq!(client.pending_admin(), Some(pending));
+}
+
+#[test]
+fn accept_admin_at_exact_gap_succeeds() {
+    let (env, _creator, client) = setup();
+    let admin = Address::generate(&env);
+    let pending = Address::generate(&env);
+
+    client.nominate_new_admin(&admin);
+    client.nominate_new_admin(&pending);
+
+    let nominated_at = env.ledger().sequence();
+    // Exactly at the gap boundary: nominated_at + MIN_GAP is the first valid ledger.
+    env.ledger()
+        .set_sequence_number(nominated_at + ADMIN_NOMINATION_MIN_GAP);
+
+    assert_eq!(client.try_accept_admin(&pending), Ok(Ok(())));
+    assert_eq!(client.admin(), Some(pending));
+    assert_eq!(client.pending_admin(), None);
+}
+
+#[test]
+fn accept_admin_same_ledger_as_nominate_is_rejected() {
+    let (env, _creator, client) = setup();
+    let admin = Address::generate(&env);
+    let pending = Address::generate(&env);
+
+    client.nominate_new_admin(&admin);
+    client.nominate_new_admin(&pending);
+
+    // No ledger advance — same block as the nomination.
+    assert_eq!(
+        client.try_accept_admin(&pending),
+        Err(Ok(Error::AdminNominationExpired)),
+        "nominate + accept in the same ledger must be rejected"
+    );
+    assert_eq!(client.admin(), Some(admin));
+}
+
+#[test]
+fn nominated_at_is_cleared_after_successful_accept() {
+    let (env, _creator, client) = setup();
+    let admin = Address::generate(&env);
+    let first_pending = Address::generate(&env);
+    let second_pending = Address::generate(&env);
+
+    client.nominate_new_admin(&admin);
+    client.nominate_new_admin(&first_pending);
+
+    let first_nominated_at = env.ledger().sequence();
+    env.ledger()
+        .set_sequence_number(first_nominated_at + ADMIN_NOMINATION_MIN_GAP);
+    client.accept_admin(&first_pending);
+    assert_eq!(client.admin(), Some(first_pending.clone()));
+
+    // New admin nominates again; the gap is measured from this new nomination,
+    // not from the previous one.
+    client.nominate_new_admin(&second_pending);
+    let second_nominated_at = env.ledger().sequence();
+
+    // One ledger short of gap from second nomination — must be rejected.
+    env.ledger()
+        .set_sequence_number(second_nominated_at + ADMIN_NOMINATION_MIN_GAP - 1);
+    assert_eq!(
+        client.try_accept_admin(&second_pending),
+        Err(Ok(Error::AdminNominationExpired))
+    );
+
+    // Advance to the exact gap boundary — must now succeed.
+    env.ledger()
+        .set_sequence_number(second_nominated_at + ADMIN_NOMINATION_MIN_GAP);
+    assert_eq!(client.try_accept_admin(&second_pending), Ok(Ok(())));
+    assert_eq!(client.admin(), Some(second_pending));
 }
 
 #[test]
@@ -2534,7 +2832,10 @@ fn bootstrap_followed_by_second_nominate_uses_two_step_path() {
     assert_eq!(client.admin(), Some(initial_admin.clone())); // admin unchanged
     assert_eq!(client.pending_admin(), Some(second.clone())); // pending set
 
-    // The pending admin must accept before becoming admin.
+    // The pending admin must accept before becoming admin, and only after
+    // the mandatory ledger gap has elapsed.
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ADMIN_NOMINATION_MIN_GAP);
     client.accept_admin(&second);
     assert_eq!(client.admin(), Some(second));
     assert_eq!(client.pending_admin(), None);
@@ -2574,7 +2875,10 @@ fn bootstrap_cannot_overwrite_existing_admin() {
     assert_eq!(client.admin(), Some(first_admin.clone())); // still first_admin
     assert_eq!(client.pending_admin(), Some(hijacker.clone()));
 
-    // Only accept_admin by the pending admin finalizes the transfer.
+    // Only accept_admin by the pending admin finalizes the transfer, and only
+    // after the mandatory ledger gap has elapsed.
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ADMIN_NOMINATION_MIN_GAP);
     client.accept_admin(&hijacker);
     assert_eq!(client.admin(), Some(hijacker));
 }
@@ -3913,15 +4217,39 @@ fn repair_tag_index_emits_retagidx_event() {
     );
 }
 
+/// Regression test for #778: an empty id list must not report a repair.
+///
+/// The old behavior emitted `retagidx` with a count of `0`, which read to
+/// operators and audit tooling as "a repair ran and covered 0 resources" —
+/// indistinguishable from a real repair of an empty catalog. It now returns
+/// `Ok` without emitting, so "no `retagidx` event" is an unambiguous "no repair
+/// performed".
 #[test]
-fn repair_tag_index_with_empty_id_list_emits_event() {
-    let (env, _creator, _admin, client) = setup_with_admin();
+fn repair_tag_index_with_empty_id_list_is_a_silent_no_op() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let a = register_tagged(&env, &creator, &client, "emptyrepair", &["keepme"]);
+
+    // Seed a real index entry so we can prove the empty call leaves it intact.
+    let keepme = String::from_str(&env, "keepme");
+    assert_eq!(client.list_by_tag(&keepme, &0u32, &20u32).len(), 1);
+
     client.repair_tag_index(&Vec::new(&env));
-    let all = env.events().all();
-    assert_eq!(all.len(), 1);
-    let (_, _, data) = all.get(0).unwrap();
-    let count: u32 = u32::try_from_val(&env, &data).unwrap();
-    assert_eq!(count, 0u32);
+
+    assert_eq!(
+        env.events().all().len(),
+        0,
+        "an empty id list must not emit `retagidx`: the event is the audit \
+         signal that a repair ran, and a 0-count event would falsely assert one"
+    );
+
+    let survivors = client.list_by_tag(&keepme, &0u32, &20u32);
+    assert_eq!(
+        survivors.len(),
+        1,
+        "an empty id list must not truncate the tag index — nothing is indexed, \
+         so every existing TagIndex entry has to survive untouched"
+    );
+    assert_eq!(survivors.get(0).unwrap().id, a);
 }
 
 #[test]
@@ -4054,6 +4382,33 @@ fn set_terms_hash_accepts_max_length() {
 
     client.set_terms_hash(&creator, &terms);
     assert_eq!(client.get_terms_hash(&creator), terms);
+}
+
+#[test]
+fn set_terms_hash_validates_byte_length_not_character_count() {
+    // The limit is 64 bytes (for hex-encoded hashes like SHA-256 = 64 hex chars).
+    // Multi-byte UTF-8 characters count as multiple bytes, so a 64-char
+    // multi-byte string exceeds the limit and is rejected.
+    let (env, creator, client) = setup();
+
+    // 64 ASCII chars = 64 bytes = valid (hex hash length)
+    let ascii_64 = String::from_str(&env, &"a".repeat(64));
+    client.set_terms_hash(&creator, &ascii_64);
+    assert_eq!(client.get_terms_hash(&creator), ascii_64);
+
+    // 64 multi-byte chars (e.g., emoji = 4 bytes each) = 256 bytes = rejected
+    let creator2 = Address::generate(&env);
+    let multibyte_64 = String::from_str(&env, &"😀".repeat(64));
+    assert_eq!(
+        client.try_set_terms_hash(&creator2, &multibyte_64),
+        Err(Ok(Error::TermsHashTooLong))
+    );
+
+    // 16 multi-byte chars = 64 bytes = valid (but not a typical hash)
+    let creator3 = Address::generate(&env);
+    let multibyte_16 = String::from_str(&env, &"😀".repeat(16));
+    client.set_terms_hash(&creator3, &multibyte_16);
+    assert_eq!(client.get_terms_hash(&creator3), multibyte_16);
 }
 
 // Admin bootstrap/uninitialized-state behavior is covered by
@@ -4435,6 +4790,24 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.transfer_ownership(&r1, &bob);
     record(&env, &client, &mut observed);
 
+    // #808: transfer_ownership_with_terms — emits both `transfer` and `txfrterms`
+    let r1b = String::from_str(&env, "schemar1b");
+    client.register(
+        &alice,
+        &r1b,
+        &100i128,
+        &String::from_str(&env, "ipfs://mterms"),
+        &empty_tags(&env),
+    );
+    record(&env, &client, &mut observed);
+    client.transfer_ownership_with_terms(
+        &r1b,
+        &bob,
+        &Some(String::from_str(&env, "newtermshash")),
+        &false,
+    ); // -> "transfer", "txfrterms", "setterms"
+    record(&env, &client, &mut observed);
+
     let r2 = String::from_str(&env, "schemar2");
     client.register(
         &alice,
@@ -4457,6 +4830,18 @@ fn full_workflow_emits_exactly_the_documented_events() {
     // `pause_until`).
     client.set_royalty_recipient(&r1, &Some(bob.clone())); // -> "setroyal"
     record(&env, &client, &mut observed);
+    client.set_metadata_pointers(
+        &r1,
+        &Vec::from_array(
+            &env,
+            [
+                String::from_str(&env, "ipfs://m"),
+                String::from_str(&env, "ar://mirror"),
+            ],
+        ),
+        &0,
+    ); // -> "setptrs"
+    record(&env, &client, &mut observed);
 
     let admin1 = Address::generate(&env);
     client.nominate_new_admin(&admin1); // bootstrap -> "setadmin"
@@ -4464,7 +4849,19 @@ fn full_workflow_emits_exactly_the_documented_events() {
     let admin2 = Address::generate(&env);
     client.nominate_new_admin(&admin2); // rotation -> "nomadmin"
     record(&env, &client, &mut observed);
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ADMIN_NOMINATION_MIN_GAP);
     client.accept_admin(&admin2);
+    record(&env, &client, &mut observed);
+
+    // Nominate then cancel a pending admin nomination (#980) -> "nomcncl".
+    let canceled = Address::generate(&env);
+    client.nominate_new_admin(&canceled);
+    record(&env, &client, &mut observed);
+    client.cancel_admin_nomination(&admin2);
+    record(&env, &client, &mut observed);
+
+    client.set_registry_terms_hash(&String::from_str(&env, "regterms")); // -> "setregt"
     record(&env, &client, &mut observed);
 
     // Verifier role, verification mirror, freeze, and index repair.
@@ -4506,6 +4903,19 @@ fn full_workflow_emits_exactly_the_documented_events() {
         &String::from_str(&env, "sha256anchor2"),
     )); // -> "anchrfail"
     record(&env, &client, &mut observed);
+    // Keep retrying past the back-off window until the pair's attempt cap is
+    // reached; the attempt that reaches it also emits "anchrxhst".
+    for _ in 1..MAX_ANCHOR_ATTEMPTS {
+        env.ledger()
+            .set_sequence_number(env.ledger().sequence() + ANCHOR_RETRY_BACKOFF_LEDGERS);
+        assert!(!client.attempt_anchor_purchase_receipt(
+            &verifier,
+            &r0,
+            &buyer,
+            &String::from_str(&env, "sha256anchor2"),
+        )); // -> "anchrfail" (+ "anchrxhst" on the last one)
+        record(&env, &client, &mut observed);
+    }
     client.remove_verifier(&verifier); // -> "rmverif"
     record(&env, &client, &mut observed);
 
@@ -4515,6 +4925,18 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.open_dispute(&r2, &admin2); // -> "lifecycle"
     record(&env, &client, &mut observed);
     client.resolve_dispute(&r2, &admin2, &ResourceState::Frozen); // -> "lifecycle"
+    record(&env, &client, &mut observed);
+
+    // Admin emergency takedown. This is the only path that emits `emdelist` —
+    // a creator delist above emitted `setlisted` instead — so the workflow has
+    // to exercise it for the event-schema drift check to see every topic.
+    client.open_dispute(&r1, &admin2);
+    record(&env, &client, &mut observed);
+    client.emergency_delist(
+        &r1,
+        &admin2,
+        &String::from_str(&env, "workflow emergency takedown"),
+    ); // -> "emdelist"
     record(&env, &client, &mut observed);
     client.extend_resource_ttl(&bob, &r0); // -> "ttlext"
     record(&env, &client, &mut observed);
@@ -4531,6 +4953,9 @@ fn full_workflow_emits_exactly_the_documented_events() {
 
     let payer = Address::generate(&env);
     let workflow_receipt = String::from_str(&env, "wfrcpt1");
+    // Payments require a listed resource; r0 was delisted above.
+    client.set_listed(&r0, &true); // -> "setlisted"
+    record(&env, &client, &mut observed);
     client.record_payment(
         &settler,
         &workflow_receipt,
@@ -4542,6 +4967,20 @@ fn full_workflow_emits_exactly_the_documented_events() {
     record(&env, &client, &mut observed);
     client.settle_payment(&settler, &workflow_receipt); // -> "settle"
     record(&env, &client, &mut observed);
+    // Time-limited access leases: buy (pending), settle, revoke.
+    let lease_amount = client.lease_price(&r0, &LeaseTier::Hour);
+    client.buy_lease(
+        &bob,
+        &r0,
+        &LeaseTier::Hour,
+        &lease_amount,
+        &String::from_str(&env, "leasetx0"),
+    ); // -> "lease"
+    record(&env, &client, &mut observed);
+    client.settle_lease(&settler, &r0, &bob); // -> "leasesetl"
+    record(&env, &client, &mut observed);
+    client.revoke_lease(&r0, &bob); // -> "leaserevk"
+    record(&env, &client, &mut observed);
     client.remove_settler(&settler); // -> "rmsettlr"
     record(&env, &client, &mut observed);
 
@@ -4550,6 +4989,8 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.set_paused_until(&admin2, &200); // -> "pause", "pause_until"
     record(&env, &client, &mut observed);
     client.set_paused(&admin2, &false);
+    record(&env, &client, &mut observed);
+    client.set_maintenance_status(&admin2, &MaintenanceKind::Scheduled, &1u32); // -> "mntstat"
     record(&env, &client, &mut observed);
 
     // Network bootstrap and the creator reactivation path round out the
@@ -4571,6 +5012,13 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.unflag_resource(&r0, &moderator); // -> "unflag"
     record(&env, &client, &mut observed);
     client.remove_moderator(&moderator); // -> "rmmod"
+    record(&env, &client, &mut observed);
+
+    // Recovery admin (dual-key bootstrap path).
+    let recovery = Address::generate(&env);
+    client.set_recovery_admin(&Some(recovery.clone())); // -> "setrecov"
+    record(&env, &client, &mut observed);
+    client.recover_admin(&Address::generate(&env)); // -> "recover"
     record(&env, &client, &mut observed);
 
     observed.sort();
@@ -4613,6 +5061,55 @@ fn fee_amount_calculation_truncates_fractional_stroops() {
 fn fee_amount_calculation_handles_maximum_rate_and_large_amount() {
     assert_eq!(fee_amount(1_000_000, MAX_FEE_BPS), 500_000);
     assert_eq!(fee_amount(MAX_PRICE, MAX_FEE_BPS), 500_000_000_000_000_000);
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    #[test]
+    fn cumulative_refunds_never_exceed_payment(
+        payment_amount in 10_000i128..1_000_000_000i128,
+        refund_bps in 1u32..=10_000u32,
+    ) {
+        let (env, creator, _admin, settler, client) = setup_with_settler();
+        let id = register_priced(&env, &creator, &client, "refundprp", payment_amount);
+        let payer = Address::generate(&env);
+        let payment_id = String::from_str(&env, "payprop01");
+        let first_refund = payment_amount * i128::from(refund_bps) / i128::from(FEE_BPS_DENOM);
+
+        client.record_payment(
+            &settler,
+            &payment_id,
+            &id,
+            &payer,
+            &payment_amount,
+            &String::from_str(&env, "paytxprop01"),
+        );
+        client.settle_payment(&settler, &payment_id);
+        client.record_creator_refund(
+            &creator,
+            &String::from_str(&env, "refundprop1"),
+            &payment_id,
+            &payer,
+            &first_refund,
+            &String::from_str(&env, "reftxprop01"),
+        );
+
+        let excess = payment_amount - first_refund + 1;
+        prop_assert_eq!(
+            client.try_record_creator_refund(
+                &creator,
+                &String::from_str(&env, "refundprop2"),
+                &payment_id,
+                &payer,
+                &excess,
+                &String::from_str(&env, "reftxprop02"),
+            ),
+            Err(Ok(Error::PaymentAmountMismatch)),
+        );
+        prop_assert!(client.get_refunded_amount(&payment_id) <= payment_amount);
+        prop_assert_eq!(client.get_refunded_amount(&payment_id), first_refund);
+    }
 }
 
 #[test]
@@ -5387,7 +5884,7 @@ fn admin_can_emergency_delist_disputed_resource() {
     let id = register_default(&env, &creator, &client, "emerdelist");
 
     client.open_dispute(&id, &admin);
-    client.emergency_delist(&id, &admin);
+    client.emergency_delist(&id, &admin, &String::from_str(&env, "dispute upheld"));
 
     let resource = client.get(&id);
     assert_eq!(resource.state, ResourceState::Delisted);
@@ -5402,17 +5899,89 @@ fn emergency_delist_requires_current_admin_and_disputed_state() {
     let stranger = Address::generate(&env);
 
     assert_eq!(
-        client.try_emergency_delist(&id, &stranger),
+        client.try_emergency_delist(&id, &stranger, &String::from_str(&env, "dispute upheld")),
         Err(Ok(Error::Unauthorized))
     );
     assert_eq!(
-        client.try_emergency_delist(&id, &admin),
+        client.try_emergency_delist(&id, &admin, &String::from_str(&env, "dispute upheld")),
         Err(Ok(Error::InvalidLifecycleTransition))
     );
 
     client.open_dispute(&id, &admin);
-    client.emergency_delist(&id, &admin);
+    client.emergency_delist(&id, &admin, &String::from_str(&env, "dispute upheld"));
     assert_eq!(client.get(&id).state, ResourceState::Delisted);
+}
+
+/// Regression test for #779: an admin emergency delist must be attributable
+/// at the event boundary.
+///
+/// Before this, `emergency_delist` emitted no event at all, so an indexer could
+/// not tell an admin takedown from a creator delist without re-reading state.
+/// The payload must carry the acting admin and the caller's reason verbatim.
+#[test]
+fn emergency_delist_emits_event_with_acting_admin_and_reason() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "emdelistevt");
+    let contract_id = client.address.clone();
+
+    client.open_dispute(&id, &admin);
+    client.emergency_delist(
+        &id,
+        &admin,
+        &String::from_str(&env, "counterfeit listing, dispute upheld"),
+    );
+
+    let payload: EmergencyDelistEvent =
+        find_event(&env, &contract_id, "emdelist").expect("emdelist must be emitted");
+    assert_eq!(
+        payload.id, id,
+        "payload must identify the delisted resource"
+    );
+    assert_eq!(
+        payload.admin, admin,
+        "payload must name the admin who acted, so the takedown is attributable"
+    );
+    assert_eq!(
+        payload.reason,
+        String::from_str(&env, "counterfeit listing, dispute upheld"),
+        "payload must carry the admin's stated reason verbatim"
+    );
+}
+
+/// The event topic itself is the discriminator: a creator delist emits
+/// `setlisted` and no `emdelist`, and an admin takedown emits `emdelist` and no
+/// `setlisted`. An indexer keying on topic can therefore never confuse the two.
+#[test]
+fn emergency_delist_and_creator_delist_are_distinguishable_by_topic() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let contract_id = client.address.clone();
+
+    // Creator-initiated delist.
+    let creator_id = register_default(&env, &creator, &client, "emdelistcrea");
+    client.delist(&creator_id);
+    assert!(
+        find_event::<EmergencyDelistEvent>(&env, &contract_id, "emdelist").is_none(),
+        "a creator delist must not emit `emdelist`"
+    );
+    assert!(
+        find_event::<(bool, bool)>(&env, &contract_id, "setlisted").is_some(),
+        "a creator delist emits `setlisted`"
+    );
+
+    // Admin-initiated emergency delist on a separate resource.
+    let admin_id = register_default(&env, &creator, &client, "emdelistadmn");
+    client.open_dispute(&admin_id, &admin);
+    client.emergency_delist(&admin_id, &admin, &String::from_str(&env, "abuse"));
+
+    assert!(
+        find_event::<EmergencyDelistEvent>(&env, &contract_id, "emdelist").is_some(),
+        "an admin emergency delist must emit `emdelist`"
+    );
+
+    // Both resources end up `Delisted`, so state alone cannot tell them apart —
+    // only the event stream can. That is the bug this fixes.
+    assert_eq!(client.get(&creator_id).state, ResourceState::Delisted);
+    assert_eq!(client.get(&admin_id).state, ResourceState::Delisted);
 }
 
 #[test]
@@ -5995,6 +6564,327 @@ fn frozen_resource_still_allows_price_listing_tags_and_ownership_mutations() {
     assert!(client.get(&id).frozen);
 }
 
+// ─── update_metadata_many (#968) and freeze invariants (#969) ─────────────
+
+#[test]
+fn update_metadata_many_updates_owned_resources() {
+    let (env, creator, client) = setup();
+    let id_a = register_default(&env, &creator, &client, "umma");
+    let id_b = register_default(&env, &creator, &client, "ummb");
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchMetadataUpdate {
+        id: id_a.clone(),
+        metadata: String::from_str(&env, "ipfs://newa"),
+    });
+    updates.push_back(BatchMetadataUpdate {
+        id: id_b.clone(),
+        metadata: String::from_str(&env, "ipfs://newb"),
+    });
+
+    client.update_metadata_many(&creator, &updates);
+    assert_eq!(
+        client.get(&id_a).metadata,
+        String::from_str(&env, "ipfs://newa")
+    );
+    assert_eq!(
+        client.get(&id_b).metadata,
+        String::from_str(&env, "ipfs://newb")
+    );
+}
+
+#[test]
+fn update_metadata_many_is_atomic_on_validation_failure() {
+    let (env, creator, client) = setup();
+    let id_a = register_default(&env, &creator, &client, "umaa");
+    let id_b = register_default(&env, &creator, &client, "umab");
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchMetadataUpdate {
+        id: id_a.clone(),
+        metadata: String::from_str(&env, "ipfs://good"),
+    });
+    updates.push_back(BatchMetadataUpdate {
+        id: id_b.clone(),
+        metadata: String::from_str(&env, "badprefix://nope"),
+    });
+
+    let res = client.try_update_metadata_many(&creator, &updates);
+    assert!(res.is_err(), "invalid pointer must fail the whole batch");
+    // No writes: both resources keep their original pointers.
+    assert_eq!(
+        client.get(&id_a).metadata,
+        String::from_str(&env, "ipfs://m")
+    );
+    assert_eq!(
+        client.get(&id_b).metadata,
+        String::from_str(&env, "ipfs://m")
+    );
+}
+
+#[test]
+fn update_metadata_many_rejects_frozen_resource() {
+    let (env, creator, client) = setup();
+    let id_ok = register_default(&env, &creator, &client, "umfo");
+    let id_frozen = register_default(&env, &creator, &client, "umff");
+    client.freeze_metadata(&id_frozen);
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchMetadataUpdate {
+        id: id_ok.clone(),
+        metadata: String::from_str(&env, "ipfs://ok"),
+    });
+    updates.push_back(BatchMetadataUpdate {
+        id: id_frozen.clone(),
+        metadata: String::from_str(&env, "ipfs://nope"),
+    });
+
+    let res = client.try_update_metadata_many(&creator, &updates);
+    assert_eq!(res, Err(Ok(Error::MetadataFrozen)));
+    // Atomic: the unfrozen sibling is also untouched.
+    assert_eq!(
+        client.get(&id_ok).metadata,
+        String::from_str(&env, "ipfs://m")
+    );
+}
+
+#[test]
+fn update_metadata_many_rejects_content_hash_resource() {
+    let (env, creator, client) = setup();
+    let id = String::from_str(&env, "umch");
+    client.register_with_hash(
+        &creator,
+        &id,
+        &100i128,
+        &String::from_str(&env, "ipfs://bound"),
+        &empty_tags(&env),
+        &Some(String::from_str(&env, "sha256:abcd1234")),
+    );
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchMetadataUpdate {
+        id: id.clone(),
+        metadata: String::from_str(&env, "ipfs://divergent"),
+    });
+
+    let res = client.try_update_metadata_many(&creator, &updates);
+    assert_eq!(res, Err(Ok(Error::MetadataFrozen)));
+}
+
+#[test]
+fn update_metadata_many_rejects_unauthorized_creator() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "umua");
+    let stranger = Address::generate(&env);
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchMetadataUpdate {
+        id,
+        metadata: String::from_str(&env, "ipfs://x"),
+    });
+
+    let res = client.try_update_metadata_many(&stranger, &updates);
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn update_metadata_many_rejects_oversized_batch() {
+    let (env, creator, client) = setup();
+    let mut updates = Vec::new(&env);
+    for i in 0..11u32 {
+        updates.push_back(BatchMetadataUpdate {
+            id: String::from_str(&env, "x"),
+            metadata: String::from_str(&env, "ipfs://m"),
+        });
+        let _ = i;
+    }
+    let res = client.try_update_metadata_many(&creator, &updates);
+    assert_eq!(res, Err(Ok(Error::BatchTooLarge)));
+}
+
+#[test]
+fn update_metadata_many_rejects_empty_batch() {
+    // An empty batch is rejected with BatchTooLarge to prevent callers from
+    // silently succeeding on an unintended no-op (#1014).
+    let (env, creator, client) = setup();
+    let updates: Vec<BatchMetadataUpdate> = Vec::new(&env);
+    let res = client.try_update_metadata_many(&creator, &updates);
+    assert_eq!(
+        res,
+        Err(Ok(Error::BatchTooLarge)),
+        "empty update_metadata_many must be rejected, not silently succeed"
+    );
+}
+
+#[test]
+fn update_metadata_many_emits_no_events_on_rejection() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "umne");
+    client.freeze_metadata(&id);
+
+    let mut updates = Vec::new(&env);
+    updates.push_back(BatchMetadataUpdate {
+        id,
+        metadata: String::from_str(&env, "ipfs://nope"),
+    });
+    let res = client.try_update_metadata_many(&creator, &updates);
+    assert_eq!(res, Err(Ok(Error::MetadataFrozen)));
+    // Rejected call must not emit update (`updmeta`) events.
+    let all = env.events().all();
+    let mut has_updmeta = false;
+    for i in 0..all.len() {
+        let (_, topics, _) = all.get(i).unwrap();
+        if topics.len() >= 2 {
+            let t0: soroban_sdk::Symbol = <soroban_sdk::Symbol as soroban_sdk::TryFromVal<
+                Env,
+                soroban_sdk::Val,
+            >>::try_from_val(
+                &env, &topics.get(0).unwrap()
+            )
+            .ok()
+            .unwrap();
+            if t0 == soroban_sdk::symbol_short!("updmeta") {
+                has_updmeta = true;
+            }
+        }
+    }
+    assert!(
+        !has_updmeta,
+        "rejected update_metadata_many must not emit updmeta"
+    );
+}
+
+#[test]
+fn frozen_resource_rejects_set_metadata_pointers_divergent_primary() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "fspd");
+    client.freeze_metadata(&id);
+
+    let pointers = Vec::from_array(
+        &env,
+        [
+            String::from_str(&env, "ipfs://newprimary"),
+            String::from_str(&env, "ar://mirror"),
+        ],
+    );
+    let res = client.try_set_metadata_pointers(&id, &pointers, &0);
+    assert_eq!(res, Err(Ok(Error::MetadataFrozen)));
+    assert_eq!(client.get(&id).metadata, String::from_str(&env, "ipfs://m"));
+}
+
+#[test]
+fn frozen_resource_set_metadata_pointers_same_primary_is_noop() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "fsps");
+    let orig = client.get(&id).metadata.clone();
+    client.freeze_metadata(&id);
+
+    // Re-publishing mirrors with the same primary is the documented no-op.
+    let pointers = Vec::from_array(&env, [orig.clone(), String::from_str(&env, "ar://mirror")]);
+    client.set_metadata_pointers(&id, &pointers, &0);
+    assert_eq!(client.get(&id).metadata, orig);
+    assert!(client.get(&id).frozen);
+}
+
+// ─── state_digest (#966) ──────────────────────────────────────────────────
+
+#[test]
+fn state_digest_is_deterministic_for_same_state() {
+    let (env, creator, client) = setup();
+    let _id = register_default(&env, &creator, &client, "dga");
+    let _id2 = register_default(&env, &creator, &client, "dgb");
+
+    let page1 = client.state_digest(&0, &20);
+    let page2 = client.state_digest(&0, &20);
+    assert_eq!(page1.page_hash, page2.page_hash);
+    assert_eq!(page1.encoding_version, STATE_DIGEST_ENCODING_VERSION);
+    assert_eq!(page1.total, 2);
+}
+
+#[test]
+fn state_digest_changes_when_state_changes() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "dgc");
+
+    let before = client.state_digest(&0, &20);
+    client.set_price(&id, &999i128);
+    let after = client.state_digest(&0, &20);
+    assert_ne!(before.page_hash, after.page_hash);
+}
+
+#[test]
+fn state_digest_paginates_with_next_cursor() {
+    let (env, creator, client) = setup();
+    for name in ["dgp0", "dgp1", "dgp2", "dgp3", "dgp4"] {
+        register_default(&env, &creator, &client, name);
+    }
+
+    let page = client.state_digest(&0, &2);
+    assert_eq!(page.total, 5);
+    assert_eq!(page.next_cursor, Some(2u32));
+
+    let page2 = client.state_digest(&2, &2);
+    assert_eq!(page2.next_cursor, Some(4u32));
+
+    let page3 = client.state_digest(&4, &2);
+    assert_eq!(page3.next_cursor, None);
+}
+
+#[test]
+fn state_digest_client_verification_roundtrip() {
+    // Demonstrates how a client verifies `page_hash` by reconstructing the
+    // documented preimage from `get`/`list` output and comparing sha256.
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "dgv");
+    let r = client.get(&id);
+
+    let page = client.state_digest(&0, &20);
+    assert_eq!(page.encoding_version, STATE_DIGEST_ENCODING_VERSION);
+
+    // Reconstruct the v1 preimage exactly as documented on `state_digest`.
+    let mut preimage = soroban_sdk::Bytes::from_slice(&env, b"mv-state-digest-v1");
+    preimage.extend_from_array(&1u32.to_be_bytes()); // total
+    preimage.extend_from_array(&0u32.to_be_bytes()); // start
+                                                     // Entry: id
+    let id_bytes = r.id.clone().to_val(); // placeholder; real encoding below
+    let _ = id_bytes;
+    let id_str = r.id.clone();
+    let mut id_buf = alloc::vec![0u8; id_str.len() as usize];
+    id_str.copy_into_slice(&mut id_buf);
+    preimage.extend_from_array(&(id_buf.len() as u32).to_be_bytes());
+    preimage.extend_from_slice(&id_buf);
+    // price
+    preimage.extend_from_array(&r.price.to_be_bytes());
+    // metadata
+    let mut meta_buf = alloc::vec![0u8; r.metadata.len() as usize];
+    r.metadata.copy_into_slice(&mut meta_buf);
+    preimage.extend_from_array(&(meta_buf.len() as u32).to_be_bytes());
+    preimage.extend_from_slice(&meta_buf);
+    // state, frozen, version, updated_at
+    preimage.extend_from_array(&(r.state as u32).to_be_bytes());
+    preimage.extend_from_array(&[r.frozen as u8]);
+    preimage.extend_from_array(&r.version.to_be_bytes());
+    preimage.extend_from_array(&r.updated_at.to_be_bytes());
+    // content_hash option
+    match &r.content_hash {
+        Some(hash) => {
+            preimage.extend_from_array(&[1u8]);
+            let mut hbuf = alloc::vec![0u8; hash.len() as usize];
+            hash.copy_into_slice(&mut hbuf);
+            preimage.extend_from_array(&(hbuf.len() as u32).to_be_bytes());
+            preimage.extend_from_slice(&hbuf);
+        }
+        None => preimage.extend_from_array(&[0u8]),
+    }
+
+    let recomputed = env.crypto().sha256(&preimage).to_array();
+    assert_eq!(
+        page.page_hash,
+        soroban_sdk::BytesN::from_array(&env, &recomputed),
+        "a client that reconstructs the documented v1 preimage must get the same page_hash"
+    );
+}
+
 // ─── Index repair (#428) ───────────────────────────────────────────────────
 
 #[test]
@@ -6062,6 +6952,52 @@ fn repair_index_rerunning_current_list_is_a_safe_noop() {
     let page = client.list(&0u32, &10u32);
     assert_eq!(page.get(0).unwrap().id, a);
     assert_eq!(page.get(1).unwrap().id, b);
+}
+
+#[test]
+fn repair_index_shrink_cleans_up_stale_slots() {
+    // When the new list is shorter than the old one, stale Index slots above
+    // the new length must be removed so the index is fully convergent: two
+    // calls to repair_index with the same list must produce identical state
+    // regardless of the prior count (#1011).
+    let (env, creator, _admin, client) = setup_with_admin();
+    let a = register_default(&env, &creator, &client, "rres5a");
+    let b = register_default(&env, &creator, &client, "rres5b");
+    let c = register_default(&env, &creator, &client, "rres5c");
+
+    // Shrink from 3 to 1.
+    client.repair_index(&Vec::from_array(&env, [a.clone()]));
+    assert_eq!(client.count(), 1);
+
+    // A second repair with the same list must yield the same count.
+    client.repair_index(&Vec::from_array(&env, [a.clone()]));
+    assert_eq!(client.count(), 1);
+
+    // Only `a` is reachable via list; `b` and `c` are still addressable by id.
+    let page = client.list(&0u32, &10u32);
+    assert_eq!(page.len(), 1);
+    assert_eq!(page.get(0).unwrap().id, a);
+    assert!(client.exists(&b));
+    assert!(client.exists(&c));
+}
+
+#[test]
+fn repair_index_with_empty_list_is_a_silent_noop() {
+    // An empty ids list returns Ok(()) but does not modify the index or emit
+    // a reindex event — identical to repair_tag_index's empty-list behavior.
+    let (env, creator, _admin, client) = setup_with_admin();
+    let a = register_default(&env, &creator, &client, "rres6a");
+
+    // Record the count before.
+    let before_count = client.count();
+
+    client.repair_index(&Vec::new(&env));
+
+    // Count is unchanged, `a` is still listed.
+    assert_eq!(client.count(), before_count);
+    let page = client.list(&0u32, &10u32);
+    assert_eq!(page.len(), 1);
+    assert_eq!(page.get(0).unwrap().id, a);
 }
 
 // ---------------------------------------------------------------------------
@@ -7177,9 +8113,10 @@ fn record_payment_emits_payment_event() {
 
     client.record_payment(&settler, &receipt_id, &id, &payer, &amount, &tx_hash);
 
-    // env.events().all() reflects the most recent invocation
+    // env.events().all() reflects the most recent invocation: `payment`
+    // followed by the `nomemo` provenance warning.
     let all = env.events().all();
-    assert_eq!(all.len(), 1, "exactly one event should be emitted");
+    assert_eq!(all.len(), 2, "payment + nomemo events should be emitted");
 
     let (_, topics, data) = all.get(0).unwrap();
     assert_eq!(
@@ -7434,7 +8371,7 @@ fn record_payment_settle_payment_anchor_end_to_end() {
     };
 
     let payment_events = env.events().all();
-    assert_eq!(payment_events.len(), 1);
+    assert_eq!(payment_events.len(), 2);
     let (payment_contract, payment_topics, payment_data) = payment_events.get(0).unwrap();
     assert_eq!(payment_contract, client.address);
     assert_eq!(payment_topics.len(), 2);
@@ -8192,8 +9129,8 @@ fn get_flag_reason_hash_missing_fails() {
 // instead of only surfacing off-chain.
 
 #[test]
-fn add_moderator_emits_address_and_true_payload() {
-    let (env, _creator, _admin, client) = setup_with_admin();
+fn add_moderator_emits_address_and_role_change_payload() {
+    let (env, _creator, admin, client) = setup_with_admin();
     let moderator = Address::generate(&env);
 
     client.add_moderator(&moderator);
@@ -8204,13 +9141,21 @@ fn add_moderator_emits_address_and_true_payload() {
     assert_eq!(sym, Symbol::new(&env, "addmod"));
     let topic_moderator: Address = Address::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
     assert_eq!(topic_moderator, moderator);
-    let flag: bool = bool::try_from_val(&env, &data).unwrap();
-    assert!(flag, "addmod payload must be `true`");
+    let payload: RoleChange = RoleChange::try_from_val(&env, &data).unwrap();
+    assert_eq!(
+        payload,
+        RoleChange {
+            admin: admin.clone(),
+            target: moderator.clone(),
+            granted: true,
+        },
+        "addmod payload must carry the admin actor and target"
+    );
 }
 
 #[test]
-fn remove_moderator_emits_address_and_false_payload() {
-    let (env, _creator, _admin, client) = setup_with_admin();
+fn remove_moderator_emits_address_and_role_change_payload() {
+    let (env, _creator, admin, client) = setup_with_admin();
     let moderator = Address::generate(&env);
     client.add_moderator(&moderator);
 
@@ -8222,8 +9167,16 @@ fn remove_moderator_emits_address_and_false_payload() {
     assert_eq!(sym, Symbol::new(&env, "rmmod"));
     let topic_moderator: Address = Address::try_from_val(&env, &topics.get(1).unwrap()).unwrap();
     assert_eq!(topic_moderator, moderator);
-    let flag: bool = bool::try_from_val(&env, &data).unwrap();
-    assert!(!flag, "rmmod payload must be `false`");
+    let payload: RoleChange = RoleChange::try_from_val(&env, &data).unwrap();
+    assert_eq!(
+        payload,
+        RoleChange {
+            admin: admin.clone(),
+            target: moderator.clone(),
+            granted: false,
+        },
+        "rmmod payload must carry the admin actor and target"
+    );
 }
 
 #[test]
@@ -9119,13 +10072,14 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 31] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
         (DataKey::Resource(id.clone()), "Resource", 2),
         (DataKey::Count, "Count", 1),
         (DataKey::Index(0), "Index", 2),
+        (DataKey::IndexRepairProgress, "IndexRepairProgress", 1),
         (DataKey::Admin, "Admin", 1),
         (DataKey::PendingAdmin, "PendingAdmin", 1),
         (DataKey::CreatorTerms(who.clone()), "CreatorTerms", 2),
@@ -9144,23 +10098,49 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 31] {
             "PaymentIndex",
             3,
         ),
+        (DataKey::PaymentTxHash(id.clone()), "PaymentTxHash", 2),
+        (DataKey::PaymentRecipient(id.clone()), "PaymentRecipient", 2),
+        (DataKey::RefundReceipt(id.clone()), "RefundReceipt", 2),
+        (DataKey::RefundTxHash(id.clone()), "RefundTxHash", 2),
+        (DataKey::RefundDeadline(id.clone()), "RefundDeadline", 2),
+        (DataKey::RefundedAmount(id.clone()), "RefundedAmount", 2),
+        (DataKey::RefundWindow, "RefundWindow", 1),
+        (DataKey::VerifierHistory(who.clone()), "VerifierHistory", 2),
+        (DataKey::CreatorEarnings(who.clone()), "CreatorEarnings", 2),
+        (DataKey::FlagModerator(id.clone()), "FlagModerator", 2),
+        (DataKey::Lease(id.clone(), who.clone()), "Lease", 3),
+        (
+            DataKey::AnchorAttempts(id.clone(), who.clone()),
+            "AnchorAttempts",
+            3,
+        ),
+        (DataKey::RegistryTerms, "RegistryTerms", 1),
+        (DataKey::Paused, "Paused", 1),
+        (DataKey::PauseUntil, "PauseUntil", 1),
+        (DataKey::Settler(who.clone()), "Settler", 2),
         (
             DataKey::PurchaseReceipt(id.clone(), who.clone()),
             "PurchaseReceipt",
+            3,
+        ),
+        (
+            DataKey::AnchorFailure(id.clone(), who.clone()),
+            "AnchorFailure",
             3,
         ),
         (DataKey::TagIndex(id.clone()), "TagIndex", 2),
         (DataKey::FeeConfig, "FeeConfig", 1),
         (DataKey::Moderator(who.clone()), "Moderator", 2),
         (DataKey::DisputeFlag(id.clone()), "DisputeFlag", 2),
-        (DataKey::Paused, "Paused", 1),
-        (DataKey::PauseUntil, "PauseUntil", 1),
-        (DataKey::Settler(who.clone()), "Settler", 2),
         (DataKey::ListedCount, "ListedCount", 1),
         (DataKey::FlagReasonHash(id.clone()), "FlagReasonHash", 2),
-        (DataKey::PaymentTxHash(id.clone()), "PaymentTxHash", 2),
         (DataKey::AttestationHash(id.clone()), "AttestationHash", 2),
         (DataKey::PendingAdminExpiry, "PendingAdminExpiry", 1),
+        (
+            DataKey::PendingAdminNominatedAt,
+            "PendingAdminNominatedAt",
+            1,
+        ),
         (DataKey::TagCount(id.clone()), "TagCount", 2),
         (DataKey::TopTags, "TopTags", 1),
         (
@@ -9169,7 +10149,10 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 31] {
             2,
         ),
         (DataKey::MemoHash(id.clone()), "MemoHash", 2),
-        (DataKey::FlagModerator(id), "FlagModerator", 2),
+        (DataKey::FeeDestination, "FeeDestination", 1),
+        (DataKey::MetadataPointers(id.clone()), "MetadataPointers", 2),
+        (DataKey::RecoveryAdmin, "RecoveryAdmin", 1),
+        (DataKey::Revision(id.clone()), "Revision", 2),
     ]
 }
 
@@ -9192,26 +10175,24 @@ fn storage_key_variant_names_are_stable() {
 fn storage_key_arity_is_stable() {
     let env = Env::default();
     for (key, name, arity) in storage_key_wire_contract(&env).iter() {
+        let parts = storage_key_parts(&env, key);
         assert_eq!(
-            storage_key_parts(&env, key).len(),
+            parts.len() as u32,
             *arity,
-            "DataKey::{name} must keep {arity} encoded element(s) (the discriminant \
-             plus its arguments). Adding or removing an argument re-points the \
-             variant at a different address and strands its existing entries."
+            "DataKey::{name} encodes with arity {arity}. Changing the arity of a \
+             storage key variant changes its on-chain address and strands every \
+             entry written under the old shape."
         );
     }
 }
 
-/// Compile-time tripwire: a new `DataKey` variant fails to match here, which
-/// forces whoever adds it to also add it to `storage_key_wire_contract` and to
-/// think about what the new key means for state already on-chain.
 #[test]
 fn storage_key_migration_covers_every_variant() {
     let env = Env::default();
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        31,
+        49,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -9220,6 +10201,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::Resource(_) => "Resource",
             DataKey::Count => "Count",
             DataKey::Index(_) => "Index",
+            DataKey::IndexRepairProgress => "IndexRepairProgress",
             DataKey::Admin => "Admin",
             DataKey::PendingAdmin => "PendingAdmin",
             DataKey::CreatorTerms(_) => "CreatorTerms",
@@ -9230,25 +10212,41 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::NetworkId => "NetworkId",
             DataKey::PaymentReceipt(_) => "PaymentReceipt",
             DataKey::PaymentIndex(_, _) => "PaymentIndex",
+            DataKey::PaymentTxHash(_) => "PaymentTxHash",
+            DataKey::PaymentRecipient(_) => "PaymentRecipient",
+            DataKey::RefundReceipt(_) => "RefundReceipt",
+            DataKey::RefundTxHash(_) => "RefundTxHash",
+            DataKey::RefundDeadline(_) => "RefundDeadline",
+            DataKey::RefundedAmount(_) => "RefundedAmount",
+            DataKey::RefundWindow => "RefundWindow",
+            DataKey::VerifierHistory(_) => "VerifierHistory",
+            DataKey::CreatorEarnings(_) => "CreatorEarnings",
+            DataKey::FlagModerator(_) => "FlagModerator",
+            DataKey::Lease(_, _) => "Lease",
+            DataKey::AnchorAttempts(_, _) => "AnchorAttempts",
+            DataKey::RegistryTerms => "RegistryTerms",
+            DataKey::Paused => "Paused",
+            DataKey::PauseUntil => "PauseUntil",
+            DataKey::Settler(_) => "Settler",
             DataKey::PurchaseReceipt(_, _) => "PurchaseReceipt",
+            DataKey::AnchorFailure(_, _) => "AnchorFailure",
             DataKey::TagIndex(_) => "TagIndex",
             DataKey::FeeConfig => "FeeConfig",
             DataKey::Moderator(_) => "Moderator",
             DataKey::DisputeFlag(_) => "DisputeFlag",
-            DataKey::Paused => "Paused",
-            DataKey::PauseUntil => "PauseUntil",
-            DataKey::Settler(_) => "Settler",
             DataKey::ListedCount => "ListedCount",
             DataKey::FlagReasonHash(_) => "FlagReasonHash",
-            DataKey::PaymentTxHash(_) => "PaymentTxHash",
             DataKey::AttestationHash(_) => "AttestationHash",
             DataKey::PendingAdminExpiry => "PendingAdminExpiry",
+            DataKey::PendingAdminNominatedAt => "PendingAdminNominatedAt",
             DataKey::TagCount(_) => "TagCount",
             DataKey::TopTags => "TopTags",
             DataKey::CreatorListedCount(_) => "CreatorListedCount",
             DataKey::MemoHash(_) => "MemoHash",
             DataKey::FeeDestination => "FeeDestination",
-            DataKey::FlagModerator(_) => "FlagModerator",
+            DataKey::MetadataPointers(_) => "MetadataPointers",
+            DataKey::RecoveryAdmin => "RecoveryAdmin",
+            DataKey::Revision(_) => "Revision",
         };
         assert_eq!(
             matched, *name,
@@ -9262,8 +10260,7 @@ fn same_string_addresses_a_different_entry_per_key_variant() {
     let (env, _creator, client) = setup();
     let shared = String::from_str(&env, "collide");
 
-    // Six variants take a bare String. If any two encoded to the same address,
-    // one would overwrite another and a resource id could clobber a tag index.
+    // String-keyed variants must remain distinct even when given identical ids.
     env.as_contract(&client.address, || {
         let keys = [
             DataKey::Resource(shared.clone()),
@@ -9272,6 +10269,12 @@ fn same_string_addresses_a_different_entry_per_key_variant() {
             DataKey::DisputeFlag(shared.clone()),
             DataKey::FlagReasonHash(shared.clone()),
             DataKey::MemoHash(shared.clone()),
+            DataKey::RefundReceipt(shared.clone()),
+            DataKey::RefundedAmount(shared.clone()),
+            DataKey::RefundTxHash(shared.clone()),
+            DataKey::RefundDeadline(shared.clone()),
+            DataKey::PaymentRecipient(shared.clone()),
+            DataKey::TagCount(shared.clone()),
         ];
         for (marker, key) in keys.iter().enumerate() {
             env.storage().persistent().set(key, &(marker as u32));
@@ -9711,6 +10714,10 @@ fn attempt_anchor_reports_empty_and_oversized_receipt_hash() {
         AnchorFailureReason::InvalidReceiptHash
     );
 
+    // The pair is now inside its back-off window; move past it before the
+    // second attempt so the oversized hash is judged on its own.
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ANCHOR_RETRY_BACKOFF_LEDGERS);
     let too_long = String::from_str(&env, &"a".repeat(MAX_TX_HASH_LEN as usize + 1));
     assert!(!client.attempt_anchor_purchase_receipt(&service, &id, &buyer, &too_long));
     assert_eq!(
@@ -10726,12 +11733,81 @@ fn tag_popularity_counter_saturates_at_u32_max() {
     assert_eq!(top.get(0).unwrap().count, u32::MAX);
 }
 
+#[test]
+fn register_surfaces_count_overflow_when_count_is_max() {
+    let (env, creator, client) = setup();
+    env.as_contract(&client.address, || {
+        env.storage().instance().set(&DataKey::Count, &u32::MAX);
+    });
+
+    let res = client.try_register(
+        &creator,
+        &String::from_str(&env, "ovf1"),
+        &100i128,
+        &String::from_str(&env, "ipfs://m"),
+        &empty_tags(&env),
+    );
+    assert_eq!(res, Err(Ok(Error::CountOverflow)));
+}
+
+#[test]
+fn initialize_network_rejects_replay_even_with_mismatched_id() {
+    let (env, _creator, client) = setup();
+    let network_id = env.ledger().network_id();
+    client.initialize_network(&network_id);
+
+    let mut wrong = network_id.to_array();
+    wrong[0] ^= 1;
+    let wrong = BytesN::from_array(&env, &wrong);
+
+    // After network is initialized, duplicate call with wrong id fails with NetworkAlreadyInitialized
+    assert_eq!(
+        client.try_initialize_network(&wrong),
+        Err(Ok(Error::NetworkAlreadyInitialized))
+    );
+}
+
+#[test]
+fn differently_cased_tags_indexed_under_same_normalized_tag() {
+    let (env, creator, client) = setup();
+    let r1 = String::from_str(&env, "case1");
+    let r2 = String::from_str(&env, "case2");
+
+    client.register(
+        &creator,
+        &r1,
+        &100i128,
+        &String::from_str(&env, "ipfs://1"),
+        &tags(&env, &["RustLang"]),
+    );
+    client.register(
+        &creator,
+        &r2,
+        &200i128,
+        &String::from_str(&env, "ipfs://2"),
+        &tags(&env, &["rustlang"]),
+    );
+
+    let results = client.list_by_tag(&String::from_str(&env, "RUSTLANG"), &0, &10);
+    assert_eq!(results.len(), 2);
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 
 include!("test/auth_fixtures.rs");
 include!("test/tombstone_read.rs");
+include!("test/listed_count_matrix.rs");
 include!("test/creator_listed_count.rs");
 include!("test/memo_hash.rs");
 include!("test/flag_details.rs");
 include!("test/payment_idempotency.rs");
+include!("test/payment_pause_scope.rs");
+include!("test/simulation_mutation_validation.rs");
+include!("test/stellar_wave_804_805_806_808.rs");
+include!("test/stellar_wave_970_971_975_976.rs");
+include!("test/stellar_wave_981_982_983_984.rs");
+include!("test/stellar_wave_977_978_979_980.rs");
+include!("test/creator_page_filtered.rs");
+include!("test/tag_prefix_search.rs");
+include!("test/pause_scope_matrix.rs");

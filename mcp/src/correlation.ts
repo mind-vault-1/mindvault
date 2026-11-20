@@ -14,22 +14,48 @@
  * problem can quote it and an operator can `grep` straight to the relevant
  * lines:
  *
- *     $ jq -c 'select(.correlationId == "mv-1a2b3c-d4e5")' audit.jsonl
+ *     $ jq -c 'select(.correlationId == "mv-1a2b3c-d4e5-k7q2p1")' audit.jsonl
+ *
+ * Issue #1074 widened the ID with a per-process salt so several MCP servers on
+ * one host cannot mint the same ID; see {@link createCorrelationIdGenerator}.
  *
  * The context is an `AsyncLocalStorage`, not a module-level variable. The
  * server handles tool calls concurrently, and a shared mutable "current ID"
  * would attribute one call's network requests to another — which is worse than
  * having no IDs at all, because the log would look correct.
  *
- * ID generation is injectable (clock, randomness) so tests are deterministic.
+ * ID generation is injectable (clock, randomness, salt) so tests can pin exact
+ * IDs, and each generator carries a per-process salt so IDs stay unique when
+ * several MCP servers share a host or start at the same instant (#1074).
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { randomBytes } from "node:crypto";
+import { threadId } from "node:worker_threads";
 
 /** Prefix, so an ID is recognisable on sight in a mixed log. */
 const ID_PREFIX = "mv";
 
-/** Key under which the ID travels in an MCP result's `_meta`. */
+/** Base36 width of the random component that separates same-millisecond calls. */
+const RANDOM_LENGTH = 4;
+
+/** Number of values the random component is drawn from: 36**4 = 1,679,616. */
+const RANDOM_SPACE = 36 ** RANDOM_LENGTH;
+
+/**
+ * Base36 width of the per-generator salt that separates worker processes.
+ *
+ * The salt is drawn from the CSPRNG and padded to this width, so its character
+ * length never reveals how much entropy it carries.
+ */
+const SALT_LENGTH = 6;
+
+/** Number of values the salt is drawn from: 36**6 = 2,176,782,336. */
+const SALT_SPACE = 36 ** SALT_LENGTH;
+
+/**
+ * Key under which the ID travels in an MCP result's `_meta`.
+ */
 export const CORRELATION_META_KEY = "mindvault/correlationId";
 
 /**
@@ -41,20 +67,89 @@ export const CORRELATION_META_KEY = "mindvault/correlationId";
 export const correlationStorage = new AsyncLocalStorage<string>();
 
 /**
+ * Derive a salt that distinguishes one generator from every other.
+ *
+ * The salt is what makes IDs collision-resistant *across* processes. Two MCP
+ * servers can share a host, start in the same millisecond, and — if their
+ * clocks and randomness lined up — mint the same time and random components;
+ * only a per-process salt keeps them apart. It is drawn from the CSPRNG, not
+ * `Math.random`, so it does not depend on the same draw that the random
+ * component consumes, and it is mixed with the pid and worker-thread id so
+ * processes that reuse a pid (containers all see pid 1) still diverge.
+ *
+ * The result is always {@link SALT_LENGTH} base36 digits: the entropy is
+ * reduced modulo 36**SALT_LENGTH, so the widening only ever helps.
+ */
+function newProcessSalt(): string {
+  const entropy = randomBytes(4).readUInt32BE(0) % SALT_SPACE;
+  const identity = ((process.pid >>> 0) ^ Math.imul(threadId + 1, 0x9e3779b1)) >>> 0;
+  return (((entropy ^ identity) >>> 0) % SALT_SPACE).toString(36).padStart(SALT_LENGTH, "0");
+}
+
+/** Options for {@link createCorrelationIdGenerator}. */
+export interface CorrelationIdGeneratorOptions {
+  /** Clock, injectable for deterministic tests. Defaults to `Date.now`. */
+  now?: () => number;
+  /** Randomness in `[0, 1)`, injectable for tests. Defaults to `Math.random`. */
+  random?: () => number;
+  /**
+   * Base36 salt distinguishing this generator's IDs from every other. Defaults
+   * to a fresh CSPRNG/pid/thread-derived salt, so independent generators never
+   * collide even when they share a clock and randomness.
+   */
+  salt?: string;
+}
+
+/** Format one ID from its parts. */
+function formatCorrelationId(time: number, random: number, salt: string): string {
+  const suffix = Math.floor(random * RANDOM_SPACE)
+    .toString(36)
+    .padStart(RANDOM_LENGTH, "0");
+  return `${ID_PREFIX}-${time.toString(36)}-${suffix}-${salt}`;
+}
+
+/**
+ * Create an independent generator of correlation IDs.
+ *
+ * Each generator owns its own salt, so two generators handed the *same* clock
+ * and the *same* random draw still mint distinct IDs — the case the issue calls
+ * out directly: several MCP server processes on one host, started at the same
+ * instant. The default {@link newCorrelationId} is such a generator, seeded
+ * once per module load (one salt per process).
+ *
+ * The returned function is deterministic in `(clock, random, salt)`, so tests
+ * can pin exact IDs.
+ */
+export function createCorrelationIdGenerator(
+  options: CorrelationIdGeneratorOptions = {},
+): () => string {
+  const now = options.now ?? Date.now;
+  const random = options.random ?? Math.random;
+  const salt = options.salt ?? newProcessSalt();
+  return () => formatCorrelationId(now(), random(), salt);
+}
+
+/** The process-wide salt backing {@link newCorrelationId} (one per process). */
+const DEFAULT_SALT = newProcessSalt();
+
+/**
  * Mint a correlation ID.
  *
- * Format: `mv-<time>-<random>`, both base36. The time component sorts
- * chronologically as a string, so IDs from one session group naturally when a
- * log is sorted; the four-digit random component distinguishes calls that
- * share a millisecond.
+ * Format: `mv-<time>-<random>-<salt>`, all base36 except the prefix. The time
+ * component sorts chronologically as a string, so IDs from one session group
+ * naturally when a log is sorted; the four-digit random component distinguishes
+ * calls that share a millisecond, and the salt distinguishes worker processes.
  *
- * That suffix spans 36**4 = 1,679,616 values, which is sized for real tool
+ * The random component spans 36**4 = 1,679,616 values, sized for real tool
  * calls — each does network I/O, so a handful per millisecond is already an
- * extreme burst and the collision odds there are far below one in a million.
- * It is not sized for a synthetic loop: 500 IDs minted in a single millisecond
- * collide about 7% of the time. Widening it is possible, but a uniqueness
- * counter is not — `newCorrelationId` is deterministic in (clock, random) on
- * purpose, so that tests can pin exact IDs.
+ * extreme burst. It is not sized for a synthetic loop: 500 IDs minted in one
+ * millisecond by a *single* generator collide about 7% of the time. Widening it
+ * buys nothing, because the suffix is still deterministic in (clock, random) —
+ * so tests can pin exact IDs — and an ID that a test pins must not be silently
+ * rewritten. Collision resistance *across* processes is the salt's job instead:
+ * a cross-process collision needs both the 36**4 random component and the
+ * 36**6 salt to match, about one in 6e15 for a pair minting in the same
+ * millisecond.
  *
  * Short on purpose — it is meant to be read aloud, pasted into an issue, and
  * typed into a `grep`.
@@ -63,16 +158,18 @@ export function newCorrelationId(
   now: () => number = Date.now,
   random: () => number = Math.random,
 ): string {
-  const time = now().toString(36);
-  const suffix = Math.floor(random() * 36 ** 4)
-    .toString(36)
-    .padStart(4, "0");
-  return `${ID_PREFIX}-${time}-${suffix}`;
+  return formatCorrelationId(now(), random(), DEFAULT_SALT);
 }
 
-/** Whether a string looks like an ID this module minted. */
+/**
+ * Whether a string looks like an ID this module minted.
+ *
+ * The salt segment is optional so IDs minted before #1074 — which had no
+ * per-process salt — are still recognised when reading an older log. New IDs
+ * always carry it.
+ */
 export function isCorrelationId(value: unknown): value is string {
-  return typeof value === "string" && /^mv-[0-9a-z]+-[0-9a-z]{4}$/.test(value);
+  return typeof value === "string" && /^mv-[0-9a-z]+-[0-9a-z]{4}(?:-[0-9a-z]+)?$/.test(value);
 }
 
 /**
@@ -104,6 +201,27 @@ export function withNewCorrelationId<T>(fn: (id: string) => T, id: string = newC
  */
 export function currentCorrelationId(): string | undefined {
   return correlationStorage.getStore();
+}
+
+/**
+ * Header carrying the correlation id. Matches the server's `x-request-id`.
+ * Kept consistent with `CORRELATION_META_KEY`'s suffix so a request id and a
+ * result meta id can be joined in server logs.
+ */
+export const CORRELATION_HEADER = "x-request-id";
+
+/**
+ * A header bag carrying the ambient correlation id.
+ *
+ * The extra headers are passed through and the id is applied last, so it
+ * cannot be shadowed by a caller-supplied value (for example one the x402
+ * wrapper set). Outside a tool call there is no ambient id, so the extra
+ * headers return unchanged — on the wire that is the same as the `undefined`
+ * id this used to put in the bag, because fetch skips undefined header values.
+ */
+export function correlationHeaders(extra?: Record<string, string>): Record<string, string> {
+  const id = currentCorrelationId();
+  return id === undefined ? { ...extra } : { ...extra, [CORRELATION_HEADER]: id };
 }
 
 /** Shape of an MCP tool result, narrowed to what this module touches. */

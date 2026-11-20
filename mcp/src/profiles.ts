@@ -20,7 +20,12 @@ export interface WalletProfile {
   wallet?: AgentWallet;
   apiKey?: string;
   network?: "testnet" | "mainnet";
+  preferences?: ProfilePreferences;
 }
+
+/** User-facing profile metadata. Credentials are intentionally not representable here. */
+export type ProfilePreference = string | number | boolean | null;
+export type ProfilePreferences = Record<string, ProfilePreference>;
 
 /** On-disk / in-memory shape for the current (v1) state format. */
 export interface ProfileState {
@@ -79,6 +84,8 @@ export function normalizeProfiles(raw: unknown): Record<string, WalletProfile> {
     if (isValidWallet(v.wallet)) profile.wallet = v.wallet;
     if (typeof v.apiKey === "string" && v.apiKey.length > 0) profile.apiKey = v.apiKey;
     if (v.network === "testnet" || v.network === "mainnet") profile.network = v.network;
+    const preferences = normalizePreferences(v.preferences);
+    if (Object.keys(preferences).length > 0) profile.preferences = preferences;
     out[name] = profile;
   }
   return out;
@@ -159,4 +166,88 @@ export function exportAllProfiles(state: ProfileState): ExportedProfile[] {
   return Object.entries(state.profiles)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([name, profile]) => exportProfile(name, profile));
+}
+
+export interface ProfileExport {
+  schema: "mindvault.profile-export";
+  version: 1;
+  activeProfile: string;
+  profiles: ProfileSetup[];
+}
+
+export interface ProfileSetup {
+  name: string;
+  network?: "testnet" | "mainnet";
+  preferences: ProfilePreferences;
+}
+
+function exportProfileSetup(name: string, profile: WalletProfile): ProfileSetup {
+  return {
+    name,
+    ...(profile.network ? { network: profile.network } : {}),
+    preferences: { ...(profile.preferences ?? {}) },
+  };
+}
+
+/** Stable, credentials-free representation suitable for team setup. */
+export function exportProfileState(state: ProfileState): ProfileExport {
+  return {
+    schema: "mindvault.profile-export",
+    version: 1,
+    activeProfile: state.activeProfile,
+    profiles: Object.entries(state.profiles)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, profile]) => exportProfileSetup(name, profile)),
+  };
+}
+
+/** Merge imported metadata while preserving every existing credential field. */
+export function importProfileState(
+  state: ProfileState,
+  input: unknown,
+): { state: ProfileState; imported: string[] } {
+  if (!input || typeof input !== "object") throw new Error("Invalid profile export.");
+  const raw = input as Record<string, unknown>;
+  if (raw.schema !== "mindvault.profile-export" || raw.version !== 1) {
+    throw new Error("Unsupported profile export schema or version.");
+  }
+  if (!Array.isArray(raw.profiles)) throw new Error("Invalid profile export profiles.");
+
+  const next: ProfileState = {
+    version: STATE_VERSION,
+    activeProfile: state.activeProfile,
+    profiles: { ...state.profiles },
+  };
+  const imported: string[] = [];
+  for (const value of raw.profiles) {
+    if (!value || typeof value !== "object") continue;
+    const item = value as Record<string, unknown>;
+    if (!isValidProfileName(item.name)) continue;
+    const existing = next.profiles[item.name] ?? {};
+    const metadata: WalletProfile = { ...existing };
+    if (item.network === "testnet" || item.network === "mainnet") metadata.network = item.network;
+    const preferences = normalizePreferences(item.preferences);
+    if (Object.keys(preferences).length > 0) metadata.preferences = preferences;
+    next.profiles[item.name] = metadata;
+    imported.push(item.name);
+  }
+  if (isValidProfileName(raw.activeProfile)) next.activeProfile = raw.activeProfile;
+  return { state: next, imported: imported.sort() };
+}
+
+function normalizePreferences(value: unknown): ProfilePreferences {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: ProfilePreferences = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (/secret|private|seed|credential|apikey|token|password/i.test(key)) continue;
+    if (
+      item === null ||
+      typeof item === "string" ||
+      typeof item === "number" ||
+      typeof item === "boolean"
+    ) {
+      out[key] = item;
+    }
+  }
+  return out;
 }

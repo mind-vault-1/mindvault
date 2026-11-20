@@ -56,6 +56,54 @@ fire-and-forget call, or a callback that outlives the tool) is dropped instead
 of reaching the transport. Both the stdio entry point and servers built with
 [`createMindVaultServer`](mcp-server-factory.md) do this.
 
+## Replayed events and deduplication
+
+A transport that resumes a stream after a reconnect — Streamable HTTP replaying
+from `Last-Event-ID`, or a proxy retrying a write — can deliver the same
+progress notification more than once. To stop a client from counting one
+publish or one payment as several steps, every progress notification carries an
+event identity in `params._meta` (#1061):
+
+```json
+{
+  "method": "notifications/progress",
+  "params": {
+    "progressToken": "buy-1",
+    "progress": 2,
+    "total": 4,
+    "message": "Submitting payment",
+    "_meta": {
+      "mindvault/progressEvent": {
+        "streamId": "6f0c…",
+        "sequence": 2,
+        "eventId": "6f0c…:2"
+      }
+    }
+  }
+}
+```
+
+| Field      | Meaning                                                                  |
+| ---------- | ------------------------------------------------------------------------ |
+| `streamId` | Random per tool call; every notification of that call shares it.         |
+| `sequence` | 1-based and gap-free within the call: 1, 2, 3, …                         |
+| `eventId`  | `<streamId>:<sequence>`. Unique per notification, unchanged on a replay. |
+
+A replayed notification has the same `eventId` and `sequence` as the original.
+A client should treat a notification as new only when its `sequence` is higher
+than the last one it accepted for that `progressToken` and `streamId`.
+`createProgressDeduplicator()` in [`mcp/src/progress.ts`](../mcp/src/progress.ts)
+does exactly this, and falls back to "`progress` must increase" for a
+notification without the stamp (an older server).
+
+The server also never sends an update whose `progress` repeats or goes back on
+an earlier value of the same call, as the MCP spec requires. A step re-entered
+internally (for example a retried submit) does not show up as a second step.
+
+The standard fields (`progressToken`, `progress`, `total`, `message`) are
+unchanged, so a client that ignores `_meta` sees the same notifications as
+before.
+
 ## Publish verification (`mindvault_publish_status`)
 
 Verification is asynchronous: a freshly published resource starts at

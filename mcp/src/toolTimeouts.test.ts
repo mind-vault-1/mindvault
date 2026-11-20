@@ -29,6 +29,8 @@ vi.mock("@modelcontextprotocol/sdk/types.js", () => ({
   GetPromptRequestSchema: {},
   ListResourcesRequestSchema: {},
   ReadResourceRequestSchema: {},
+  SubscribeRequestSchema: {},
+  UnsubscribeRequestSchema: {},
 }));
 
 vi.mock("@x402/stellar", () => ({ createEd25519Signer: vi.fn() }));

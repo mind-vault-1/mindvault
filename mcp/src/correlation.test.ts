@@ -7,12 +7,20 @@
  * is worse than having no IDs at all.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { execFile } from "node:child_process";
+import { createRequire } from "node:module";
+import { dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 import {
   CORRELATION_META_KEY,
   attachCorrelationId,
   correlationIdOf,
   correlationSuffix,
+  createCorrelationIdGenerator,
   currentCorrelationId,
   isCorrelationId,
   newCorrelationId,
@@ -41,7 +49,8 @@ function captureAuditEntries(): { entries: any[] } {
 
 describe("newCorrelationId", () => {
   it("has the documented shape", () => {
-    expect(newCorrelationId()).toMatch(/^mv-[0-9a-z]+-[0-9a-z]{4}$/);
+    // mv-<base36 time>-<4 base36 random>-<6 base36 salt>
+    expect(newCorrelationId()).toMatch(/^mv-[0-9a-z]+-[0-9a-z]{4}-[0-9a-z]{6}$/);
   });
 
   it("is deterministic given a clock and a source of randomness", () => {
@@ -122,18 +131,15 @@ describe("newCorrelationId", () => {
   });
 
   it("maps distinct randomness within one millisecond to distinct ids", () => {
-    // Within a millisecond the suffix is all that varies, so what this module
-    // owes is an injective mapping from randomness to suffix — no two distinct
-    // draws may collapse onto one id.
+    // Within a millisecond the random component is all that varies, so what
+    // this module owes is an injective mapping from randomness to suffix — no
+    // two distinct draws may collapse onto one id.
     //
-    // This replaces an assertion that 500 ids from the *real* clock and
-    // Math.random were all distinct. That is not a property this design can
-    // have: `newCorrelationId` is deliberately deterministic in (clock,
-    // random) — the test above this one pins that — so it cannot also carry a
-    // uniqueness counter. A 500-call burst lands in one millisecond, drawing
-    // 500 times from 36**4 = 1,679,616 values, which by the birthday bound
-    // collides about 7% of the time. The old test failed roughly one run in
-    // fourteen, and the failure was correct: the assertion was wrong.
+    // A single generator still cannot promise uniqueness across a whole
+    // 500-call burst in one millisecond: drawing 500 times from 36**4 =
+    // 1,679,616 values collides about 7% of the time by the birthday bound.
+    // That is what the per-generator salt is for — cross-process collisions
+    // need both components to match (see the "process salt" tests below).
     const draws = [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1 - Number.EPSILON];
     const ids = new Set(
       draws.map((r) =>
@@ -158,11 +164,152 @@ describe("newCorrelationId", () => {
 
     expect(highest.split("-")[2]).toBe("zzzz");
   });
+
+  it("carries a fixed-width salt segment", () => {
+    const id = newCorrelationId();
+
+    expect(id.split("-")).toHaveLength(4);
+    expect(id.split("-")[3]).toHaveLength(6);
+  });
+
+  it("keeps the salt constant within a process", () => {
+    // Salt is per-process, not per-call: every ID this module mints shares it.
+    const salts = new Set(
+      Array.from(
+        { length: 10 },
+        (_, i) =>
+          newCorrelationId(
+            () => 1_700_000_000_000 + i,
+            () => Math.random(),
+          ).split("-")[3],
+      ),
+    );
+
+    expect(salts.size).toBe(1);
+  });
+});
+
+describe("cross-generator collision resistance (#1074)", () => {
+  it("keeps two independent generators apart despite an identical clock and draw", () => {
+    // The case the issue names: several MCP server processes sharing a host,
+    // started at the same instant, whose clocks and randomness happen to line
+    // up. Only a per-process salt can separate them.
+    const a = createCorrelationIdGenerator({
+      now: () => 1_700_000_000_000,
+      random: () => 0.5,
+      salt: "aaaaaa",
+    });
+    const b = createCorrelationIdGenerator({
+      now: () => 1_700_000_000_000,
+      random: () => 0.5,
+      salt: "bbbbbb",
+    });
+
+    expect(a()).not.toBe(b());
+  });
+
+  it("gives independent generators distinct salts by default", () => {
+    // No explicit salt: each generator derives its own, so their streams never
+    // share a namespace even if every other input were identical.
+    const a = createCorrelationIdGenerator({
+      now: () => 1,
+      random: () => 0.25,
+    });
+    const b = createCorrelationIdGenerator({
+      now: () => 1,
+      random: () => 0.25,
+    });
+
+    expect(a().split("-")[3]).not.toBe(b().split("-")[3]);
+    expect(a()).not.toBe(b());
+  });
+
+  it("produces no collisions across many independent generators drawing in one millisecond", () => {
+    // Rings the alarm the issue is about: 200 "processes" all minting in the
+    // same millisecond, each drawing one random value. An eight-fold regression
+    // guard on the salt, not a proof — the default salt is 36**6 values, so a
+    // collision here is genuine evidence of a defect and not ordinary bad luck.
+    const generators = Array.from({ length: 200 }, () =>
+      createCorrelationIdGenerator({
+        now: () => 1_700_000_000_000,
+        random: () => 0.5,
+      }),
+    );
+
+    const ids = new Set(generators.map((gen) => gen()));
+
+    expect(ids.size).toBe(generators.length);
+  });
+
+  it("is deterministic in (clock, random, salt)", () => {
+    const make = () =>
+      createCorrelationIdGenerator({
+        now: () => 1_700_000_000_000,
+        random: () => 0.5,
+        salt: "zzzzzz",
+      });
+
+    expect(make()()).toBe(make()());
+  });
+
+  it("pads the salt to a fixed width regardless of magnitude", () => {
+    const low = createCorrelationIdGenerator({
+      now: () => 1,
+      random: () => 0,
+      salt: "0",
+    })();
+
+    expect(low.split("-")[3]).toBe("0");
+  });
+});
+
+/**
+ * Mint an id in a genuinely separate OS process.
+ *
+ * Loads the real `correlation.ts` over tsx in a child node process, so the
+ * module-level salt is seeded independently of the test runner's own — the
+ * only faithful model of "several MCP server processes share a host". Paths
+ * are resolved from this test file, not the runner's cwd, so the child starts
+ * correctly wherever the suite is invoked from.
+ */
+async function mintInChildProcess(): Promise<string> {
+  const modulePath = fileURLToPath(new URL("./correlation.ts", import.meta.url));
+  const loader = createRequire(import.meta.url).resolve("tsx");
+  const script = `const m = await import(${JSON.stringify(pathToFileURL(modulePath).href)}); process.stdout.write(m.newCorrelationId());`;
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    ["--import", pathToFileURL(loader).href, "--input-type=module", "--eval", script],
+    { cwd: dirname(modulePath) },
+  );
+  return stdout.trim();
+}
+
+describe("cross-process collision resistance (#1074)", () => {
+  it("mints distinct ids from processes started at the same instant", async () => {
+    // Launched together, not one after another: the millisecond the clock
+    // reads is all but shared, which is exactly the schedule in the report.
+    const ids = await Promise.all(Array.from({ length: 8 }, mintInChildProcess));
+
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(isCorrelationId(id)).toBe(true);
+  }, 30_000);
+
+  it("gives separate processes separate salts", async () => {
+    const [a, b] = await Promise.all([mintInChildProcess(), mintInChildProcess()]);
+
+    expect(a.split("-")[3]).not.toBe(b.split("-")[3]);
+  }, 30_000);
 });
 
 describe("isCorrelationId", () => {
   it("accepts a minted id", () => {
     expect(isCorrelationId(newCorrelationId())).toBe(true);
+  });
+
+  it("still accepts a pre-#1074 id without a salt segment", () => {
+    // An operator reading a log that predates the salt should not have every
+    // old line rejected as malformed.
+    expect(isCorrelationId("mv-1a2b3c4d-e5f6")).toBe(true);
   });
 
   it.each(["", "mv-", "mv-abc", "nope", "mv-abc-toolong", null, undefined, 42])(

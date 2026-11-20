@@ -3,6 +3,8 @@ import {
   DEFAULT_PROFILE,
   STATE_VERSION,
   exportAllProfiles,
+  exportProfileState,
+  importProfileState,
   exportProfile,
   isValidProfileName,
   isValidWallet,
@@ -222,5 +224,41 @@ describe("exportAllProfiles", () => {
       profiles: {},
     };
     expect(exportAllProfiles(state)).toEqual([]);
+  });
+
+  it("exports a versioned credentials-free payload and imports metadata without credentials", () => {
+    const state = {
+      version: STATE_VERSION,
+      activeProfile: "alpha",
+      profiles: {
+        alpha: {
+          wallet,
+          apiKey: "secret-api-key",
+          network: "testnet" as const,
+          preferences: { theme: "dark", seedPhrase: "must-not-export" },
+        },
+      },
+    };
+    const payload = exportProfileState(state);
+    expect(payload).toEqual({
+      schema: "mindvault.profile-export",
+      version: 1,
+      activeProfile: "alpha",
+      profiles: [{ name: "alpha", network: "testnet", preferences: { theme: "dark" } }],
+    });
+    const imported = importProfileState(
+      {
+        version: STATE_VERSION,
+        activeProfile: "alpha",
+        profiles: { alpha: { wallet, apiKey: "old" } },
+      },
+      payload,
+    );
+    expect(imported.state.profiles.alpha).toEqual({
+      wallet,
+      apiKey: "old",
+      network: "testnet",
+      preferences: { theme: "dark" },
+    });
   });
 });

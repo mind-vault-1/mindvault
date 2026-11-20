@@ -57,21 +57,142 @@ export function isIdempotentMethod(method: string | undefined): boolean {
 }
 
 /**
+ * Categories from `errorMapping.ts` that describe the request itself, not the
+ * service's ability to answer it. Replaying the same call reproduces them.
+ */
+const DETERMINISTIC_CATEGORIES: ReadonlySet<string> = new Set([
+  "auth",
+  "validation",
+  "payment",
+  "not_found",
+  "conflict",
+  "contract",
+]);
+
+/** Categories from `errorMapping.ts` that a later attempt can clear. */
+const TRANSIENT_CATEGORIES: ReadonlySet<string> = new Set([
+  "network",
+  "timeout",
+  "rate_limit",
+  "server",
+]);
+
+/**
+ * Error classes raised for malformed input or an unusable response. They fail
+ * the same way on every attempt: `ToolValidationError` / `UnknownToolError`
+ * (bad tool arguments, `validation.ts`), `ResponseSizeLimitError` (an
+ * oversized body), and `SyntaxError` (a body that is not the expected JSON).
+ */
+const DETERMINISTIC_ERROR_NAMES: ReadonlySet<string> = new Set([
+  "ToolValidationError",
+  "UnknownToolError",
+  "ResponseSizeLimitError",
+  "SyntaxError",
+  "ZodError",
+]);
+
+/** Socket-level `errno` codes that mean the connection, not the request, failed. */
+const TRANSIENT_ERRNO_CODES: ReadonlySet<string> = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "EPIPE",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+/**
+ * A Soroban host or contract error (`Error(Contract, #11)`, `Error(Auth, …)`,
+ * a `HostError` from simulation). The contract rejected the arguments, so the
+ * same call is rejected again.
+ */
+const CONTRACT_ERROR_PATTERN = /\bError\((?:Contract|Auth|Value),|\bHostError\b/;
+
+/**
+ * Transport failures recognised from the message alone, for errors that carry
+ * no code. Deliberately narrow: a bare "network" or "timeout" substring used
+ * to match a contract's `NetworkIdMismatch` or an argument error about a
+ * timeout value, and those were retried as if the connection had dropped.
+ */
+const TRANSIENT_MESSAGE_PATTERN =
+  /fetch failed|network ?error|network request failed|socket hang up|\b(?:ECONNREFUSED|ECONNRESET|ECONNABORTED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|EPIPE)\b|\btimed out\b|\brequest timeout\b/i;
+
+function numericStatus(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) ? value : undefined;
+}
+
+/** An HTTP status carried by a thrown error, when it has one. */
+function statusOf(error: object): number | undefined {
+  const e = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    response?: { status?: unknown } | null;
+  };
+  return (
+    numericStatus(e.status) ?? numericStatus(e.statusCode) ?? numericStatus(e.response?.status)
+  );
+}
+
+/**
  * Whether a thrown error is worth another attempt.
  *
- * Transport failures and timeouts are transient. A caller-initiated abort is
- * not — the caller asked to stop, so retrying would ignore that.
+ * Only transient failures are: a dropped or refused connection, a timeout, or
+ * an HTTP status from {@link isRetryableStatus}. Everything that describes the
+ * request itself stops at the first attempt, because a replay cannot change
+ * the answer and only delays it:
+ *
+ *  - an HTTP status outside the retryable set (400, 401, 403, 404, 409, 422 …),
+ *    whether on the error or on its `errorMapping.ts` mapping;
+ *  - a mapped `auth`, `validation`, `payment`, `not_found`, `conflict`, or
+ *    `contract` failure;
+ *  - malformed tool arguments and unusable responses
+ *    ({@link DETERMINISTIC_ERROR_NAMES});
+ *  - a Soroban contract or host error.
+ *
+ * A caller-initiated abort is not retried either — the caller asked to stop.
+ * Unrecognised errors are not retried: retrying is the exception, so an error
+ * has to look transient to earn a second attempt.
  */
 export function isRetryableError(error: unknown): boolean {
+  return classifyRetryable(error, 0);
+}
+
+function classifyRetryable(error: unknown, depth: number): boolean {
   if (!error || typeof error !== "object") return false;
   const name = (error as { name?: unknown }).name;
   if (name === "AbortError") return false;
   if (name === "TimeoutError") return true;
+  if (typeof name === "string" && DETERMINISTIC_ERROR_NAMES.has(name)) return false;
+
+  const mapped = (error as { mapped?: unknown }).mapped;
+  if (mapped && typeof mapped === "object") {
+    const mappedStatus = numericStatus((mapped as { status?: unknown }).status);
+    if (mappedStatus !== undefined) return isRetryableStatus(mappedStatus);
+    const category = (mapped as { category?: unknown }).category;
+    if (typeof category === "string") {
+      if (DETERMINISTIC_CATEGORIES.has(category)) return false;
+      if (TRANSIENT_CATEGORIES.has(category)) return true;
+    }
+  }
+
+  const status = statusOf(error);
+  if (status !== undefined) return isRetryableStatus(status);
+
   const message = (error as { message?: unknown }).message;
-  if (typeof message !== "string") return false;
-  return /fetch failed|network|socket|ECONN|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|timed? ?out/i.test(
-    message,
-  );
+  if (typeof message === "string" && CONTRACT_ERROR_PATTERN.test(message)) return false;
+
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && TRANSIENT_ERRNO_CODES.has(code)) return true;
+
+  if (typeof message === "string" && TRANSIENT_MESSAGE_PATTERN.test(message)) return true;
+
+  // undici reports a refused connection as TypeError("fetch failed") with the
+  // socket error as its cause; follow a short cause chain.
+  const cause = (error as { cause?: unknown }).cause;
+  return depth < 3 && cause !== undefined && classifyRetryable(cause, depth + 1);
 }
 
 function parsePositiveInt(raw: string | undefined, fallback: number, min: number): number {
@@ -139,25 +260,57 @@ export function computeBackoffDelay(
 }
 
 /**
+ * Parse a Retry-After header value into an **uncapped** wait in milliseconds,
+ * or null when the header is absent, empty, or unparseable.
+ *
+ * RFC 7231 §7.1.3 allows two forms and this accepts both:
+ *
+ *   - `delay-seconds` — a non-negative integer count of seconds.
+ *   - `HTTP-date` — an absolute timestamp (IMF-fixdate, RFC 850, or asctime).
+ *
+ * A date already in the past yields `0`: the retry may proceed immediately.
+ * Nothing here bounds the result — a hostile `Retry-After: 999999` or a date
+ * years in the future parses to a huge number. Callers must clamp
+ * ({@link retryAfterDelay} does).
+ */
+export function parseRetryAfterMs(
+  headerValue: string | null | undefined,
+  now: number = Date.now(),
+): number | null {
+  if (headerValue == null) return null;
+  const trimmed = headerValue.trim();
+  if (trimmed === "") return null;
+
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.floor(seconds * 1000);
+  }
+
+  const date = Date.parse(trimmed);
+  if (Number.isNaN(date)) return null;
+  return Math.max(0, date - now);
+}
+
+/**
  * A server-supplied Retry-After (seconds, or an HTTP date) in milliseconds, or
- * null when absent/unparseable. Honouring it is politer than guessing, but it is
- * still clamped to maxDelayMs so a hostile or mistaken header cannot stall a
- * tool call.
+ * null when absent/unparseable.
+ *
+ * Honouring the header is politer than guessing at backoff, but it is never
+ * allowed to stall a tool call: the result is clamped to the retry policy's
+ * `maxDelayMs` and, when a tool deadline is supplied, to that too — so an
+ * extreme value, a far-future date, or a hostile header degrades to the cap
+ * rather than an unbounded sleep. A past date clamps to `0`.
  */
 export function retryAfterDelay(
   headerValue: string | null | undefined,
   policy: RetryPolicy,
   now: number = Date.now(),
+  deadlineMs: number = Infinity,
 ): number | null {
-  if (!headerValue) return null;
-  const trimmed = headerValue.trim();
-  const seconds = Number(trimmed);
-  if (Number.isFinite(seconds) && seconds >= 0) {
-    return Math.min(Math.floor(seconds * 1000), policy.maxDelayMs);
-  }
-  const date = Date.parse(trimmed);
-  if (Number.isNaN(date)) return null;
-  return Math.min(Math.max(0, date - now), policy.maxDelayMs);
+  const parsed = parseRetryAfterMs(headerValue, now);
+  if (parsed === null) return null;
+  const cap = Math.max(0, Math.min(policy.maxDelayMs, deadlineMs));
+  return Math.min(parsed, cap);
 }
 
 /** What happened on one failed attempt, for logging. */
@@ -194,6 +347,15 @@ export interface RetryOptions<T> {
   delayFromResult?: (result: T) => number | null;
   /** Called after each failed attempt that will be retried. */
   onRetry?: (info: RetryAttemptInfo) => void;
+  /**
+   * Awaited before every attempt, including the first.
+   *
+   * The hook exists for cross-call coordination: a per-origin rate-limit
+   * coordinator uses it to hold a call back until the shared backoff for its
+   * origin has elapsed, so concurrent calls do not each retry into the same
+   * server window. It may reject (e.g. on cancellation) to abort the retry.
+   */
+  beforeAttempt?: (attempt: number) => Promise<void>;
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
@@ -225,6 +387,7 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions<T
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const isLast = attempt === attempts;
     try {
+      await options.beforeAttempt?.(attempt);
       const result = await fn();
       if (!isLast && options.shouldRetryResult?.(result)) {
         const override = options.delayFromResult?.(result) ?? null;

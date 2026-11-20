@@ -14,6 +14,7 @@ import {
   isIdempotentMethod,
   isRetryableError,
   isRetryableStatus,
+  parseRetryAfterMs,
   retryAfterDelay,
   retryPolicyForTool,
   retryPolicyFromEnv,
@@ -177,6 +178,36 @@ describe("computeBackoffDelay", () => {
   });
 });
 
+describe("parseRetryAfterMs", () => {
+  it("parses a delay-seconds header", () => {
+    expect(parseRetryAfterMs("2")).toBe(2_000);
+    expect(parseRetryAfterMs("0")).toBe(0);
+    expect(parseRetryAfterMs("  30  ")).toBe(30_000);
+  });
+
+  it("parses an HTTP-date header as the time remaining", () => {
+    const now = Date.parse("2026-01-01T00:00:00Z");
+    expect(parseRetryAfterMs("Thu, 01 Jan 2026 00:00:30 GMT", now)).toBe(30_000);
+  });
+
+  it("treats an HTTP-date in the past as no delay", () => {
+    const now = Date.parse("2026-01-01T00:00:00Z");
+    expect(parseRetryAfterMs("Thu, 01 Jan 2020 00:00:00 GMT", now)).toBe(0);
+  });
+
+  it("returns null for a missing, empty, or unparseable header", () => {
+    expect(parseRetryAfterMs(null)).toBeNull();
+    expect(parseRetryAfterMs(undefined)).toBeNull();
+    expect(parseRetryAfterMs("")).toBeNull();
+    expect(parseRetryAfterMs("   ")).toBeNull();
+    expect(parseRetryAfterMs("soon")).toBeNull();
+  });
+
+  it("does not bound an extreme value — clamping is the caller's job", () => {
+    expect(parseRetryAfterMs("999999")).toBe(999_999_000);
+  });
+});
+
 describe("retryAfterDelay", () => {
   it("honours a delay-seconds header", () => {
     expect(retryAfterDelay("2", { ...policy, maxDelayMs: 10_000 })).toBe(2_000);
@@ -184,17 +215,34 @@ describe("retryAfterDelay", () => {
 
   it("honours an HTTP-date header", () => {
     const now = Date.parse("2026-01-01T00:00:00Z");
-    expect(retryAfterDelay("Thu, 01 Jan 2026 00:00:00 GMT", policy, now)).toBe(0);
+    expect(
+      retryAfterDelay("Thu, 01 Jan 2026 00:00:30 GMT", { ...policy, maxDelayMs: 60_000 }, now),
+    ).toBe(30_000);
+  });
+
+  it("treats a past date as no delay", () => {
+    const now = Date.parse("2026-01-01T00:00:00Z");
+    expect(retryAfterDelay("Thu, 01 Jan 2020 00:00:00 GMT", policy, now)).toBe(0);
   });
 
   it("clamps to maxDelayMs so a hostile header cannot stall the call", () => {
     expect(retryAfterDelay("99999", policy)).toBe(policy.maxDelayMs);
+    expect(retryAfterDelay("Mon, 01 Jan 3000 00:00:00 GMT", policy)).toBe(policy.maxDelayMs);
+  });
+
+  it("clamps to a tool deadline when one is supplied", () => {
+    expect(retryAfterDelay("30", { ...policy, maxDelayMs: 60_000 }, Date.now(), 5_000)).toBe(5_000);
+  });
+
+  it("never returns more than the smaller of the two caps", () => {
+    expect(retryAfterDelay("30", { ...policy, maxDelayMs: 2_000 }, Date.now(), 5_000)).toBe(2_000);
   });
 
   it("ignores a missing or unparseable header", () => {
     expect(retryAfterDelay(null, policy)).toBeNull();
     expect(retryAfterDelay(undefined, policy)).toBeNull();
     expect(retryAfterDelay("soon", policy)).toBeNull();
+    expect(retryAfterDelay("  ", policy)).toBeNull();
   });
 });
 
@@ -315,6 +363,44 @@ describe("withRetry — retryable results", () => {
     const result = await withRetry(fn, { policy, label: "buy", ...retryOn503 });
     expect(result).toEqual({ status: 402 });
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("withRetry — beforeAttempt coordination", () => {
+  it("awaits the cross-call hook before every attempt", async () => {
+    const seen: number[] = [];
+    const { sleep, delays } = recordingSleep();
+    const fn = vi.fn().mockResolvedValue("ok");
+
+    await withRetry(fn, {
+      policy,
+      label: "GET /x",
+      sleep,
+      beforeAttempt: async (attempt) => {
+        seen.push(attempt);
+      },
+    });
+
+    expect(seen).toEqual([1]);
+    expect(delays).toEqual([]);
+  });
+
+  it("stops the retry loop when coordination rejects (e.g. on cancellation)", async () => {
+    const fn = vi.fn().mockResolvedValue("ok");
+
+    await expect(
+      withRetry(fn, {
+        policy,
+        label: "GET /x",
+        beforeAttempt: async () => {
+          const error = new Error("The operation was aborted");
+          error.name = "AbortError";
+          throw error;
+        },
+      }),
+    ).rejects.toThrow("The operation was aborted");
+
+    expect(fn).not.toHaveBeenCalled();
   });
 });
 

@@ -22,6 +22,8 @@ vi.mock("@modelcontextprotocol/sdk/types.js", () => ({
   GetPromptRequestSchema: {},
   ListResourcesRequestSchema: {},
   ReadResourceRequestSchema: {},
+  SubscribeRequestSchema: {},
+  UnsubscribeRequestSchema: {},
 }));
 
 vi.mock("@x402/stellar", () => ({ createEd25519Signer: vi.fn() }));
@@ -62,6 +64,7 @@ import {
   buy,
   registerOnchain,
   walletInfo,
+  walletAllowance,
   useProfile,
   switchNetworkProfile,
   listProfiles,
@@ -75,9 +78,13 @@ import {
   setListed,
   setTags,
   normalizeMetadataPointer,
+  prewarmCatalogCache,
+  clientConfig,
+  mainnetBanner,
   _setAgentWallet,
   _setAgentApiKey,
   _resetProfiles,
+  _setMockMode,
 } from "./index.js";
 import {
   recordCatalogSnapshot,
@@ -88,12 +95,14 @@ import { Keypair } from "@stellar/stellar-sdk";
 
 function mockResponse(data: unknown, ok = true, status = 200): Response {
   const body = JSON.stringify(data);
+  const bytes = new TextEncoder().encode(body);
   return {
     ok,
     status,
     statusText: ok ? "OK" : "Error",
     text: () => Promise.resolve(body),
     json: () => Promise.resolve(data),
+    arrayBuffer: () => Promise.resolve(bytes.buffer),
     headers: new Headers({ "content-type": "application/json" }),
   } as Response;
 }
@@ -510,6 +519,212 @@ describe("preview", () => {
       expect.anything(),
     );
   });
+
+  it("includes owner fields when active wallet matches publisherWallet", async () => {
+    const wallet = { publicKey: "GOWNER...", secretKey: "SOWNER..." };
+    _setAgentWallet(wallet);
+    _setAgentApiKey("test-api-key");
+
+    const metaWithOwner = {
+      ...singleResourceMeta,
+      publisherWallet: "GOWNER...",
+    };
+    const verWithListed = {
+      resourceId: "res-001",
+      title: "Introduction to Stellar",
+      status: "verified",
+      listed: true,
+      onchainStatus: "registered",
+      verification: {
+        isOriginal: true,
+        confidence: 0.95,
+        flags: [],
+        checkedAt: new Date().toISOString(),
+      },
+    };
+
+    let callCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      callCount++;
+      if (url.includes("/meta")) {
+        return mockResponse(metaWithOwner);
+      }
+      if (url.includes("/verification")) {
+        return mockResponse(verWithListed);
+      }
+      return mockResponse({ error: "not found" }, false, 404);
+    });
+
+    try {
+      const result = await preview("res-001");
+      const parsed = JSON.parse(result);
+
+      expect(parsed.isOwner).toBe(true);
+      expect(parsed.listed).toBe(true);
+      expect(parsed.onchainStatus).toBe("registered");
+      expect(parsed.delistNote).toBeUndefined();
+
+      // Two calls: /meta and /verification
+      expect(callCount).toBe(2);
+    } finally {
+      _setAgentWallet(null);
+      _setAgentApiKey(null);
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("includes delistNote when resource is delisted", async () => {
+    const wallet = { publicKey: "GOWNER...", secretKey: "SOWNER..." };
+    _setAgentWallet(wallet);
+    _setAgentApiKey("test-api-key");
+
+    const metaWithOwner = {
+      ...singleResourceMeta,
+      publisherWallet: "GOWNER...",
+    };
+    const verDelisted = {
+      resourceId: "res-001",
+      title: "Introduction to Stellar",
+      status: "verified",
+      listed: false,
+      onchainStatus: "registered",
+      verification: {
+        isOriginal: true,
+        confidence: 0.95,
+        flags: [],
+        checkedAt: new Date().toISOString(),
+      },
+    };
+
+    let callCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      callCount++;
+      if (url.includes("/meta")) {
+        return mockResponse(metaWithOwner);
+      }
+      if (url.includes("/verification")) {
+        return mockResponse(verDelisted);
+      }
+      return mockResponse({ error: "not found" }, false, 404);
+    });
+
+    try {
+      const result = await preview("res-001");
+      const parsed = JSON.parse(result);
+
+      expect(parsed.isOwner).toBe(true);
+      expect(parsed.listed).toBe(false);
+      expect(parsed.delistNote).toBe(
+        "This resource is delisted and not discoverable in the public catalog.",
+      );
+    } finally {
+      _setAgentWallet(null);
+      _setAgentApiKey(null);
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("does not include owner fields when not the owner", async () => {
+    const wallet = { publicKey: "GNOTOWNER...", secretKey: "SNOTOWNER..." };
+    _setAgentWallet(wallet);
+    _setAgentApiKey("test-api-key");
+
+    const metaNotOwner = {
+      ...singleResourceMeta,
+      publisherWallet: "GOWNER...",
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse(metaNotOwner));
+
+    try {
+      const result = await preview("res-001");
+      const parsed = JSON.parse(result);
+
+      expect(parsed.isOwner).toBeUndefined();
+      expect(parsed.listed).toBeUndefined();
+      expect(parsed.onchainStatus).toBeUndefined();
+      expect(parsed.delistNote).toBeUndefined();
+
+      // Only one call: /meta (no /verification for non-owners)
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      _setAgentWallet(null);
+      _setAgentApiKey(null);
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("does not include owner fields when no wallet configured", async () => {
+    _setAgentWallet(null);
+    _setAgentApiKey("test-api-key");
+
+    const metaNotOwner = {
+      ...singleResourceMeta,
+      publisherWallet: "GOWNER...",
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse(metaNotOwner));
+
+    try {
+      const result = await preview("res-001");
+      const parsed = JSON.parse(result);
+
+      expect(parsed.isOwner).toBeUndefined();
+      expect(parsed.listed).toBeUndefined();
+    } finally {
+      _setAgentWallet(null);
+      _setAgentApiKey(null);
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("sends x-api-key header when api key is configured", async () => {
+    const wallet = { publicKey: "GOWNER...", secretKey: "SOWNER..." };
+    _setAgentWallet(wallet);
+    _setAgentApiKey("test-api-key");
+
+    const metaWithOwner = {
+      ...singleResourceMeta,
+      publisherWallet: "GOWNER...",
+    };
+    const verWithListed = {
+      resourceId: "res-001",
+      title: "Introduction to Stellar",
+      status: "verified",
+      listed: true,
+      onchainStatus: "registered",
+      verification: {
+        isOriginal: true,
+        confidence: 0.95,
+        flags: [],
+        checkedAt: new Date().toISOString(),
+      },
+    };
+
+    let lastInit: RequestInit | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        lastInit = init;
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes("/meta")) return mockResponse(metaWithOwner);
+        if (url.includes("/verification")) return mockResponse(verWithListed);
+        return mockResponse({ error: "not found" }, false, 404);
+      },
+    );
+
+    try {
+      await preview("res-001");
+      // Check that the /verification call also got the x-api-key
+      expect(lastInit?.headers).toEqual(expect.objectContaining({ "x-api-key": "test-api-key" }));
+    } finally {
+      _setAgentWallet(null);
+      _setAgentApiKey(null);
+      vi.restoreAllMocks();
+    }
+  });
 });
 
 describe("publishStatus", () => {
@@ -788,7 +1003,14 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
         // Horizon balance: enough USDC
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -826,7 +1048,14 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
         // Horizon: insufficient balance
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "1.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "1.00",
+              },
+            ],
           }),
         );
       }
@@ -853,7 +1082,14 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "999.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "999.00",
+              },
+            ],
           }),
         );
       }
@@ -875,6 +1111,67 @@ describe("buy – happy path (402 → sign → retry → success)", () => {
   it("throws when no wallet is configured", async () => {
     _setAgentWallet(null);
     await expect(buy("res-001")).rejects.toThrow("No wallet");
+  });
+
+  it("rejects counterfeit USDC: reports no-trustline when only a fake USDC is present (#1053)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/accounts/")) {
+        // A counterfeit "USDC" with a different issuer — should NOT be selected.
+        return Promise.resolve(
+          mockResponse({
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE",
+                balance: "5000.0000000",
+              },
+              { asset_type: "native", balance: "100.0000000" },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(mockResponse({ id: "res-001", title: "Doc", price: "5.00" }));
+    });
+
+    const result = await walletInfo();
+    // The counterfeit should be invisible — no-trustline status, zero USDC.
+    expect(result).toContain("USDC Balance: 0");
+    expect(result).toContain("no-trustline");
+  });
+
+  it("selects only canonical USDC when both real and counterfeit are present (#1053)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((url) => {
+      const u = String(url);
+      if (u.includes("/accounts/")) {
+        return Promise.resolve(
+          mockResponse({
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE",
+                balance: "5000.0000000",
+              },
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "42.0000000",
+              },
+              { asset_type: "native", balance: "100.0000000" },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(mockResponse({ id: "res-001", title: "Doc", price: "5.00" }));
+    });
+
+    const result = await walletInfo();
+    // Only the canonical (42.0000000) should be reported, not the counterfeit (5000).
+    expect(result).toContain("USDC Balance: 42.0000000");
+    expect(result).not.toContain("USDC Balance: 5000.0000000");
   });
 });
 
@@ -902,7 +1199,14 @@ describe("buy – output shape for agent consumption", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -966,7 +1270,14 @@ describe("buy – purchase receipt persistence", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1009,7 +1320,14 @@ describe("buy – purchase receipt persistence", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1047,7 +1365,14 @@ describe("buy – purchase receipt persistence", () => {
       if (u.includes("/accounts/")) {
         return Promise.resolve(
           mockResponse({
-            balances: [{ asset_type: "credit_alphanum4", asset_code: "USDC", balance: "100.00" }],
+            balances: [
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "100.00",
+              },
+            ],
           }),
         );
       }
@@ -1077,11 +1402,17 @@ describe("dry-run – publish validation", () => {
   beforeEach(() => {
     _setAgentWallet(testWallet);
     _setAgentApiKey("test-api-key");
+    _setMockMode(true);
+    // A dry-run publish reads /agent/status and the wallet balance live
+    // (best-effort). Keep those reads offline so the suite never waits on the
+    // real API or Horizon; the dry run reports the failed read and proceeds.
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("fetch failed"));
   });
 
   afterEach(() => {
     _setAgentWallet(null);
     _setAgentApiKey(null);
+    _setMockMode(false);
     vi.restoreAllMocks();
   });
 
@@ -1610,8 +1941,11 @@ describe("setupWallet – sponsored account failure diagnostics", () => {
 });
 
 describe("repairSponsoredAccount", () => {
-  const secretKey = "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-  const publicKey = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  // SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY is a real StrKey-valid
+  // secret seed (derived from Buffer.alloc(32, 0x01)). The test mocks Keypair.fromSecret
+  // so the key is never used for real cryptographic operations.
+  const secretKey = "SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY";
+  const publicKey = "GCFIRY65OQE7DFP5KLNS2PF2LVZMUZYJX4OZIEQ36N2IQANUB5XVYOJR";
 
   beforeEach(() => {
     _resetProfiles();
@@ -1633,7 +1967,12 @@ describe("repairSponsoredAccount", () => {
         subentry_count: 1,
         balances: [
           { asset_type: "native", balance: "2.0000000" },
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "0.0000000" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "0.0000000",
+          },
         ],
       }),
     );
@@ -1745,7 +2084,12 @@ describe("multi-wallet profiles", () => {
           subentry_count: 2,
           balances: [
             { asset_type: "native", balance: "100.0000000" },
-            { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "12.5" },
+            {
+              asset_type: "credit_alphanum4",
+              asset_code: "USDC",
+              asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+              balance: "12.5",
+            },
           ],
         }),
       ),
@@ -1808,7 +2152,12 @@ describe("wallet_info balance details", () => {
         subentry_count: 1,
         balances: [
           { asset_type: "native", balance: "5.0000000" },
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "0.0000000" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "0.0000000",
+          },
         ],
       }),
     );
@@ -1828,7 +2177,12 @@ describe("wallet_info balance details", () => {
         subentry_count: 1,
         balances: [
           { asset_type: "native", balance: "50.1234567" },
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "99.9999999" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "99.9999999",
+          },
         ],
       }),
     );
@@ -1848,7 +2202,12 @@ describe("wallet_info balance details", () => {
         subentry_count: 5, // 5 trustlines/offers/signers
         balances: [
           { asset_type: "native", balance: "20.0000000" },
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "10.0" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "10.0",
+          },
         ],
       }),
     );
@@ -1864,7 +2223,12 @@ describe("wallet_info balance details", () => {
         subentry_count: 1,
         balances: [
           { asset_type: "native", balance: "1.0000000" }, // exactly the reserve
-          { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "5.0" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: "5.0",
+          },
         ],
       }),
     );
@@ -1881,8 +2245,113 @@ describe("wallet_info balance details", () => {
   });
 });
 
-// ── networkProfile (#412) ───────────────────────────────────────────────────
+// ── wallet_allowance (#1052) ────────────────────────────────────────────────
 
+describe("wallet_allowance", () => {
+  let purchaseDir: string;
+
+  beforeEach(async () => {
+    _resetProfiles();
+    _setAgentWallet(testWallet);
+    const { mkdtempSync } = await import("fs");
+    const { tmpdir } = await import("os");
+    const { join } = await import("path");
+    purchaseDir = mkdtempSync(join(tmpdir(), "mv-allowance-"));
+    const { _setPurchasesFilePath, _clearPurchases } = await import("./purchaseHistory.js");
+    _setPurchasesFilePath(join(purchaseDir, "purchases.json"));
+    _clearPurchases();
+  });
+
+  afterEach(async () => {
+    _setAgentWallet(null);
+    _resetProfiles();
+    const { rmSync } = await import("fs");
+    rmSync(purchaseDir, { recursive: true, force: true });
+    const { _setPurchasesFilePath } = await import("./purchaseHistory.js");
+    _setPurchasesFilePath(null);
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  function mockFundedAccount(usdc = "7.5000000") {
+    return vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      mockResponse({
+        subentry_count: 1,
+        balances: [
+          { asset_type: "native", balance: "20.0000000" },
+          {
+            asset_type: "credit_alphanum4",
+            asset_code: "USDC",
+            asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            balance: usdc,
+          },
+        ],
+      }),
+    );
+  }
+
+  it("summarizes balance, pending spend, and ceiling with asset/network identity", async () => {
+    const { recordPurchase } = await import("./purchaseHistory.js");
+    recordPurchase({
+      resourceId: "res-pending",
+      amount: "2.5",
+      network: "stellar:testnet",
+      txHash: null,
+      receiptRef: "x402:pending",
+      profile: "default",
+    });
+    recordPurchase({
+      resourceId: "res-other-network",
+      amount: "1",
+      network: "stellar:pubnet",
+      txHash: null,
+      profile: "default",
+    });
+    recordPurchase({
+      resourceId: "res-settled",
+      amount: "4",
+      network: "stellar:testnet",
+      txHash: "a".repeat(64),
+      profile: "default",
+    });
+    vi.stubEnv("MINDVAULT_MAX_AUTO_PAY_USDC", "3");
+    mockFundedAccount();
+
+    const text = await walletAllowance();
+
+    expect(text).toContain("Wallet allowance (read-only)");
+    expect(text).toContain("Profile: default");
+    expect(text).toContain("Network: stellar:testnet");
+    expect(text).toContain("Asset: USDC (issuer GBBD47IF");
+    expect(text).toContain("USDC balance: 7.5 USDC · stellar:testnet");
+    expect(text).toContain(
+      "Estimated pending spend: 2.5 USDC · stellar:testnet (estimate; 1 receipt(s))",
+    );
+    expect(text).toContain("Configured payment ceiling: 3 USDC · stellar:testnet");
+    // min(ceiling 3, balance 7.5 - pending 2.5 = 5)
+    expect(text).toContain("Estimated remaining allowance: 3 USDC · stellar:testnet (estimate;");
+    expect(text).toContain("res-pending");
+    expect(text).not.toContain("res-other-network");
+    expect(text).not.toContain("res-settled");
+    expect(text).toContain("No signing, transfer, or payment was performed");
+  });
+
+  it("reports zero pending spend when no receipts exist", async () => {
+    mockFundedAccount();
+
+    const text = await walletAllowance();
+
+    expect(text).toContain("Estimated pending spend: 0 USDC · stellar:testnet");
+    expect(text).toContain("0 receipt(s)");
+  });
+
+  it("requires an active wallet", async () => {
+    _setAgentWallet(null);
+    await expect(walletAllowance()).rejects.toThrow(/mindvault_setup_wallet/);
+  });
+});
+
+// ── networkProfile (#412) ───────────────────────────────────────────────────
 describe("networkProfile", () => {
   it("returns all expected fields in deterministic JSON format", () => {
     const result = networkProfile();
@@ -2438,7 +2907,8 @@ describe("pendingTransfer", () => {
 
 describe("setListed", () => {
   beforeEach(() => {
-    _resetProfiles();  });
+    _resetProfiles();
+  });
 
   it("throws when no wallet is set up", async () => {
     await expect(setListed("res-001", false)).rejects.toThrow("No wallet");
@@ -2608,7 +3078,12 @@ describe("API health preflight before mutation tools (#603)", () => {
       dryRun: true,
     });
     expect(JSON.parse(result).mode).toBe("dry-run");
-    expect(fetchMock).not.toHaveBeenCalled();
+    // The dry run may read /agent/status and the balance live (#856), but it
+    // never runs the GET /resources reachability preflight.
+    const preflightCalls = fetchMock.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => /\/resources(\?|$)/.test(url));
+    expect(preflightCalls).toEqual([]);
   });
 });
 
@@ -2694,7 +3169,12 @@ describe("setupWallet – half-completed sponsored creation", () => {
           subentry_count: 1,
           balances: [
             { asset_type: "native", balance: "10.0000000" },
-            { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "25.0" },
+            {
+              asset_type: "credit_alphanum4",
+              asset_code: "USDC",
+              asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+              balance: "25.0",
+            },
           ],
         }),
       ),
@@ -2940,106 +3420,5 @@ describe("offline catalog cache fallback (#556)", () => {
     await expect(
       dispatchTool("mindvault_register", { name: "N", email: "e@example.com" }),
     ).rejects.toThrow();
-  });
-});
-
-// ── disputeResource (#869) ──────────────────────────────────────────────────
-
-describe("disputeResource", () => {
-  beforeEach(() => {
-    _resetProfiles();
-  });
-
-  it("throws when no wallet is set up", async () => {
-    await expect(disputeResource("res-001", "flag", "Spam")).rejects.toThrow("No wallet");
-  });
-
-  it("succeeds (flag) in mock mode when wallet is present", async () => {
-    _setAgentWallet({
-      publicKey: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
-      secretKey: "SD1234567890123456789012345678901234567890123456789012345",
-    });
-    process.env.MINDVAULT_MOCK = "1";
-    try {
-      const res = await disputeResource("res-001", "flag", "Duplicate listing");
-      const parsed = JSON.parse(res);
-      expect(parsed.status).toBe("success");
-      expect(parsed.resourceId).toBe("res-001");
-      expect(parsed.action).toBe("flag");
-      expect(parsed.reason).toBe("Duplicate listing");
-      expect(parsed.txHash).toMatch(/MOCK_TX_DISPUTE_FLAG/);
-    } finally {
-      delete process.env.MINDVAULT_MOCK;
-    }
-  });
-
-  it("succeeds (unflag) in mock mode when wallet is present", async () => {
-    _setAgentWallet({
-      publicKey: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
-      secretKey: "SD1234567890123456789012345678901234567890123456789012345",
-    });
-    process.env.MINDVAULT_MOCK = "1";
-    try {
-      const res = await disputeResource("res-001", "unflag", "Issue resolved");
-      const parsed = JSON.parse(res);
-      expect(parsed.status).toBe("success");
-      expect(parsed.action).toBe("unflag");
-      expect(parsed.txHash).toMatch(/MOCK_TX_DISPUTE_UNFLAG/);
-    } finally {
-      delete process.env.MINDVAULT_MOCK;
-    }
-  });
-
-  it("dispatches through dispatchTool with valid arguments", async () => {
-    _setAgentWallet({
-      publicKey: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
-      secretKey: "SD1234567890123456789012345678901234567890123456789012345",
-    });
-    process.env.MINDVAULT_MOCK = "1";
-    try {
-      const res = await dispatchTool("mindvault_dispute", {
-        resourceId: "res-001",
-        action: "flag",
-        reason: "Test flag",
-      });
-      expect(res).toContain("success");
-      expect(res).toContain("flag");
-    } finally {
-      delete process.env.MINDVAULT_MOCK;
-    }
-  });
-
-  it("rejects an invalid action value", async () => {
-    _setAgentWallet({
-      publicKey: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
-      secretKey: "SD1234567890123456789012345678901234567890123456789012345",
-    });
-    process.env.MINDVAULT_MOCK = "1";
-    try {
-      await expect(
-        dispatchTool("mindvault_dispute", {
-          resourceId: "res-001",
-          action: "delete",
-          reason: "bad",
-        }),
-      ).rejects.toThrow();
-    } finally {
-      delete process.env.MINDVAULT_MOCK;
-    }
-  });
-
-  it("rejects a missing reason", async () => {
-    _setAgentWallet({
-      publicKey: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
-      secretKey: "SD1234567890123456789012345678901234567890123456789012345",
-    });
-    process.env.MINDVAULT_MOCK = "1";
-    try {
-      await expect(
-        dispatchTool("mindvault_dispute", { resourceId: "res-001", action: "flag" }),
-      ).rejects.toThrow();
-    } finally {
-      delete process.env.MINDVAULT_MOCK;
-    }
   });
 });

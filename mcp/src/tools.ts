@@ -15,39 +15,68 @@
  */
 
 import { catalogFilterInputProperties } from "./catalogFilters.js";
+import { ONCHAIN_PREFLIGHT_OUTPUT_SCHEMA } from "./onchainPreflight.js";
+import {
+  DEPLOYMENT_MANIFEST_INPUT_SCHEMA,
+  DEPLOYMENT_VERIFICATION_OUTPUT_SCHEMA,
+} from "./deploymentVerification.js";
+import { MIGRATION_PREVIEW_OUTPUT_SCHEMA } from "./stateMigrationPreview.js";
+import {
+  SUPPORT_BUNDLE_DEFAULT_AUDIT_LINES,
+  SUPPORT_BUNDLE_MAX_AUDIT_LINES,
+  SUPPORT_BUNDLE_OUTPUT_SCHEMA,
+} from "./supportBundle.js";
+import { withToolErrorVariant } from "./outputValidation.js";
 import {
   AGENT_STATUS_OUTPUT_SCHEMA,
+  ATTESTATION_VERIFICATION_OUTPUT_SCHEMA,
   BATCH_CATALOG_LOOKUP_OUTPUT_SCHEMA,
   CATALOG_LIST_OUTPUT_SCHEMA,
   CONSISTENCY_OUTPUT_SCHEMA,
+  METADATA_DIFF_OUTPUT_SCHEMA,
   FEE_CONFIG_OUTPUT_SCHEMA,
   LIST_PROFILES_OUTPUT_SCHEMA,
   METADATA_HASH_PREVIEW_OUTPUT_SCHEMA,
   METRICS_OUTPUT_SCHEMA,
   NETWORK_PROFILE_OUTPUT_SCHEMA,
   ONCHAIN_MUTATION_OUTPUT_SCHEMA,
+  LEASE_BUY_OUTPUT_SCHEMA,
+  LEASE_STATUS_OUTPUT_SCHEMA,
   PENDING_TRANSFER_OUTPUT_SCHEMA,
   PREVIEW_OUTPUT_SCHEMA,
   PUBLISH_BUY_OUTPUT_SCHEMA,
   PUBLISH_BATCH_OUTPUT_SCHEMA,
   PUBLISH_STATUS_OUTPUT_SCHEMA,
   PUBLISH_TEMPLATE_OUTPUT_SCHEMA,
+  PROFILE_EXPORT_OUTPUT_SCHEMA,
+  PROFILE_IMPORT_OUTPUT_SCHEMA,
   PURCHASE_HISTORY_OUTPUT_SCHEMA,
   BUY_OUTPUT_SCHEMA,
   RECOVER_CACHE_OUTPUT_SCHEMA,
   REGISTER_ONCHAIN_OUTPUT_SCHEMA,
   REGISTRY_COUNT_OUTPUT_SCHEMA,
+  REGISTRY_CREATOR_PAGE_OUTPUT_SCHEMA,
   REGISTRY_INFO_OUTPUT_SCHEMA,
+  REGISTRY_ERROR_EXPLANATION_OUTPUT_SCHEMA,
   REGISTRY_LIST_OUTPUT_SCHEMA,
+  REGISTRY_TAG_SEARCH_OUTPUT_SCHEMA,
   REGISTRY_LOOKUP_OUTPUT_SCHEMA,
   RESOURCE_SUBSCRIPTION_OUTPUT_SCHEMA,
+  RPC_HEALTH_OUTPUT_SCHEMA,
+  SERVER_ENDPOINTS_OUTPUT_SCHEMA,
   TX_STATUS_OUTPUT_SCHEMA,
   USE_PROFILE_OUTPUT_SCHEMA,
+  WALLET_ALLOWANCE_OUTPUT_SCHEMA,
   WALLET_BALANCES_OUTPUT_SCHEMA,
   WALLET_INFO_OUTPUT_SCHEMA,
   WALLET_SETUP_OUTPUT_SCHEMA,
+  WALLET_ALLOWANCE_OUTPUT_SCHEMA,
 } from "./outputSchemas.js";
-import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_EXPORT_OUTPUT_SCHEMA } from "./receipts.js";
+import {
+  RECEIPT_EXPORT_MAX_LIMIT,
+  RECEIPT_EXPORT_OUTPUT_SCHEMA,
+  RECEIPT_ROW_FIELDS,
+} from "./receipts.js";
 import {
   DEBUG_BUNDLE_DEFAULT_AUDIT_LINES,
   DEBUG_BUNDLE_MAX_AUDIT_LINES,
@@ -104,7 +133,7 @@ export interface ToolDefinition {
   annotations: ToolAnnotations;
 }
 
-export const TOOL_DEFINITIONS: ToolDefinition[] = [
+const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_setup_wallet",
     description:
@@ -130,7 +159,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: {
       title: "Set Up Wallet",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     },
   },
@@ -142,6 +171,40 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     outputSchema: WALLET_INFO_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Wallet Info",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_wallet_balances",
+    description:
+      "Balances for every configured agent wallet (each profile with a wallet) plus the platform wallet, from PLATFORM_WALLET_ADDRESS when set. Read-only. Reports XLM total/available/reserve and USDC balance/status per wallet over Horizon, plus totals across unique wallets. A wallet that fails to load is reported with a note rather than failing the whole call.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+    outputSchema: WALLET_BALANCES_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Wallet Balances",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_wallet_allowance",
+    description:
+      "Summarize the active wallet's USDC balance, estimated pending spend, and configured automatic payment ceiling on the active network. Read-only: it never signs, transfers, or pays. Every amount carries its asset (USDC, issuer, Soroban contract) and x402 network identity. Pending spend is an estimate derived from local purchase receipts without an on-chain transaction hash, and the remaining allowance is a derived estimate of the largest next automatic payment the ceiling and available balance would permit.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+    outputSchema: WALLET_ALLOWANCE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Wallet Allowance",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -174,7 +237,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: {
       title: "Repair Sponsored Account",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
     },
   },
@@ -211,6 +274,36 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: {
       title: "List Profiles",
       readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_export_profiles",
+    description:
+      "Export versioned, non-secret profile setup metadata for a team. The payload contains profile names, network preferences, and safe user preferences only; wallet secret keys, private keys, seed phrases, and publisher API keys are never included.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: PROFILE_EXPORT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Export Profile Setup",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_import_profiles",
+    description:
+      "Import a versioned, non-secret profile setup payload. It merges profile names and preferences without overwriting wallet credentials or publisher API keys.",
+    inputSchema: {
+      type: "object",
+      properties: { data: { type: "string", description: "JSON profile-export payload." } },
+      required: ["data"],
+    },
+    outputSchema: PROFILE_IMPORT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Import Profile Setup",
+      readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: true,
     },
@@ -258,7 +351,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "mindvault_search",
     description:
-      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries.",
+      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries. Use nextCursor for pagination; cursors are bound to the active profile and exact filter set. Set bypassCache=true for a fresh per-call read.",
     inputSchema: {
       type: "object",
       properties: { ...catalogFilterInputProperties },
@@ -331,7 +424,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: {
       title: "Register Publisher",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     },
   },
@@ -392,7 +485,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "mindvault_buy",
     description:
-      "Pay USDC via x402 and access a resource. Payments above MINDVAULT_MAX_AUTO_PAY_USDC (10 USDC by default) require maxAutoPayUsdc set to at least the resource price. On mainnet, pass confirmMainnet: true (or set MINDVAULT_ALLOW_MAINNET=1). Pass dryRun: true to validate the resource and show intended payment flow without submitting payment. Pass wait: true to poll the payment transaction until it settles on-chain before returning.",
+      'Pay USDC via x402 and access a resource. Payments above MINDVAULT_MAX_AUTO_PAY_USDC (10 USDC by default) require maxAutoPayUsdc set to at least the resource price. On mainnet, pass confirmMainnet: true (or set MINDVAULT_ALLOW_MAINNET=1). Pass dryRun: true to validate the resource and show intended payment flow without submitting payment. Pass waitPolicy: "wait-for-final-result" (or wait: true) to poll the payment transaction until it settles on-chain before returning; the default "return-after-submit" returns immediately with the tx hash and current status.',
     inputSchema: {
       type: "object",
       properties: {
@@ -422,7 +515,14 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         wait: {
           type: "boolean",
           description:
-            "Optional flag. When true, wait and poll the payment transaction on Soroban until it settles (SUCCESS or FAILED) or the timeout elapses, returning a settlement confirmation block. Off by default, in which case the buy returns as soon as the payment response arrives.",
+            'Optional flag. When true, wait and poll the payment transaction on Soroban until it settles (SUCCESS or FAILED) or the timeout elapses, returning a settlement confirmation block. Off by default, in which case the buy returns as soon as the payment response arrives. Legacy shorthand for waitPolicy: "wait-for-final-result".',
+        },
+        waitPolicy: {
+          type: "string",
+          enum: ["return-after-submit", "wait-for-final-result"],
+          description:
+            'How long to wait for the payment transaction before returning. "return-after-submit" (default) returns as soon as the payment is submitted, reporting the tx hash and any status already known; "wait-for-final-result" polls until the transaction reaches a terminal status or timeoutMs elapses. Takes precedence over wait when both are set.',
+          examples: ["return-after-submit", "wait-for-final-result"],
         },
         timeoutMs: {
           type: "integer",
@@ -450,6 +550,81 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false,
+    },
+  },
+  {
+    name: "mindvault_buy_lease",
+    description:
+      "Buy a time-limited access lease on a resource instead of paying per request: pay the creator in USDC directly (hour, day, or week tier priced from the on-chain lease_price), then record the lease on the vault registry contract with the payment hash. The lease is Pending until a settler confirms the payment. Payments above MINDVAULT_MAX_AUTO_PAY_USDC require maxAutoPayUsdc. On mainnet, pass confirmMainnet: true (or set MINDVAULT_ALLOW_MAINNET=1). Pass dryRun: true to see the quote and steps without paying.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description:
+            "The resource ID to lease, from mindvault_browse or mindvault_search. Letters, digits, dot, dash, or underscore.",
+          examples: ["cm7x8y9z", "swcn98besxpp6t1u8e77fqz3"],
+        },
+        tier: {
+          type: "string",
+          enum: ["hour", "day", "week"],
+          description:
+            "Lease duration tier: hour (720 ledgers, 1x price), day (17280 ledgers, 5x), or week (120960 ledgers, 20x).",
+          examples: ["day"],
+        },
+        dryRun: {
+          type: "boolean",
+          description:
+            "Optional dry-run flag. When true, quotes the lease price and lists the steps without paying or writing on-chain.",
+        },
+        maxAutoPayUsdc: {
+          type: "string",
+          description:
+            "Explicit per-call maximum automatic payment in USDC. Required when the lease costs more than MINDVAULT_MAX_AUTO_PAY_USDC; must be at least the quoted price.",
+          examples: ["25.00"],
+        },
+        confirmMainnet: {
+          type: "boolean",
+          description:
+            "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this payment on the public Stellar network.",
+        },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
+      },
+      required: ["resourceId", "tier"],
+    },
+    outputSchema: LEASE_BUY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Buy Access Lease",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
+  },
+  {
+    name: "mindvault_lease_status",
+    description:
+      "Read the access lease recorded on the vault registry contract for a resource and holder (defaults to the agent wallet): tier, state, start and expiry ledgers, and whether it currently grants access. Read-only; no payment.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description: "The resource ID to inspect. Example: 'cm7x8y9z'",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+        holder: {
+          type: "string",
+          description: "Optional holder address (G… key). Defaults to the active agent wallet.",
+        },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: LEASE_STATUS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Lease Status",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -495,6 +670,27 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description: `Max receipts to export, newest first (1–${RECEIPT_EXPORT_MAX_LIMIT}).`,
           examples: [50, 100],
         },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Rows to skip from the newest receipt, for resumable paging. The envelope's nextOffset is the value to pass here on the next call.",
+          examples: [0, 500],
+        },
+        fields: {
+          type: "string",
+          description:
+            "Comma-separated subset of row fields to include, in order. Defaults to every field except sensitive ones. Known fields: " +
+            RECEIPT_ROW_FIELDS.join(", ") +
+            ". Selecting a sensitive field (profile) is an explicit opt-in.",
+          examples: ["resourceId,amount,purchasedAt", "resourceId,txHash,explorerUrl"],
+        },
+        includeSensitive: {
+          type: "boolean",
+          description:
+            "When true, keep sensitive fields (profile) in the default field set. Has no effect when fields is given.",
+          examples: [false, true],
+        },
         groupBy: {
           type: "string",
           enum: ["month"],
@@ -525,6 +721,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "The resource ID to register on-chain (from mindvault_publish output). Must be verified and not already registered. Example: 'cm7x8y9z'",
           examples: ["cm7x8y9z", "res-001", "ckx9j2h3f"],
+        },
+        bypassCache: {
+          type: "boolean",
+          description:
+            "Fetch fresh metadata for this call and report cacheStatus=bypassed without changing shared cache policy.",
         },
         confirmMainnet: {
           type: "boolean",
@@ -596,6 +797,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: "boolean",
           description: "Required for set on mainnet (or set MINDVAULT_ALLOW_MAINNET=1).",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["operation"],
     },
@@ -657,6 +859,30 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     outputSchema: CONSISTENCY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Check Consistency",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_metadata_diff",
+    description:
+      "Compare off-chain resource metadata from the API catalog with the on-chain vault-registry record and report field-level discrepancies. Each compared field (price, metadata pointer, listing status, creator, tags) is reported as match, mismatch, missing_api, or missing_onchain. The response always identifies the comparison sources (API base URL, contract ID) and network so operators know exactly which pair of records they are comparing. Useful for detecting drift after manual edits, failed on-chain sync, or partial publishes. Read-only — does not modify any state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description:
+            "The resource ID to compare between the API catalog and the on-chain vault-registry.",
+          examples: ["swcn98besxpp6t1u8e77fqz3"],
+        },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: METADATA_DIFF_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Metadata Diff",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -749,6 +975,96 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     outputSchema: REGISTRY_LIST_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Registry List",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_registry_creator_page",
+    description:
+      "List one creator's on-chain resources with pagination and optional filters (contract list_by_creator_page_filtered). Returns compact summaries directly from Stellar, not the MindVault API catalog. Filter by listed state, lifecycle state, or both; the filters combine with AND, so a contradictory pair returns an empty page instead of an error. Pass the returned nextCursor back to fetch the next page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        creator: {
+          type: "string",
+          description:
+            "Stellar public key (G…) whose resources to list. The page covers this creator's inventory only.",
+          examples: ["GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"],
+        },
+        cursor: {
+          type: "string",
+          description: "Opaque cursor from a previous page's nextCursor. Omit for the first page.",
+          examples: ["eyJ2IjoxLCJ0IjoiYSJ9"],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description: "Page size (1–20, default 20). The contract caps higher values at 20.",
+          examples: [20, 10],
+        },
+        listed: {
+          type: "boolean",
+          description:
+            "Filter on the listing projection: true keeps only listed resources, false keeps only unlisted ones. Omit to keep every resource.",
+          examples: [true, false],
+        },
+        state: {
+          type: "string",
+          enum: ["Listed", "Delisted", "Frozen", "Disputed", "Tombstoned"],
+          description:
+            "Filter on the lifecycle state. Omit to keep every state. Tombstoned resources are never returned, so that filter always yields an empty page.",
+          examples: ["Listed", "Frozen"],
+        },
+      },
+      required: ["creator"],
+    },
+    outputSchema: REGISTRY_CREATOR_PAGE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Registry Creator Page",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_registry_tag_search",
+    description:
+      "Find on-chain resources whose tag starts with a prefix (contract search_by_tag_prefix). The prefix is normalized like a tag (trimmed, lowercased), so ' DATA ' matches 'data'. Returns a bounded page of compact summaries from Stellar, ordered by registration sequence; pass the returned nextCursor back to scan further. An empty prefix matches every tag and therefore returns nothing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prefix: {
+          type: "string",
+          minLength: 1,
+          maxLength: 32,
+          description:
+            "Tag prefix to match, e.g. 'dat' finds 'dataset' and 'data'. Normalized like a tag before matching.",
+          examples: ["dat", "science", "ml-"],
+        },
+        cursor: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Catalog index to resume from, as returned by a previous page's nextCursor. Omit for the first page.",
+          examples: [0, 20],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 20,
+          description:
+            "Maximum number of resources to return (1–20, default 20). The contract clamps higher values at 20 and always returns at least one match so the scan keeps making progress.",
+          examples: [20, 10],
+        },
+      },
+      required: ["prefix"],
+    },
+    outputSchema: REGISTRY_TAG_SEARCH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Registry Tag Search",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -860,6 +1176,31 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
     annotations: {
       title: "Back Up State",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
+  },
+  {
+    name: "mindvault_compare_state_backup",
+    description:
+      "Compare local state with an encrypted backup without restoring it. Verifies backup integrity and reports only version, digest equality, and structural paths; wallet secrets and API keys are never returned.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        blob: {
+          type: "string",
+          description: "Encrypted backup blob from mindvault_backup_state (v1:… format).",
+        },
+        passphrase: {
+          type: "string",
+          description: "Passphrase used when the backup was created (min 8 characters).",
+        },
+      },
+      required: ["blob", "passphrase"],
+    },
+    annotations: {
+      title: "Compare State Backup",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -924,6 +1265,23 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: false,
+    },
+  },
+  {
+    name: "mindvault_server_endpoints",
+    description:
+      "Introspect this MindVault deployment's HTTP API from its published OpenAPI spec (MINDVAULT_URL/openapi.json). Read-only. Returns the discovered endpoints (method, path, operationId, tags, summary), the unique paths, and the spec's title/version, so an agent can learn what the server exposes without guessing URLs.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+    outputSchema: SERVER_ENDPOINTS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Server Endpoints",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
   {
@@ -1119,6 +1477,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["resourceId"],
     },
@@ -1147,6 +1506,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
         },
+        confirmPaid: { ...CONFIRM_PAID_PROPERTY },
       },
       required: ["resourceId"],
     },
@@ -1330,6 +1690,49 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_explain_error_code",
+    description:
+      'Explain a vault-registry contract error: what the code means, whether repeating the call can help, and the one step that recovers. A failed Soroban invocation reports only a number, and the number alone cannot say whether to look the resource up, wait for a pause to lift, or stop. Pass exactly one of `code` (the on-chain discriminant) or `name` (e.g. "NotFound"). An unknown code is reported as unknown — with the codes that do exist — instead of being guessed at. Read-only: it explains, it does not act.',
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: {
+          type: "integer",
+          description:
+            "The on-chain error discriminant, e.g. 2 for NotFound or 40 for ContractPaused.",
+          examples: [2, 40],
+        },
+        name: {
+          type: "string",
+          description:
+            'The contract error name instead of its code, e.g. "NotFound" or "ContractPaused".',
+          examples: ["NotFound", "ContractPaused"],
+        },
+      },
+      required: [],
+    },
+    outputSchema: REGISTRY_ERROR_EXPLANATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Explain Error Code",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_rpc_health",
+    description:
+      "Check the active profile's Horizon and Soroban RPC endpoints and report latency, network identity, and actionable failure detail. Uses configured timeouts. Never signs or submits transactions. Returns per-endpoint status with latency in milliseconds and the network passphrase/id returned by each endpoint so misconfigurations are visible without inspecting env vars.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: RPC_HEALTH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "RPC Health",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_prewarm_catalog",
     description:
       "Fetch the full catalog once to warm the offline catalog fallback cache (see catalogCache.ts). Useful right after connecting a new agent session, or after a cold boot, so a transport failure on the first real mindvault_browse/mindvault_search call falls back to a fresh snapshot instead of having none available. The MCP server also does this automatically once at startup, best-effort; this tool lets an agent trigger it explicitly and see the result.",
@@ -1380,7 +1783,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "mindvault_import_wallet",
     description:
-      "Import an existing Stellar wallet by providing a secret key (or reading MINDVAULT_AGENT_SECRET from the environment). Validates the key, optionally persists it to the active profile (or a named profile), and never logs the secret. Use this to restore a wallet from backup or connect to an existing identity.",
+      "Import an existing Stellar wallet by providing a secret key (or reading MINDVAULT_AGENT_SECRET from the environment). Two-step: the first call (without confirm) derives the public address and displays it with the target profile and network binding, but writes nothing. Pass confirm: true to save. The secret key is never returned in any response. Use this to restore a wallet from backup or connect to an existing identity.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1395,11 +1798,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description: "Optional profile name to import into. Defaults to the active profile.",
           examples: ["testnet", "mainnet-publisher"],
         },
-        persist: {
+        confirm: {
           type: "boolean",
           description:
-            "When true (default), save the imported wallet to the state file. When false, validate only and return the public key without writing to disk.",
-          examples: [true, false],
+            "Must be true to persist the wallet. Without it the tool derives and displays the address but writes nothing, so the agent can verify the address before committing.",
+          examples: [true],
         },
         confirmMainnet: {
           type: "boolean",
@@ -1413,7 +1816,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: {
       title: "Import Wallet",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     },
   },
@@ -1441,7 +1844,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     annotations: {
       title: "Rotate Publisher Key",
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
     },
   },
@@ -1491,12 +1894,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: "mindvault_recover_catalog_cache",
     description:
-      "Attempt a catalog stale-cache recovery: requests the MCP to refresh or re-fetch catalog index data and provides recovery guidance. Useful when browse results appear stale.",
+      "Catalog stale-cache recovery guidance: explains how to refresh catalog index data when browse results appear stale. Read-only; it does not invalidate or re-fetch anything itself.",
     inputSchema: { type: "object", properties: {}, required: [] },
     outputSchema: RECOVER_CACHE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Recover Catalog Cache",
-      readOnlyHint: false,
+      readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
     },
@@ -1549,7 +1952,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     // was invisible to the generated docs and the schema snapshots (#596).
     name: "mindvault_purchase_history",
     description:
-      "List locally persisted purchase receipts from successful mindvault_buy calls (~/.mindvault/purchases.json). Read-only. Filter by resourceId and network (exact match), or search resource ids and titles with a case-insensitive query. Filters can be combined. Returns newest first.",
+      "List locally persisted purchase receipts from successful mindvault_buy calls (~/.mindvault/purchases.json). Read-only. Filter by resourceId and network (exact match), or search resource ids and titles with a case-insensitive query. Filters can be combined. Pass idempotencyKey to resolve a purchase attempt whose response was lost before a receipt arrived: returns status 'unknown'/'pending'/'settled'/'failed' for that key (profile-scoped). Returns newest first. Each receipt includes a pre-resolved explorerUrl for the settlement transaction (null when no txHash was recorded) — no external join is needed. To check live on-chain settlement status, pass the receipt's txHash to mindvault_tx_status.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1569,6 +1972,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           description:
             "Optional case-insensitive text search across receipt resource ids and titles.",
           examples: ["stellar", "res-001"],
+        },
+        idempotencyKey: {
+          type: "string",
+          description:
+            "Optional. Client idempotency key sent with mindvault_buy to resolve a purchase whose response was lost before a receipt arrived. Profile-scoped.",
+          examples: ["buy:cm7x8y9z:9f3b..."],
         },
       },
       required: [],
@@ -1637,4 +2046,103 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       idempotentHint: false,
     },
   },
+  {
+    name: "mindvault_onchain_preflight",
+    description:
+      "Check the configured vault-registry contract ID, Stellar network, x402 network, and supported resource schema versions before enabling on-chain MCP tools. Purely local and read-only — no network calls — and returns an actionable remediation per mismatch. Publish/register setup flows run the same checks and fail fast on a malformed contract ID or unrecognized STELLAR_NETWORK.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        requestedSchemaVersion: {
+          type: "integer",
+          description:
+            "Resource schema version the caller intends to use. Omit to only report the supported set without a verdict.",
+          examples: [7, 6],
+        },
+      },
+      required: [],
+    },
+    outputSchema: ONCHAIN_PREFLIGHT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "On-chain Preflight",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_verify_deployment",
+    description:
+      "Generate a read-only registry deployment verification report: compare the configured Stellar network, contract ID, on-chain contract version, resource schema version, and deployed WASM hash against an expected deployment manifest. Returns one machine-readable entry per mismatch with a remediation. Never signs or submits a transaction and requires no wallet.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        manifest: DEPLOYMENT_MANIFEST_INPUT_SCHEMA as unknown as Record<string, unknown>,
+      },
+      required: [],
+    },
+    outputSchema: DEPLOYMENT_VERIFICATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Verify Registry Deployment",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_migration_preview",
+    description:
+      "Preview a state-schema migration before it is applied to saved wallet profiles: which stored fields will change (redacted), which state schema version the migration targets, whether a pre-migration backup snapshot will be created, and how the prior state is restored if applying the write fails. Read-only — it never writes, moves, or quarantines anything.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: MIGRATION_PREVIEW_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Migration Preview",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_support_bundle",
+    description:
+      "Export a redacted support bundle scoped to a single incident for a support ticket: the audit-log entries and request traces carrying the incident's correlation ID, the metrics snapshot, and a profile summary (public keys only). Wallet secrets, API keys, and unrelated user data never enter the bundle; public keys and contract ids are kept so network mismatches stay visible. Local and read-only, no network calls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        incidentId: {
+          type: "string",
+          minLength: 1,
+          description:
+            "Correlation ID (mv-…) of the failing tool call, from the audit log or the agent's transcript. The bundle includes only entries matching this id; a blank value is rejected.",
+          examples: ["mv-01hq7x9k2m4p6r8t0v2w4y6a8c"],
+        },
+        auditLines: {
+          type: "integer",
+          minimum: 0,
+          maximum: SUPPORT_BUNDLE_MAX_AUDIT_LINES,
+          description: `Matched audit-log entries to include from the end of MINDVAULT_AUDIT_LOG_FILE (0–${SUPPORT_BUNDLE_MAX_AUDIT_LINES}, default ${SUPPORT_BUNDLE_DEFAULT_AUDIT_LINES}). 0 omits the section.`,
+          examples: [50, 200],
+        },
+      },
+      required: ["incidentId"],
+    },
+    outputSchema: SUPPORT_BUNDLE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Export Support Bundle",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
 ];
+
+/**
+ * Every tool, as advertised. A structured tool's `outputSchema` covers both
+ * of its results: the success payload, or the troubleshooting hint a failed
+ * call carries (#1062). Clients validate `structuredContent` on errors too, so
+ * a schema that described only success turned every mapped failure into a
+ * client-side validation exception.
+ */
+export const TOOL_DEFINITIONS: ToolDefinition[] = DEFINED_TOOLS.map((tool) =>
+  tool.outputSchema ? { ...tool, outputSchema: withToolErrorVariant(tool.outputSchema) } : tool,
+);

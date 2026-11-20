@@ -189,7 +189,7 @@ const SAMPLE_OVERRIDES: Record<string, Record<string, unknown>> = {
     royaltyRecipient: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
   },
   mindvault_import_wallet: {
-    secretKey: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    secretKey: "SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY",
   },
   mindvault_publish_batch: {
     items: [{ title: "Probe Resource", price: "1.00", externalUrl: "https://example.com/probe" }],

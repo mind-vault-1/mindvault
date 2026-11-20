@@ -9,6 +9,23 @@ fn setup_with_admin<'a>() -> (Env, Address, Address, VaultRegistryClient<'a>) {
     (env, creator, admin, client)
 }
 
+#[test]
+fn index_repair_page_schema_carries_bounded_cursor_progress() {
+    assert_eq!(INDEX_REPAIR_PAGE_CAP, 20);
+    let progress = IndexRepairProgress {
+        next_cursor: INDEX_REPAIR_PAGE_CAP,
+        total: INDEX_REPAIR_PAGE_CAP + 3,
+    };
+    let page = IndexRepairPage {
+        processed: INDEX_REPAIR_PAGE_CAP,
+        next_cursor: Some(progress.next_cursor),
+    };
+
+    assert_eq!(page.processed, INDEX_REPAIR_PAGE_CAP);
+    assert_eq!(page.next_cursor, Some(INDEX_REPAIR_PAGE_CAP));
+    assert!(page.next_cursor.unwrap() < progress.total);
+}
+
 /// Register a resource with a valid cuid2-shaped id and a valid metadata
 /// pointer, no tags. Returns the id.
 fn register_default<'a>(
@@ -197,6 +214,23 @@ fn tombstone_removes_resource_from_creator_index() {
         "tombstoned resources must not surface in list_by_creator"
     );
     assert_eq!(listed.get(0).unwrap().id, kept);
+}
+
+#[test]
+fn tombstone_clears_pending_transfer() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "tombxfer");
+    let proposed = Address::generate(&env);
+    client.propose_transfer(&id, &proposed);
+
+    client.tombstone_resource(&id, &admin);
+
+    assert_eq!(
+        client.try_accept_transfer(&id),
+        Err(Ok(Error::NoPendingTransfer))
+    );
+    assert_eq!(client.get(&id).creator, creator);
+    assert_eq!(client.get(&id).state, ResourceState::Tombstoned);
 }
 
 #[test]

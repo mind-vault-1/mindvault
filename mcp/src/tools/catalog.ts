@@ -1,4 +1,5 @@
 import { BASE_URL, jsonFetch } from "../runtime.js";
+import { createSingleFlight } from "../singleFlight.js";
 import {
   applyCatalogSort,
   applyClientCatalogFilters,
@@ -47,7 +48,14 @@ function catalogFallbackFor(err: unknown): CatalogFallbackReason | null {
   return isRetryableStatus(mapped.status) ? { kind: "status", status: mapped.status } : null;
 }
 
+const catalogFlights = createSingleFlight<CatalogLoad>();
+const previewFlights = createSingleFlight<{ r: any; label: string | null }>();
+
 async function loadCatalog(url: string, operation: string): Promise<CatalogLoad> {
+  return catalogFlights.run(url, () => loadCatalogUnshared(url, operation));
+}
+
+async function loadCatalogUnshared(url: string, operation: string): Promise<CatalogLoad> {
   try {
     const res = await jsonFetch(url);
     if (!res.ok) {
@@ -123,6 +131,10 @@ export async function search(filtersOrQuery: string | CatalogFilters): Promise<s
 }
 
 async function previewData(resourceId: string): Promise<{ r: any; label: string | null }> {
+  return previewFlights.run(resourceId, () => previewDataUnshared(resourceId));
+}
+
+async function previewDataUnshared(resourceId: string): Promise<{ r: any; label: string | null }> {
   try {
     const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
     if (!res.ok)
@@ -144,14 +156,16 @@ async function previewData(resourceId: string): Promise<{ r: any; label: string 
 
 export async function preview(resourceId: string): Promise<string> {
   const { r, label } = await previewData(resourceId);
+  // Every advertised field is required (#1065): a value the API left out is
+  // reported as null rather than dropped by JSON.stringify.
   const out: Record<string, unknown> = {
-    id: r.id,
-    title: r.title,
-    description: r.description,
-    price: `$${r.price} USDC`,
-    type: r.resourceType,
-    verificationStatus: r.verificationStatus,
-    accessUrl: r.accessUrl,
+    id: r.id ?? null,
+    title: r.title ?? null,
+    description: r.description ?? null,
+    price: r.price == null ? null : `$${r.price} USDC`,
+    type: r.resourceType ?? null,
+    verificationStatus: r.verificationStatus ?? null,
+    accessUrl: r.accessUrl ?? null,
   };
   if (label) out.offlineCache = label;
   // Publisher-supplied title/description are unbounded at the source, so cap

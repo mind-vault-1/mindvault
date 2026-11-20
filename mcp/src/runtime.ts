@@ -17,6 +17,8 @@ import { createMockFetch, mockEnabledFromEnv } from "./mock.js";
 import { initAuditLogging } from "./auditLog.js";
 import { safeErrorMessage } from "./redaction.js";
 import { signMutatingHeaders } from "./requestSignature.js";
+import { readBoundedResponse, resolveMaxResponseBytes } from "./responseSize.js";
+import { parseUpstreamErrorBody } from "./malformedResponse.js";
 import { type ResetScope } from "./resetGuard.js";
 import {
   DEFAULT_PROFILE,
@@ -160,9 +162,8 @@ function resolveProfileName(name: unknown): string {
 export function _setAgentWallet(w: AgentWallet | null): void {
   if (w) {
     activeProfile().wallet = w;
-    activeProfile().network ??= NETWORK;
-  }
-  else delete activeProfile().wallet;
+    activeProfile().network ??= NETWORK as "testnet" | "mainnet";
+  } else delete activeProfile().wallet;
 }
 export function _setAgentApiKey(k: string | null): void {
   if (k) activeProfile().apiKey = k;
@@ -291,7 +292,18 @@ async function jsonFetch(
   res.headers.forEach((value, key) => {
     responseHeaders[key.toLowerCase()] = value;
   });
-  const text = await res.text();
+  const text = await readBoundedResponse(res, resolveMaxResponseBytes());
+  // A failure body that is not JSON becomes a typed marker instead of a wall
+  // of markup: the status and the upstream's request id survive, and the raw
+  // body does not travel any further (#1019).
+  if (!res.ok) {
+    return {
+      ok: res.ok,
+      status: res.status,
+      data: parseUpstreamErrorBody({ status: res.status, headers: responseHeaders, body: text }),
+      headers: responseHeaders,
+    };
+  }
   try {
     return { ok: res.ok, status: res.status, data: JSON.parse(text), headers: responseHeaders };
   } catch {

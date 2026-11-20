@@ -20,10 +20,36 @@ import {
   optionalString,
   requiredString,
   requiredStringArray,
+  requiredTagArray,
   validateToolArgs,
 } from "./validation.js";
 
 const VALID_SHA256 = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+
+/**
+ * A real valid Stellar public key for use in test fixtures.
+ * Verified with StrKey.isValidEd25519PublicKey — passes checksum.
+ */
+const VALID_PUBLIC_KEY = "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH";
+
+/**
+ * A real valid Stellar secret key for use in test fixtures.
+ * Derived from a deterministic seed (Buffer.alloc(32, 0x01)) — passes StrKey checksum.
+ * IMPORTANT: Never use this key for real funds. It is a test fixture only.
+ */
+const VALID_SECRET_KEY = "SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY";
+
+/**
+ * A Stellar public key that passes the character-set regex (/^G[A-Z2-7]{55}$/)
+ * but fails the CRC-16 checksum. Used to verify the StrKey validation gap is closed.
+ */
+const BAD_CHECKSUM_PUBLIC_KEY = "G" + "A".repeat(55);
+
+/**
+ * A Stellar secret key that passes the character-set regex (/^S[A-Z2-7]{55}$/)
+ * but fails the CRC-16 checksum. Used to verify the StrKey validation gap is closed.
+ */
+const BAD_CHECKSUM_SECRET_KEY = "S" + "A".repeat(55);
 
 /** One id longer than BATCH_LOOKUP_MAX_IDS allows, for the batch tool's ceiling test. */
 const OVERSIZE_BATCH = Array.from({ length: 26 }, (_, i) => `res-${String(i).padStart(3, "0")}`);
@@ -44,9 +70,10 @@ function specValidatedTools() {
 const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_setup_wallet: {},
   mindvault_repair_sponsored_account: {
-    secretKey: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    secretKey: VALID_SECRET_KEY,
   },
   mindvault_wallet_info: {},
+  mindvault_wallet_allowance: {},
   mindvault_use_profile: { name: "publisher" },
   mindvault_switch_network_profile: { name: "mainnet", network: "mainnet" },
   mindvault_list_profiles: {},
@@ -60,6 +87,13 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
     externalUrl: "https://example.com/data.json",
   },
   mindvault_buy: { resourceId: "res-001" },
+  mindvault_buy_lease: { resourceId: "res-001", tier: "day" },
+  mindvault_lease_status: {
+    resourceId: "res-001",
+    holder: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
+  },
+  mindvault_import_profiles: { data: "{}" },
+  mindvault_export_profiles: {},
   mindvault_export_receipts: {},
   mindvault_register_onchain: { resourceId: "res-001" },
   mindvault_agent_status: {},
@@ -71,6 +105,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_network_profile: {},
   mindvault_check_bindings: {},
   mindvault_check_consistency: { resourceId: "res-001" },
+  mindvault_metadata_diff: { resourceId: "res-001" },
   mindvault_verify_attestation: {
     resourceId: "res001",
     attestationHash: "a".repeat(64),
@@ -79,9 +114,14 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_registry_list: {},
   mindvault_registry_count: {},
   mindvault_registry_count: {},
+  mindvault_registry_creator_page: {
+    creator: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
+  },
+  mindvault_registry_tag_search: { prefix: "dat" },
   mindvault_tx_status: { txHash: VALID_SHA256 },
   mindvault_reset: {},
   mindvault_backup_state: { passphrase: "correct-horse" },
+  mindvault_compare_state_backup: { blob: "v1:abc", passphrase: "correct-horse" },
   mindvault_resource_provenance: { resourceId: "res-001" },
   mindvault_resource_change_log: { resourceId: "res-001" },
   mindvault_restore_state: { blob: "v1:abc", passphrase: "correct-horse" },
@@ -96,7 +136,6 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_cancel_transfer: { resourceId: "res-001" },
   mindvault_pending_transfer: { resourceId: "res-001" },
   mindvault_set_listed: { resourceId: "res-001", listed: true },
-  mindvault_dispute: { resourceId: "res-001", action: "flag", reason: "Duplicate listing" },
   mindvault_set_tags: { resourceId: "res-001", tags: ["dataset"] },
   mindvault_freeze: { resourceId: "res-001", confirm: "freeze_metadata" },
   mindvault_fee_config: {},
@@ -113,6 +152,10 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_rotate_publisher_key: {},
   mindvault_verify_install: {},
   mindvault_debug_bundle: { auditLogLines: 50, includeEnvironment: true },
+  mindvault_onchain_preflight: { requestedSchemaVersion: 7 },
+  mindvault_verify_deployment: {},
+  mindvault_migration_preview: {},
+  mindvault_support_bundle: { incidentId: "mv-01hq7x9k2m4p6r8t0v2w4y6a8c", auditLines: 100 },
   mindvault_recover_catalog_cache: {},
   mindvault_wallet_balances: {},
   mindvault_server_endpoints: {},
@@ -347,6 +390,88 @@ describe("string arguments", () => {
   });
 });
 
+describe("outbound URL safety (#1078)", () => {
+  const publish = (externalUrl: string) =>
+    validateToolArgs("mindvault_publish", { title: "T", price: "1.00", externalUrl });
+
+  it("accepts a public http(s) externalUrl", () => {
+    expect(publish("https://example.com/data.json")).toMatchObject({
+      externalUrl: "https://example.com/data.json",
+    });
+  });
+
+  it.each([
+    "http://127.0.0.1/x",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://10.0.0.1/x",
+    "http://192.168.1.1/x",
+    "http://[::1]/x",
+    "http://[fe80::1]/x",
+  ])("rejects the private/loopback externalUrl %s", (externalUrl) => {
+    const err = expectInvalid("mindvault_publish", { title: "T", price: "1.00", externalUrl });
+    expect(err.issues[0].field).toBe("externalUrl");
+    expect(err.issues[0].code).toBe("blocked_url");
+  });
+
+  it.each(["http://localhost:4021/x", "http://api.internal/x", "http://svc.local/x"])(
+    "rejects the local-name externalUrl %s",
+    (externalUrl) => {
+      const err = expectInvalid("mindvault_publish", { title: "T", price: "1.00", externalUrl });
+      expect(err.issues[0].code).toBe("blocked_url");
+    },
+  );
+
+  it("rejects an http(s) metadata pointer to a private host", () => {
+    const err = expectInvalid("mindvault_update_metadata", {
+      resourceId: "res-001",
+      metadata: "http://169.254.169.254/meta.json",
+    });
+    expect(err.issues[0].field).toBe("metadata");
+    expect(err.issues[0].code).toBe("blocked_url");
+  });
+
+  it("accepts a non-URL metadata pointer without host checks", () => {
+    expect(() =>
+      validateToolArgs("mindvault_update_metadata", {
+        resourceId: "res-001",
+        metadata: "ipfs://QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateToolArgs("mindvault_update_metadata", {
+        resourceId: "res-001",
+        metadata: "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts a public http(s) metadata pointer", () => {
+    expect(() =>
+      validateToolArgs("mindvault_update_metadata", {
+        resourceId: "res-001",
+        metadata: "https://example.com/meta.json",
+      }),
+    ).not.toThrow();
+  });
+
+  it("honours MINDVAULT_URL_ALLOWLIST for a private host", () => {
+    const previous = process.env.MINDVAULT_URL_ALLOWLIST;
+    process.env.MINDVAULT_URL_ALLOWLIST = "10.0.0.5";
+    try {
+      expect(() =>
+        validateToolArgs("mindvault_publish", {
+          title: "T",
+          price: "1.00",
+          externalUrl: "http://10.0.0.5/x",
+        }),
+      ).not.toThrow();
+    } finally {
+      if (previous === undefined) delete process.env.MINDVAULT_URL_ALLOWLIST;
+      else process.env.MINDVAULT_URL_ALLOWLIST = previous;
+    }
+  });
+});
+
 describe("enum arguments", () => {
   it("accepts every advertised literal", () => {
     for (const status of ["pending", "verified", "rejected", "skipped"]) {
@@ -423,6 +548,144 @@ describe("hash arguments", () => {
     const err = expectInvalid("mindvault_tx_status", { txHash: "z".repeat(64) });
     expect(err.issues[0].code).toBe("invalid_hash");
     expect(err.message).toContain("hexadecimal");
+  });
+});
+
+// ── StrKey validation: stellar_address and stellar_secret kinds ──────────────
+
+describe("stellar_address arguments", () => {
+  it("accepts a valid Stellar public key", () => {
+    expect(() =>
+      validateToolArgs("mindvault_transfer_ownership", {
+        resourceId: "res-001",
+        newCreator: VALID_PUBLIC_KEY,
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts a valid address in mindvault_terms, mindvault_royalty, mindvault_lease_status", () => {
+    expect(() =>
+      validateToolArgs("mindvault_terms", { operation: "get", creator: VALID_PUBLIC_KEY }),
+    ).not.toThrow();
+    expect(() =>
+      validateToolArgs("mindvault_royalty", {
+        resourceId: "res-001",
+        royaltyRecipient: VALID_PUBLIC_KEY,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateToolArgs("mindvault_lease_status", {
+        resourceId: "res-001",
+        holder: VALID_PUBLIC_KEY,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateToolArgs("mindvault_register", {
+        name: "Agent A",
+        email: "a@b.co",
+        walletAddress: VALID_PUBLIC_KEY,
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a key that passes the character-set regex but fails the StrKey checksum", () => {
+    // BAD_CHECKSUM_PUBLIC_KEY matches /^G[A-Z2-7]{55}$/ but isValidEd25519PublicKey returns false.
+    // This is the core of the bug being fixed: the old regex-only check would have accepted it.
+    const err = expectInvalid("mindvault_transfer_ownership", {
+      resourceId: "res-001",
+      newCreator: BAD_CHECKSUM_PUBLIC_KEY,
+    });
+    expect(err.issues[0].field).toBe("newCreator");
+    expect(err.issues[0].code).toBe("invalid_stellar_address");
+    expect(err.message).toContain("not a valid Stellar public key");
+    // Rejected value must never appear in the error message.
+    expect(err.message).not.toContain(BAD_CHECKSUM_PUBLIC_KEY);
+  });
+
+  it("rejects a non-string value", () => {
+    const err = expectInvalid("mindvault_transfer_ownership", {
+      resourceId: "res-001",
+      newCreator: 42,
+    });
+    expect(err.issues[0].field).toBe("newCreator");
+    expect(err.issues[0].code).toBe("wrong_type");
+    expect(err.message).not.toContain("42");
+  });
+
+  it("rejects an empty string", () => {
+    const err = expectInvalid("mindvault_transfer_ownership", {
+      resourceId: "res-001",
+      newCreator: "",
+    });
+    expect(err.issues[0].field).toBe("newCreator");
+    expect(err.issues[0].code).toBe("empty_string");
+  });
+
+  it("rejects a plain string that is not a G-prefixed key", () => {
+    const err = expectInvalid("mindvault_transfer_ownership", {
+      resourceId: "res-001",
+      newCreator: "not-a-key",
+    });
+    expect(err.issues[0].code).toBe("invalid_stellar_address");
+  });
+
+  it("trims surrounding whitespace before validating", () => {
+    expect(() =>
+      validateToolArgs("mindvault_transfer_ownership", {
+        resourceId: "res-001",
+        newCreator: `  ${VALID_PUBLIC_KEY}  `,
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("stellar_secret arguments", () => {
+  it("accepts a valid Stellar secret key", () => {
+    expect(() =>
+      validateToolArgs("mindvault_repair_sponsored_account", { secretKey: VALID_SECRET_KEY }),
+    ).not.toThrow();
+    expect(() =>
+      validateToolArgs("mindvault_import_wallet", { secretKey: VALID_SECRET_KEY }),
+    ).not.toThrow();
+  });
+
+  it("rejects a key that passes the character-set regex but fails the StrKey checksum", () => {
+    // BAD_CHECKSUM_SECRET_KEY matches /^S[A-Z2-7]{55}$/ but isValidEd25519SecretSeed returns false.
+    const err = expectInvalid("mindvault_repair_sponsored_account", {
+      secretKey: BAD_CHECKSUM_SECRET_KEY,
+    });
+    expect(err.issues[0].field).toBe("secretKey");
+    expect(err.issues[0].code).toBe("invalid_stellar_secret");
+    expect(err.message).toContain("not a valid Stellar secret key");
+    // Secret value must never appear in the error message.
+    expect(err.message).not.toContain(BAD_CHECKSUM_SECRET_KEY);
+  });
+
+  it("rejects a non-string value without leaking it", () => {
+    const err = expectInvalid("mindvault_repair_sponsored_account", { secretKey: 123 });
+    expect(err.issues[0].field).toBe("secretKey");
+    expect(err.issues[0].code).toBe("wrong_type");
+    expect(err.message).not.toContain("123");
+  });
+
+  it("rejects an empty string", () => {
+    const err = expectInvalid("mindvault_repair_sponsored_account", { secretKey: "" });
+    expect(err.issues[0].code).toBe("empty_string");
+  });
+
+  it("rejects a plain G-prefixed key submitted where a secret is expected", () => {
+    const err = expectInvalid("mindvault_repair_sponsored_account", {
+      secretKey: VALID_PUBLIC_KEY,
+    });
+    expect(err.issues[0].code).toBe("invalid_stellar_secret");
+  });
+
+  it("trims surrounding whitespace before validating", () => {
+    expect(() =>
+      validateToolArgs("mindvault_repair_sponsored_account", {
+        secretKey: `  ${VALID_SECRET_KEY}  `,
+      }),
+    ).not.toThrow();
   });
 });
 

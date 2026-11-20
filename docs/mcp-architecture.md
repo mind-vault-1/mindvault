@@ -142,3 +142,36 @@ permissions, and backup path are covered in
 | `HORIZON_URL`           | `https://horizon-testnet.stellar.org`                  | Stellar Horizon for balance queries |
 
 The MCP server has no `.env` file of its own — pass variables via your MCP client config or shell environment. The full list, plus copy-ready client configs and security notes, is in [docs/mcp-client-configs.md](mcp-client-configs.md).
+
+---
+
+## Outbound Request Correlation
+
+Every outbound HTTP request the MCP server makes — to the MindVault API, Horizon, Soroban RPC, the sponsored-account service, and x402 paid fetches — carries an `x-request-id` header. The API echoes this header back and scopes its request context to it (see `server/src/middleware/requestContext.ts`), so an operator reading the server logs can find every request one MCP tool call produced, even when several tools are in flight at once.
+
+- **Per-tool-call id (default):** Each tool call runs in its own async scope and gets a fresh UUID. A single `mindvault_buy` issues a catalog/meta read and then an x402 payment; both legs carry the same id, so the trace stitches.
+- **Process-wide id (opt-in):** Set `MINDVAULT_CORRELATION_ID=my-session-id` to pin one id for the entire process lifetime. Useful when one MCP process serves a single agent session and you want every request in that session to share one id in the server logs.
+- **No header overwriting:** If a caller explicitly supplies `x-request-id`, that value is preserved — it is more specific than the ambient scope id.
+
+The implementation lives in `mcp/src/correlation.ts` and uses `AsyncLocalStorage` from `node:async_hooks`.
+
+---
+
+## Outbound Proxy
+
+Enterprise deployments usually reach the network through an egress proxy. The MCP server honours the conventional proxy environment variables for every outbound call — the MindVault API, Horizon, Soroban RPC, the sponsored-account service, and x402 paid fetches:
+
+| Variable      | Purpose                                                             |
+| ------------- | ------------------------------------------------------------------- |
+| `HTTP_PROXY`  | Proxy URL for `http:` requests (lowercase `http_proxy` also read)   |
+| `HTTPS_PROXY` | Proxy URL for `https:` requests (lowercase `https_proxy` also read) |
+| `NO_PROXY`    | Comma-separated hosts that bypass the proxy (lowercase also read)   |
+
+Two properties make this safe to enable:
+
+- **Direct-connect is the default.** With no proxy variable set, nothing changes: every request connects directly, exactly as before. A malformed proxy URL fails loudly at the first request rather than silently leaking traffic around the proxy.
+- **Credentials never appear in logs.** A proxy URL commonly embeds `user:password@` userinfo. That userinfo is stripped before a proxy URL reaches any log line, startup diagnostic, `mindvault_network_profile` output, or the debug bundle, so the host is still visible for troubleshooting while the secret is not.
+
+`NO_PROXY` follows the customary semantics: `*` bypasses everything, a leading dot (`.example.com`) matches a domain suffix, a bare domain (`example.com`) matches on a DNS label boundary, and `host:port` additionally requires the port to match.
+
+The implementation lives in `mcp/src/proxy.ts` and routes through an undici `ProxyAgent` attached as the fetch dispatcher for requests a proxy applies to. Proxy URLs are redacted by `mcp/src/redaction.ts` and `mcp/src/diagnostics.ts`.

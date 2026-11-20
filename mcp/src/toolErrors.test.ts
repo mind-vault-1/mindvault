@@ -30,6 +30,8 @@ vi.mock("@modelcontextprotocol/sdk/types.js", () => ({
   GetPromptRequestSchema: {},
   ListResourcesRequestSchema: {},
   ReadResourceRequestSchema: {},
+  SubscribeRequestSchema: {},
+  UnsubscribeRequestSchema: {},
 }));
 
 vi.mock("@x402/stellar", () => ({ createEd25519Signer: vi.fn() }));
@@ -171,7 +173,12 @@ describe("402 payment failure", () => {
           mockResponse({
             balances: [
               { asset_type: "native", balance: "10.0" },
-              { asset_type: "credit_alphanum4", asset_code: "USDC", balance: "999.00" },
+              {
+                asset_type: "credit_alphanum4",
+                asset_code: "USDC",
+                asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+                balance: "999.00",
+              },
             ],
           }),
         );

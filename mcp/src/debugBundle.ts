@@ -68,7 +68,17 @@ export const REDACTED = "[REDACTED]";
  * parent shell never reaches the bundle even in masked form.
  */
 const ENV_PREFIXES = ["MINDVAULT_", "STELLAR_", "SOROBAN_", "HORIZON_", "VAULT_REGISTRY_"];
-const ENV_EXACT = new Set(["NETWORK", "SPONSORED_ACCOUNT_URL", "USDC_CONTRACT_ID", "NODE_ENV"]);
+const ENV_EXACT = new Set([
+  "NETWORK",
+  "SPONSORED_ACCOUNT_URL",
+  "USDC_CONTRACT_ID",
+  "NODE_ENV",
+  // Standard proxy variables (#1075). Their values may embed `user:pass@`
+  // userinfo; `redactSecrets` strips it before the value is carried.
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+]);
 
 /** Variable names that carry a credential, whatever their value looks like. */
 const SECRET_NAME = /SECRET|KEY|TOKEN|PASS|PRIVATE|CREDENTIAL|SIGNING/i;
@@ -101,6 +111,8 @@ export interface AuditLogTail {
   requested: number;
   /** Parsed JSONL entries, oldest first. Unparseable lines are kept as `{ raw }`. */
   entries: Array<Record<string, unknown>>;
+  /** True when the bounded disk read omitted older audit history. */
+  truncated?: boolean;
 }
 
 export interface CatalogCacheStatus {
@@ -245,7 +257,7 @@ export function parseAuditTail(text: string, count: number): Array<Record<string
 }
 
 /** Read at most the last `AUDIT_TAIL_READ_BYTES` of a file as UTF-8. */
-function readFileTail(path: string): string {
+function readFileTail(path: string): { text: string; truncated: boolean } {
   const fd = openSync(path, "r");
   try {
     const size = fstatSync(fd).size;
@@ -254,7 +266,10 @@ function readFileTail(path: string): string {
     readSync(fd, buffer, 0, length, size - length);
     const text = buffer.toString("utf-8");
     // A window that starts mid-line would yield one truncated first entry.
-    return length < size ? text.slice(text.indexOf("\n") + 1) : text;
+    return {
+      text: length < size ? text.slice(text.indexOf("\n") + 1) : text,
+      truncated: length < size,
+    };
   } finally {
     closeSync(fd);
   }
@@ -265,12 +280,15 @@ export function collectAuditTail(env: NodeJS.ProcessEnv, count: number): AuditLo
   const rotation = resolveRotationConfig(env);
   const filePath = rotation?.path ?? null;
   const exists = filePath !== null && existsSync(filePath);
+  // Never open or allocate a buffer for the audit log when no entries were requested.
+  const tail = exists && count > 0 ? readFileTail(filePath) : null;
   return {
     enabled: isAuditLogEnabled(),
     filePath,
     exists,
     requested: count,
-    entries: exists && count > 0 ? parseAuditTail(readFileTail(filePath), count) : [],
+    entries: tail ? parseAuditTail(tail.text, count) : [],
+    truncated: tail?.truncated ?? false,
   };
 }
 

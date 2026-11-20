@@ -78,18 +78,119 @@ export function normalizeSettlementIntervalMs(raw: unknown): number {
   return Math.floor(n);
 }
 
+// ── Transaction wait policy (#1058) ───────────────────────────────────────────
+
 /**
- * The `settlement` block a `mindvault_buy` summary carries. `polled` is true
- * whenever the buy actually waited on the transaction; `skipped` is true only
- * when the caller asked to wait but no transaction hash was available to poll.
+ * How a submitted Soroban operation should behave after the transaction is
+ * broadcast. Mirrors the two questions a caller actually has:
+ *
+ *  - `return-after-submit` — "give me the hash and whatever status you know
+ *    now; I'll poll later." Returns as soon as submission succeeds.
+ *  - `wait-for-final-result` — "don't return until the transaction reaches a
+ *    terminal status or the deadline passes."
+ */
+export const TRANSACTION_WAIT_POLICIES = ["return-after-submit", "wait-for-final-result"] as const;
+
+export type TransactionWaitPolicy = (typeof TRANSACTION_WAIT_POLICIES)[number];
+
+/** Default behaviour: return as soon as the transaction is submitted. */
+export const DEFAULT_TRANSACTION_WAIT_POLICY: TransactionWaitPolicy = "return-after-submit";
+
+/**
+ * Hard ceiling on any wait, no matter what a caller asks for. Matches the
+ * settlement timeout ceiling, so `wait-for-final-result` can never outlive the
+ * configured maximum.
+ */
+export const MAX_TRANSACTION_WAIT_MS = MAX_SETTLEMENT_TIMEOUT_MS;
+
+/** Short aliases accepted on the wire, mapped to the canonical policy. */
+const TRANSACTION_WAIT_ALIASES: Record<string, TransactionWaitPolicy> = {
+  "return-after-submit": "return-after-submit",
+  return_after_submit: "return-after-submit",
+  submit: "return-after-submit",
+  none: "return-after-submit",
+  "wait-for-final-result": "wait-for-final-result",
+  wait_for_final_result: "wait-for-final-result",
+  final: "wait-for-final-result",
+  wait: "wait-for-final-result",
+};
+
+/**
+ * Normalize a caller-supplied wait policy. Accepts the canonical names plus a
+ * few short aliases (`"submit"`, `"final"`). An empty value means "use the
+ * default". An unrecognized value is rejected rather than silently ignored, so
+ * a typo never changes confirmation behaviour without the caller noticing.
+ */
+export function normalizeTransactionWaitPolicy(raw: unknown): TransactionWaitPolicy {
+  if (raw === undefined || raw === null || raw === "") return DEFAULT_TRANSACTION_WAIT_POLICY;
+  if (typeof raw === "string") {
+    const key = raw.trim().toLowerCase();
+    const policy = TRANSACTION_WAIT_ALIASES[key];
+    if (policy) return policy;
+  }
+  throw new Error(
+    `waitPolicy must be one of ${TRANSACTION_WAIT_POLICIES.join(", ")}. Got: ${JSON.stringify(raw)}.`,
+  );
+}
+
+/** Map the boolean `wait` flag (the pre-#1058 interface) onto a policy. */
+export function waitPolicyFromFlag(wait: unknown): TransactionWaitPolicy {
+  return normalizeSettlementWaitFlag(wait) ? "wait-for-final-result" : "return-after-submit";
+}
+
+export interface ResolvedTransactionWait {
+  policy: TransactionWaitPolicy;
+  /** True only for `wait-for-final-result`. */
+  wait: boolean;
+  timeoutMs: number;
+  intervalMs: number;
+}
+
+/**
+ * Resolve the effective wait behaviour for one call.
+ *
+ * `waitPolicy` wins when supplied; otherwise the legacy boolean `wait` flag is
+ * mapped onto a policy, so existing clients that pass `wait: true` keep working
+ * unchanged. The timeout is always clamped to `MAX_TRANSACTION_WAIT_MS`.
+ */
+export function resolveTransactionWait(input: {
+  waitPolicy?: unknown;
+  wait?: unknown;
+  timeoutMs?: unknown;
+  intervalMs?: unknown;
+}): ResolvedTransactionWait {
+  const policy =
+    input.waitPolicy === undefined || input.waitPolicy === null || input.waitPolicy === ""
+      ? waitPolicyFromFlag(input.wait)
+      : normalizeTransactionWaitPolicy(input.waitPolicy);
+  return {
+    policy,
+    wait: policy === "wait-for-final-result",
+    timeoutMs: normalizeSettlementTimeoutMs(input.timeoutMs),
+    intervalMs: normalizeSettlementIntervalMs(input.intervalMs),
+  };
+}
+
+/**
+ * The `settlement` block a submitted operation's summary carries. `polled` is
+ * true whenever the call actually waited on the transaction; `skipped` is true
+ * only when the caller asked to wait but no transaction hash was available to
+ * poll; `cancelled` is true when the caller aborted the wait before it settled.
+ *
+ * `txHash` and `status` are always present — `status` is `null` only when no
+ * status could be read (return-after-submit with no hash, or a failed lookup),
+ * never omitted.
  */
 export interface SettlementSnapshot {
   polled: boolean;
+  /** The policy the call ran under, so the shape of the block is self-describing. */
+  waitPolicy: TransactionWaitPolicy;
   txHash: string | null;
   status: string | null;
   settled: boolean;
   success: boolean;
   timedOut: boolean;
+  cancelled: boolean;
   attempts: number;
   skipped: boolean;
   message: string;
@@ -107,19 +208,29 @@ export function buildSettlementSnapshot(input: {
   txHash: string | null;
   wait: boolean;
   skipped: boolean;
-  result: { tx: TransactionLookup; attempts: number; timedOut: boolean } | null;
+  /** The policy the call ran under; defaults to the boolean `wait` flag. */
+  waitPolicy?: TransactionWaitPolicy;
+  result: {
+    tx: TransactionLookup;
+    attempts: number;
+    timedOut: boolean;
+    cancelled?: boolean;
+  } | null;
 }): SettlementSnapshot {
   const { txHash, wait, skipped } = input;
+  const waitPolicy = input.waitPolicy ?? waitPolicyFromFlag(wait);
   const polled = wait && !skipped && input.result !== null;
 
   if (!polled) {
     return {
       polled,
+      waitPolicy,
       txHash: txHash ?? null,
       status: null,
       settled: false,
       success: false,
       timedOut: false,
+      cancelled: false,
       attempts: 0,
       skipped: wait && skipped,
       message:
@@ -130,11 +241,16 @@ export function buildSettlementSnapshot(input: {
   }
 
   const { tx, attempts, timedOut } = input.result!;
+  const cancelled = input.result!.cancelled === true;
   const settled = isTransactionSettled(tx.status);
   const success = tx.status === "SUCCESS";
 
   let message: string;
-  if (timedOut && !settled) {
+  if (cancelled) {
+    message = `Settlement wait cancelled after ${attempts} check${
+      attempts === 1 ? "" : "s"
+    } (last status: ${tx.status}). Re-check with mindvault_tx_status on ${tx.hash}.`;
+  } else if (timedOut && !settled) {
     message = `Reached the settlement deadline without a terminal status (last status: ${tx.status}). Re-check with mindvault_tx_status on ${tx.hash}.`;
   } else if (success) {
     message = `Payment settled on-chain (status: SUCCESS) after ${attempts} check${
@@ -152,11 +268,13 @@ export function buildSettlementSnapshot(input: {
 
   return {
     polled,
+    waitPolicy,
     txHash: tx.hash ?? txHash ?? null,
     status: tx.status,
     settled,
     success,
     timedOut,
+    cancelled,
     attempts,
     skipped,
     message,
@@ -215,14 +333,18 @@ export type PollSettlementOptions = {
   /** One getTransaction round trip; throws for RPC/transport failures. */
   fetchTransaction: (txHash: string) => Promise<TransactionLookup>;
   onProgress?: SettlementProgressReporter;
-  sleep: (ms: number) => Promise<void>;
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   now?: () => number;
+  /** Abort the wait; `pollSettlement` returns a `cancelled` result promptly. */
+  signal?: AbortSignal;
 };
 
 export type PollSettlementResult = {
   tx: TransactionLookup;
   attempts: number;
   timedOut: boolean;
+  /** True when the caller aborted the wait before it settled or timed out. */
+  cancelled: boolean;
 };
 
 /**
@@ -235,7 +357,9 @@ export type PollSettlementResult = {
  */
 export async function pollSettlement(opts: PollSettlementOptions): Promise<PollSettlementResult> {
   const now = opts.now ?? Date.now;
+  const signal = opts.signal;
   const deadline = now() + (opts.wait ? opts.timeoutMs : 0);
+  const isAborted = (): boolean => signal?.aborted === true;
 
   let total = estimateSettlementSteps(opts.wait, opts.timeoutMs, opts.intervalMs);
   let step = 0;
@@ -252,19 +376,32 @@ export async function pollSettlement(opts: PollSettlementOptions): Promise<PollS
     );
   };
 
+  // A wait cancelled before the first lookup still reports the hash and an
+  // honest "we have not seen it" status, rather than omitting both.
+  if (opts.wait && isAborted()) {
+    return {
+      tx: { hash: opts.txHash, found: false, status: "UNKNOWN" },
+      attempts: 0,
+      timedOut: false,
+      cancelled: true,
+    };
+  }
+
   // Always fetch at least once, even when not waiting.
   let tx = await opts.fetchTransaction(opts.txHash);
   attempts += 1;
   await report(tx.status, isTransactionSettled(tx.status));
 
   while (opts.wait) {
+    if (isAborted()) return { tx, attempts, timedOut: false, cancelled: true };
     if (isTransactionSettled(tx.status)) break;
     if (now() >= deadline) {
       timedOut = true;
       await report(tx.status, false);
       break;
     }
-    await sleepUntilNextPoll(opts.sleep, opts.intervalMs, deadline - now());
+    await sleepUntilNextPoll(opts.sleep, opts.intervalMs, deadline - now(), signal);
+    if (isAborted()) return { tx, attempts, timedOut: false, cancelled: true };
     tx = await opts.fetchTransaction(opts.txHash);
     attempts += 1;
     const settled = isTransactionSettled(tx.status);
@@ -273,13 +410,33 @@ export async function pollSettlement(opts: PollSettlementOptions): Promise<PollS
     if (settled || timedOut) break;
   }
 
-  return { tx, attempts, timedOut };
+  return { tx, attempts, timedOut, cancelled: false };
 }
 
+/**
+ * Sleep until the next poll, but resolve early (without throwing) when the
+ * caller aborts, so the caller can stop promptly during a long interval.
+ */
 function sleepUntilNextPoll(
-  sleep: (ms: number) => Promise<void>,
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>,
   intervalMs: number,
   remainingMs: number,
+  signal?: AbortSignal,
 ): Promise<void> {
-  return sleep(Math.min(intervalMs, Math.max(0, remainingMs)));
+  const delay = Math.min(intervalMs, Math.max(0, remainingMs));
+  if (!signal) return sleep(delay);
+  if (signal.aborted) return Promise.resolve();
+
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const onAbort = () => finish();
+    signal.addEventListener("abort", onAbort, { once: true });
+    void sleep(delay, signal).then(finish, finish);
+  });
 }

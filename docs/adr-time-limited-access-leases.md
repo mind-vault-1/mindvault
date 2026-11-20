@@ -240,6 +240,30 @@ Rollback is trivial: disable the flag / remove lease tiers and the paywall pre-c
 
 ---
 
+## Implementation status
+
+The on-chain half of Option C now exists in `vault-registry` (see
+[`contract/README.md`](../contract/README.md#time-limited-access-leases)): a
+`Lease` record per `(resource_id, holder)` with `start_ledger`,
+`expiry_ledger`, `tier` and `state`, written by `buy_lease` (holder, `Pending`)
+or `record_lease` (settler, `Active`), promoted by `settle_lease`, revoked by
+the creator with `revoke_lease`, and read with `get_lease`, `lease_is_active`
+and `lease_price`. Tier durations and price multipliers are platform defaults
+(`LEASE_*_LEDGERS`, `LEASE_*_MULTIPLIER`); creator-configurable tiers remain a
+follow-up. The MCP server buys and inspects leases with `mindvault_buy_lease`
+and `mindvault_lease_status`: the agent pays the creator in USDC directly, then
+records the lease on-chain with the payment hash. The off-chain lease table,
+the paywall short-circuit and the expiry sweeper (follow-ups 1 to 3) are still
+open.
+
+**Fee-config freeze (#991).** When a lease is created, the resource's current
+price is locked into `Lease.amount`. A subsequent `set_fee_config` that raises
+the combined `platform_fee_bps + royalty_bps` to or above that resource's price
+would retroactively invalidate the lease's pricing. The contract now tracks an
+`ActiveLeasePriceFloor` (the minimum resource price among resources with open
+leases) and rejects conflicting fee changes with `LeaseFeeConfigConflict`.
+See [ADR: Fee Config](adr-fee-config.md#negative--limitations) for details.
+
 ## References
 
 - [x402 protocol spec](https://www.x402.org/)

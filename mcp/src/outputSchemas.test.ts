@@ -20,6 +20,7 @@ import {
   WALLET_INFO_OUTPUT_SCHEMA,
   WALLET_SETUP_OUTPUT_SCHEMA,
 } from "./outputSchemas.js";
+import { successSchemaOf } from "./outputValidation.js";
 import { TOOL_DEFINITIONS } from "./tools.js";
 
 function requiredKeys(schema: { required?: readonly string[] }): readonly string[] {
@@ -58,8 +59,11 @@ describe("structured tools advertise a schema", () => {
     // TOOL_DEFINITIONS; both are defined there now, so the schemas travel with
     // the definition like every other tool's (#596).
     const byName = new Map(TOOL_DEFINITIONS.map((t) => [t.name, t]));
-    expect(byName.get("mindvault_publish_status")?.outputSchema).toBe(PUBLISH_STATUS_OUTPUT_SCHEMA);
-    expect(byName.get("mindvault_purchase_history")?.outputSchema).toBe(
+    // Advertised as success-or-error (#1062); the success half is the schema.
+    expect(successSchemaOf(byName.get("mindvault_publish_status")?.outputSchema)).toBe(
+      PUBLISH_STATUS_OUTPUT_SCHEMA,
+    );
+    expect(successSchemaOf(byName.get("mindvault_purchase_history")?.outputSchema)).toBe(
       PURCHASE_HISTORY_OUTPUT_SCHEMA,
     );
   });
@@ -70,6 +74,8 @@ describe("representative payloads match advertised required keys", () => {
     assertKeys(CATALOG_LIST_OUTPUT_SCHEMA, {
       items: [{ id: "mock-1", title: "Intro", price: "1.5", description: null, accessUrl: null }],
       notice: null,
+      cacheStatus: "live",
+      nextCursor: null,
       truncated: false,
     });
   });
@@ -83,6 +89,7 @@ describe("representative payloads match advertised required keys", () => {
       type: "link",
       verificationStatus: "verified",
       accessUrl: "https://example.com",
+      cacheStatus: "live",
     });
   });
 

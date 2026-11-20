@@ -16,10 +16,12 @@ import {
   requireApiKey,
   requireWallet,
   saveState,
+  sorobanRpcFetch,
   SOROBAN_RPC_URL,
   STATE_FILE,
 } from "../runtime.js";
 import { insufficientFundsMessage } from "./registry.js";
+import { assertOnchainSetupReady } from "../onchainPreflight.js";
 import {
   isTimeoutError,
   mapHttpError,
@@ -31,8 +33,34 @@ import {
 import { dryRunPublish, dryRunBuy } from "../dryRun.js";
 import { safeErrorMessage } from "../redaction.js";
 import { recordPurchase } from "../purchaseHistory.js";
-import { mockSetListed, mockSetPrice, mockTransferOwnership, mockUpdateMetadata, mockPublishBatch } from "../mock.js";
-
+import {
+  mockSetListed,
+  mockSetPrice,
+  mockTransferOwnership,
+  mockUpdateMetadata,
+  mockPublishBatch,
+  mockAcceptTransfer,
+  mockCancelTransfer,
+} from "../mock.js";
+import {
+  buildSettlementSnapshot,
+  estimateSettlementSteps,
+  normalizeSettlementIntervalMs,
+  normalizeSettlementTimeoutMs,
+  normalizeSettlementWaitFlag,
+  pollSettlement,
+  type SettlementSnapshot,
+  type TransactionLookup,
+} from "../settlement.js";
+import { assertTransactionFeeWithinCeiling } from "../paymentCeiling.js";
+import { usdcToStroops as toStroops } from "../usdcAmount.js";
+import {
+  SubmittedTransactionUnconfirmed,
+  signAndSendTracked,
+  submittedUnconfirmedResult,
+  txStatusLookup,
+} from "../submittedTransaction.js";
+import { txPhaseFields } from "../txPhases.js";
 /**
  * Decimal USDC as on-chain stroops, throwing on an amount the shared converter
  * will not accept — a price that cannot be expressed exactly must not be
@@ -53,6 +81,9 @@ export async function register(
   email: string,
   walletAddress?: string,
 ): Promise<string> {
+  // Fail fast on a locally fatal on-chain config problem (missing/malformed
+  // contract ID, unrecognized network) before touching the network (#1054).
+  assertOnchainSetupReady();
   const wallet = requireWallet();
   const res = await jsonFetch(`${BASE_URL}/publishers`, {
     method: "POST",
@@ -84,6 +115,10 @@ export async function publish(args: {
       2,
     );
   }
+
+  // Dry runs stay offline; once the flow commits to on-chain work, fail fast
+  // on a locally fatal config problem (#1054).
+  assertOnchainSetupReady();
 
   const wallet = requireWallet();
   const apiKey = requireApiKey();
@@ -406,6 +441,9 @@ export async function registerOnchain(
   resourceId: string,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
 ): Promise<string> {
+  // This flow signs and submits a Soroban transaction; fail fast on a locally
+  // fatal on-chain config problem before preparing it (#1054).
+  assertOnchainSetupReady();
   const wallet = requireWallet();
   const apiKey = requireApiKey();
   if (!resourceId) throw new Error("resourceId is required.");
@@ -517,29 +555,52 @@ function makeClient(publicKey: string) {
 interface RegistryTx {
   signAndSend(input: {
     signTransaction: (xdr: string) => Promise<{ signedTxXdr: string }>;
+    watcher?: import("../submittedTransaction.js").SubmissionWatcher;
   }): Promise<{ sendTransactionResponse?: { hash?: string | null } | null } | undefined | null>;
 }
 
+/**
+ * Sign and submit a registry transaction, preserving the transaction hash if
+ * the RPC drops after submission (#1060).
+ *
+ * Returns `{ txHash, unconfirmed }`:
+ *   - `unconfirmed: false` — the transaction confirmed; `txHash` is its hash.
+ *   - `unconfirmed: true`  — the transaction was submitted but could not be
+ *     confirmed; `txHash` is the submitted hash. Callers must return a
+ *     `submittedUnconfirmedResult` instead of a success result so agents know
+ *     not to resubmit and can poll `mindvault_tx_status` instead.
+ *
+ * Both paths go through `signAndSendTracked` so the attempt cap and the
+ * submitted-hash invariant are enforced uniformly: manual and automatic anchor
+ * retry are both bounded by the SDK's own `maxAttempts`, and a resubmit after
+ * a confirmed-but-lost result never happens.
+ */
 async function signAndSendRegistryTx(
   resourceId: string,
   label: string,
   tx: RegistryTx,
   secretKey: string,
-): Promise<string | null> {
+): Promise<{ txHash: string | null; unconfirmed: SubmittedTransactionUnconfirmed | null }> {
   const { Keypair } = await import("@stellar/stellar-sdk");
   const keypair = Keypair.fromSecret(secretKey);
-  let sentTx;
   try {
-    sentTx = await tx.signAndSend({
-      signTransaction: async (xdr: string) => {
-        const { Transaction } = await import("@stellar/stellar-sdk");
-        const stellarTx = new Transaction(xdr, REGISTRY_NETWORK_PASSPHRASE);
-        assertTransactionFeeWithinCeiling({ feeStroops: stellarTx.fee });
-        stellarTx.sign(keypair);
-        return { signedTxXdr: stellarTx.toXDR() };
-      },
-    });
+    const { txHash } = await signAndSendTracked((watcher) =>
+      tx.signAndSend({
+        signTransaction: async (xdr: string) => {
+          const { Transaction } = await import("@stellar/stellar-sdk");
+          const stellarTx = new Transaction(xdr, REGISTRY_NETWORK_PASSPHRASE);
+          assertTransactionFeeWithinCeiling({ feeStroops: stellarTx.fee });
+          stellarTx.sign(keypair);
+          return { signedTxXdr: stellarTx.toXDR() };
+        },
+        watcher,
+      }),
+    );
+    return { txHash, unconfirmed: null };
   } catch (err: any) {
+    if (err instanceof SubmittedTransactionUnconfirmed) {
+      return { txHash: err.txHash, unconfirmed: err };
+    }
     throw mcpError(
       mapRegistryError({
         operation: `${label} submission failed for resource "${resourceId}"`,
@@ -547,8 +608,6 @@ async function signAndSendRegistryTx(
       }),
     );
   }
-  const txHash = sentTx?.sendTransactionResponse?.hash ?? null;
-  return txHash;
 }
 
 export async function updateMetadata(resourceId: string, metadata: string): Promise<string> {
@@ -591,10 +650,23 @@ export async function updateMetadata(resourceId: string, metadata: string): Prom
     );
   }
 
-  const txHash = await signAndSendRegistryTx(resourceId, "Update metadata", tx, wallet.secretKey);
+  const { txHash, unconfirmed } = await signAndSendRegistryTx(
+    resourceId,
+    "Update metadata",
+    tx,
+    wallet.secretKey,
+  );
+  if (unconfirmed) {
+    return JSON.stringify(
+      submittedUnconfirmedResult("Update metadata", resourceId, unconfirmed, { metadata }),
+      null,
+      2,
+    );
+  }
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       metadata,
       txHash,
@@ -645,10 +717,23 @@ export async function setPrice(resourceId: string, price: string): Promise<strin
     );
   }
 
-  const txHash = await signAndSendRegistryTx(resourceId, "Set price", tx, wallet.secretKey);
+  const { txHash, unconfirmed } = await signAndSendRegistryTx(
+    resourceId,
+    "Set price",
+    tx,
+    wallet.secretKey,
+  );
+  if (unconfirmed) {
+    return JSON.stringify(
+      submittedUnconfirmedResult("Set price", resourceId, unconfirmed, { price }),
+      null,
+      2,
+    );
+  }
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       price,
       txHash,
@@ -698,15 +783,23 @@ export async function transferOwnership(resourceId: string, newCreator: string):
     );
   }
 
-  const txHash = await signAndSendRegistryTx(
+  const { txHash, unconfirmed } = await signAndSendRegistryTx(
     resourceId,
     "Transfer ownership",
     tx,
     wallet.secretKey,
   );
+  if (unconfirmed) {
+    return JSON.stringify(
+      submittedUnconfirmedResult("Transfer ownership", resourceId, unconfirmed, { newCreator }),
+      null,
+      2,
+    );
+  }
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       newCreator,
       txHash,
@@ -744,6 +837,11 @@ export interface BatchPublishSummary {
   onchainStatus: string;
   txHash: string | null;
   items: BatchPublishItemResult[];
+  /**
+   * Present when the batch transaction was submitted but not confirmed
+   * (`onchainStatus: "submitted"`): how to check its outcome (#1060).
+   */
+  statusLookup?: ReturnType<typeof txStatusLookup>;
 }
 
 /**
@@ -904,7 +1002,7 @@ export async function publishBatch(
       price: usdcToStroops(item.price),
       metadata: resource.accessUrl ?? item.externalUrl,
       tags: [],
-      content_hash: null,
+      content_hash: undefined,
     });
     results.push({
       index,
@@ -926,6 +1024,7 @@ export async function publishBatch(
 
   let txHash: string | null = null;
   let batchOnchainStatus = "skipped";
+  let unconfirmed = false;
 
   if (verifiedItems.length > 0) {
     const client = createRegistryClient({
@@ -973,27 +1072,41 @@ export async function publishBatch(
     const { Keypair, Transaction } = await import("@stellar/stellar-sdk");
     const keypair = Keypair.fromSecret(wallet.secretKey);
     try {
-      const sentTx = await batchTx.signAndSend({
-        signTransaction: async (xdr: string) => {
-          const tx = new Transaction(xdr, REGISTRY_NETWORK_PASSPHRASE);
-          tx.sign(keypair);
-          return { signedTxXdr: tx.toXDR() };
-        },
-      });
-      txHash = sentTx?.sendTransactionResponse?.hash ?? null;
+      ({ txHash } = await signAndSendTracked((watcher) =>
+        batchTx.signAndSend({
+          signTransaction: async (xdr: string) => {
+            const tx = new Transaction(xdr, REGISTRY_NETWORK_PASSPHRASE);
+            tx.sign(keypair);
+            return { signedTxXdr: tx.toXDR() };
+          },
+          watcher,
+        }),
+      ));
       batchOnchainStatus = "registered";
     } catch (err: any) {
-      throw mcpError(
-        mapRegistryError({
-          operation: "register_batch submission failed",
-          message: err?.message || String(err),
-        }),
-      );
+      // Submitted but unconfirmed (#1060): the items are already published, so
+      // report them with the hash and a status lookup rather than throwing
+      // both away and inviting a second register_batch.
+      if (!(err instanceof SubmittedTransactionUnconfirmed)) {
+        throw mcpError(
+          mapRegistryError({
+            operation: "register_batch submission failed",
+            message: err?.message || String(err),
+          }),
+        );
+      }
+      txHash = err.txHash;
+      batchOnchainStatus = "submitted";
+      unconfirmed = true;
     }
 
-    // Update per-item onchain status from the batch result data.
+    // Update per-item onchain status from the batch result data. An
+    // unconfirmed batch has no result data yet: every approved item is
+    // "submitted" until mindvault_tx_status says otherwise.
     const batchResultData =
-      batchResult && typeof batchResult.unwrap === "function" ? batchResult.unwrap() : null;
+      !unconfirmed && batchResult && typeof batchResult.unwrap === "function"
+        ? batchResult.unwrap()
+        : null;
     const succeededIds = new Set<string>(
       batchResultData?.succeeded ?? verifiedItems.map((v) => v.id),
     );
@@ -1001,7 +1114,9 @@ export async function publishBatch(
 
     for (const r of results) {
       if (r.verificationStatus === "approved") {
-        if (succeededIds.has(r.id!)) {
+        if (unconfirmed) {
+          r.onchainStatus = "submitted";
+        } else if (succeededIds.has(r.id!)) {
           r.onchainStatus = "registered";
         } else {
           const failedEntry = failedPairs.find(([idx]) => verifiedItems[idx]?.id === r.id);
@@ -1033,6 +1148,7 @@ export async function publishBatch(
     onchainStatus: batchOnchainStatus,
     txHash,
     items: results,
+    ...(unconfirmed && txHash ? { statusLookup: txStatusLookup(txHash) } : {}),
   };
 
   return JSON.stringify(summary, null, 2);
@@ -1078,10 +1194,23 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
     );
   }
 
-  const txHash = await signAndSendRegistryTx(resourceId, "Set listed", tx, wallet.secretKey);
+  const { txHash, unconfirmed } = await signAndSendRegistryTx(
+    resourceId,
+    "Set listed",
+    tx,
+    wallet.secretKey,
+  );
+  if (unconfirmed) {
+    return JSON.stringify(
+      submittedUnconfirmedResult("Set listed", resourceId, unconfirmed, { listed }),
+      null,
+      2,
+    );
+  }
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       listed,
       txHash,
@@ -1131,10 +1260,23 @@ export async function acceptTransfer(resourceId: string): Promise<string> {
     );
   }
 
-  const txHash = await signAndSendRegistryTx(resourceId, "Accept transfer", tx, wallet.secretKey);
+  const { txHash, unconfirmed } = await signAndSendRegistryTx(
+    resourceId,
+    "Accept transfer",
+    tx,
+    wallet.secretKey,
+  );
+  if (unconfirmed) {
+    return JSON.stringify(
+      submittedUnconfirmedResult("Accept transfer", resourceId, unconfirmed),
+      null,
+      2,
+    );
+  }
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       txHash,
     },
@@ -1183,10 +1325,23 @@ export async function cancelTransfer(resourceId: string): Promise<string> {
     );
   }
 
-  const txHash = await signAndSendRegistryTx(resourceId, "Cancel transfer", tx, wallet.secretKey);
+  const { txHash, unconfirmed } = await signAndSendRegistryTx(
+    resourceId,
+    "Cancel transfer",
+    tx,
+    wallet.secretKey,
+  );
+  if (unconfirmed) {
+    return JSON.stringify(
+      submittedUnconfirmedResult("Cancel transfer", resourceId, unconfirmed),
+      null,
+      2,
+    );
+  }
   return JSON.stringify(
     {
       status: "success",
+      ...txPhaseFields("settled"),
       resourceId,
       txHash,
     },
