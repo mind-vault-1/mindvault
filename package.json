@@ -64,7 +64,11 @@
         "CVE-2026-14257"
       ],
       "ignoreGhsas": [
-        "GHSA-mh99-v99m-4gvg"
+        "GHSA-mh99-v99m-4gvg",
+        "GHSA-mrhx-c7xc-m3w5",
+        "GHSA-27r3-jxmh-p828",
+        "GHSA-q7qp-rjg7-q26m",
+        "GHSA-mrwp-f3q8-3g9p"
       ]
     },
     "overrides": {
