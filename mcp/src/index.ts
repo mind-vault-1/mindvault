@@ -159,6 +159,11 @@ import {
   type PublishStatusFetch,
 } from "./publishStatus.js";
 import {
+  publishOperationId,
+  publishStatusTarget,
+  type PublishOperationScope,
+} from "./publishOperation.js";
+import {
   normalizeIntervalMs as normalizeResourceIntervalMs,
   normalizeTimeoutMs as normalizeResourceTimeoutMs,
   normalizeWaitFlag as normalizeResourceWaitFlag,
@@ -2487,21 +2492,27 @@ function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** What a publish operation id is bound to: the active network and API (#1250). */
+function publishOperationScope(): PublishOperationScope {
+  return { network: STELLAR_NETWORK, apiOrigin: new URL(BASE_URL).origin };
+}
+
+/** The operation id `mindvault_publish_status` accepts for this resource. */
+export function publishOperationIdFor(resourceId: string): string {
+  return publishOperationId(resourceId, publishOperationScope());
+}
+
 export async function publishStatus(
   args: {
     resourceId?: string;
+    operationId?: unknown;
     wait?: unknown;
     timeoutMs?: unknown;
     intervalMs?: unknown;
   },
   onProgress?: PublishProgressReporter,
 ): Promise<string> {
-  const resourceId = (args.resourceId ?? "").trim();
-  if (!resourceId) {
-    throw new Error(
-      "resourceId is required. Pass the id returned by mindvault_publish (e.g. 'cm7x8y9z').",
-    );
-  }
+  const resourceId = publishStatusTarget(args, publishOperationScope());
 
   const wait = normalizeWaitFlag(args.wait);
   const timeoutMs = normalizeTimeoutMs(args.timeoutMs);
@@ -2521,6 +2532,7 @@ export async function publishStatus(
     polled: wait,
     attempts,
     timedOut,
+    operationId: publishOperationIdFor(resourceId),
   });
   return JSON.stringify(snapshot, null, 2);
 }
@@ -2646,7 +2658,7 @@ async function publish(args: {
       "pay the content verification fee",
     );
     if (shortMsg) {
-      return `${shortMsg}\n(Resource created with id ${resource.id}; verify it later once funded.)`;
+      return `${shortMsg}\n(Resource created with id ${resource.id}, operationId ${publishOperationIdFor(resource.id)}; verify it later once funded.)`;
     }
   }
 
@@ -2676,7 +2688,7 @@ async function publish(args: {
       } catch {
         return [
           `Resource created (id: ${resource.id}) but verification timed out (ambiguous).`,
-          `Status could not be resolved automatically. Run mindvault_publish_status with resourceId "${resource.id}" before retrying — do not blindly re-publish (it may already be verified/registered).`,
+          `Status could not be resolved automatically. Run mindvault_publish_status with operationId "${publishOperationIdFor(resource.id)}" (or resourceId "${resource.id}") before retrying — do not blindly re-publish (it may already be verified/registered).`,
         ].join("\n");
       }
     }
@@ -2690,7 +2702,7 @@ async function publish(args: {
 
   if (!verifyRes.ok) {
     return (
-      `Resource created (id: ${resource.id}) but verification payment failed.\n` +
+      `Resource created (id: ${resource.id}, operationId: ${publishOperationIdFor(resource.id)}) but verification payment failed.\n` +
       `Status: ${verifyRes.status}\n${JSON.stringify(verifyData)}`
     );
   }
@@ -2729,7 +2741,7 @@ async function publish(args: {
       } catch {
         return [
           `Resource created and verification attempted for "${resource.id}"; on-chain registration timed out (ambiguous).`,
-          `Status could not be resolved automatically. Run mindvault_publish_status with resourceId "${resource.id}" before retrying registration — avoid duplicate registration.`,
+          `Status could not be resolved automatically. Run mindvault_publish_status with operationId "${publishOperationIdFor(resource.id)}" (or resourceId "${resource.id}") before retrying registration — avoid duplicate registration.`,
         ].join("\n");
       }
     }
@@ -2787,6 +2799,8 @@ async function publish(args: {
     changedFields: ["id", "title", "price", "accessUrl", "verificationStatus", "onchainStatus"],
     txHash: onchainTxHash,
     failureGuidance: failureGuidance.length > 0 ? failureGuidance : null,
+    // Resume mindvault_publish_status polling with this after a reconnect (#1250).
+    operationId: publishOperationIdFor(resource.id),
   };
 
   recordResourceHistory({
