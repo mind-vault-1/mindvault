@@ -658,6 +658,8 @@ pub enum RoleKind {
     Moderator = 2,
     /// Multi-member settler role (`is_settler`).
     Settler = 3,
+}
+
 /// Registry-level maintenance posture: which kind of pause is in effect.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -4114,11 +4116,15 @@ impl VaultRegistry {
     /// every call, including no-op transitions.
     pub fn set_payment_paused(env: Env, admin: Address, paused: bool) -> Result<(), Error> {
         Self::require_current_admin(&env, &admin)?;
-        env.storage().instance().set(&DataKey::PaymentPaused, &paused);
+        env.storage()
+            .instance()
+            .set(&DataKey::PaymentPaused, &paused);
         env.storage().instance().remove(&DataKey::PaymentPauseUntil);
         Self::bump_instance(&env);
-        env.events()
-            .publish((symbol_short!("payment_pause"), admin.clone()), (paused, admin));
+        env.events().publish(
+            (symbol_short!("payment_pause"), admin.clone()),
+            (paused, admin),
+        );
         Ok(())
     }
 
@@ -4128,10 +4134,16 @@ impl VaultRegistry {
     /// clock. The existing `set_payment_paused(admin, true)` entry point remains the
     /// way to create an indefinite pause. A deadline at or before the current
     /// ledger timestamp takes effect as an immediate resume.
-    pub fn set_payment_paused_until(env: Env, admin: Address, pause_until: u64) -> Result<(), Error> {
+    pub fn set_payment_paused_until(
+        env: Env,
+        admin: Address,
+        pause_until: u64,
+    ) -> Result<(), Error> {
         Self::require_current_admin(&env, &admin)?;
         let active = pause_until > env.ledger().timestamp();
-        env.storage().instance().set(&DataKey::PaymentPaused, &active);
+        env.storage()
+            .instance()
+            .set(&DataKey::PaymentPaused, &active);
         if active {
             env.storage()
                 .instance()
@@ -4348,8 +4360,7 @@ impl VaultRegistry {
         Self::validate_fee_destination_for_fee_config(&config, &destination)?;
 
         // Reject fee-recipient rotation when accrued fees are unclaimed.
-        let existing: Option<FeeConfig> =
-            env.storage().instance().get(&DataKey::FeeConfig);
+        let existing: Option<FeeConfig> = env.storage().instance().get(&DataKey::FeeConfig);
         if let Some(ref old) = existing {
             if old.fee_recipient != config.fee_recipient {
                 Self::require_no_unclaimed_fees(&env)?;
@@ -4583,7 +4594,7 @@ impl VaultRegistry {
     /// assumptions, which we prevent here.
     fn validate_fee_config_for_leases(env: &Env, config: &FeeConfig) -> Result<(), Error> {
         let combined_fee_bps = config.platform_fee_bps + config.royalty_bps;
-        
+
         // If there are no fees, there's no conflict
         if combined_fee_bps == 0 {
             return Ok(());
@@ -4592,10 +4603,14 @@ impl VaultRegistry {
         // Scan listed resources to find minimum price. We check listed resources
         // because only listed resources can have leases sold on them.
         let count: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
-        
+
         for i in 0..count {
             let index_key = DataKey::Index(i);
-            if let Some(resource_id) = env.storage().persistent().get::<DataKey, String>(&index_key) {
+            if let Some(resource_id) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, String>(&index_key)
+            {
                 if let Ok(resource) = Self::load(env, &resource_id) {
                     // Only check listed resources (leases can only be created on listed resources)
                     if resource.state == ResourceState::Listed {
@@ -4786,10 +4801,8 @@ impl VaultRegistry {
 
         match validation_result {
             Ok(()) => {
-                env.events().publish(
-                    (symbol_short!("simvalid"),),
-                    (true, Option::<u32>::None),
-                );
+                env.events()
+                    .publish((symbol_short!("simvalid"),), (true, Option::<u32>::None));
                 Ok(PaymentReceipt {
                     receipt_id: receipt_id.clone(),
                     resource_id,
@@ -4810,10 +4823,8 @@ impl VaultRegistry {
                     Error::InvalidTxHash => Some(24u32),
                     _ => None,
                 };
-                env.events().publish(
-                    (symbol_short!("simvalid"),),
-                    (false, error_code),
-                );
+                env.events()
+                    .publish((symbol_short!("simvalid"),), (false, error_code));
                 Err(e)
             }
         }
@@ -4967,7 +4978,11 @@ impl VaultRegistry {
         // in integer arithmetic (truncation is fine — leftover sub-stroop
         // dust is not tracked). Only non-zero fees are accrued so the
         // guard is inactive when no platform fee is configured.
-        if let Some(fee_config) = env.storage().instance().get::<DataKey, FeeConfig>(&DataKey::FeeConfig) {
+        if let Some(fee_config) = env
+            .storage()
+            .instance()
+            .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
+        {
             if fee_config.platform_fee_bps > 0 && fee_config.fee_recipient.is_some() {
                 let fee_amount = receipt.amount * i128::from(fee_config.platform_fee_bps)
                     / i128::from(FEE_BPS_DENOM);
@@ -6242,7 +6257,7 @@ impl VaultRegistry {
         let next_refunded = refunded
             .checked_add(amount)
             .ok_or(Error::PaymentAmountMismatch)?;
-        
+
         // Calculate remaining balance after this refund
         let remaining_balance = payment.amount.saturating_sub(next_refunded).max(0);
 
@@ -7021,11 +7036,7 @@ impl VaultRegistry {
         Self::bump_instance(env);
     }
 
-    fn add_verifier_internal(
-        env: &Env,
-        admin: &Address,
-        verifier: Address,
-    ) -> Result<(), Error> {
+    fn add_verifier_internal(env: &Env, admin: &Address, verifier: Address) -> Result<(), Error> {
         Self::role_index_add(env, RoleKind::Verifier, &verifier)?;
         env.storage()
             .instance()
