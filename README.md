@@ -173,6 +173,8 @@ Set `VITE_API_URL=http://localhost:4021` when running the web app separately (e.
 | `make dev-web`    | Frontend only on `:5173`                                            |
 | `make seed`       | Seed the catalog with sample resources for local dev                |
 | `make test`       | Run unit tests                                                      |
+| `make bindings`   | Regenerate TypeScript bindings from the deployed testnet contract   |
+| `make reset`      | Print the reset + reseed steps for a clean local environment        |
 
 ### Local services
 
@@ -195,11 +197,11 @@ Wallet helpers live in `server/scripts/generate-wallet.ts` (run via `make wallet
 
 ## Operations
 
+- **Local testnet reset**: see [docs/local-testnet-reset.md](docs/local-testnet-reset.md) — partial (DB + storage) and full (new wallets) reset flows, MCP state file cleanup, and reseed; run `make reset` for a quick command reference.
 - **Reconciliation**: see [docs/reconciliation.md](docs/reconciliation.md) — detects and reports drift between the DB and the on-chain [vault registry](docs/GLOSSARY.md#vault-registry); run with `pnpm reconcile` from `server/`.
 - **Deployment runbook**: see [docs/deployment-runbook.md](docs/deployment-runbook.md) — step-by-step guide to deploy the full stack (contract + server + frontend + MCP) to a new Stellar network.
 - **Contract upgrade checklist**: see [docs/contract-upgrade-checklist.md](docs/contract-upgrade-checklist.md) — preflight checks before deploying a new vault-registry WASM (build, optimize, test, network, contract ID, binding regeneration).
 - **Contract storage footprint**: see [docs/contract-storage-footprint.md](docs/contract-storage-footprint.md) — what each vault-registry ledger entry costs in XDR bytes, and the budgets that keep it from growing silently; regenerate with `make footprint`.
-- **Reconciliation**: see [docs/reconciliation.md](docs/reconciliation.md) — detects and reports drift between the DB and the on-chain vault registry; run with `pnpm reconcile` from `server/`.
 
 ## Testing the 402 Flow
 
