@@ -140,6 +140,9 @@ pub const MAX_ROLE_HOLDERS: u32 = 32;
 /// Maximum number of holders returned per `role_inventory_page` call.
 /// `limit` is clamped to `1..=ROLE_INVENTORY_PAGE_CAP`.
 pub const ROLE_INVENTORY_PAGE_CAP: u32 = 20;
+/// Most entries `verifier_key_history` returns in one page. A `limit` above
+/// it (or `0`) is clamped to `1..=VERIFIER_KEY_HISTORY_PAGE_CAP`.
+pub const VERIFIER_KEY_HISTORY_PAGE_CAP: u32 = 20;
 
 // ── Fee / royalty configuration ──────────────────────────────────────────────
 /// Fee basis-point ceiling: 50 % (5 000 bp). Neither platform_fee_bps nor
@@ -174,7 +177,10 @@ pub const PREVIOUS_RESOURCE_SCHEMA_VERSION: u32 = 6;
 /// `role_inventory_page`, or a new field on the role-rotation event), so
 /// clients can detect support before invoking them. Independent of
 /// `RESOURCE_SCHEMA_VERSION`, which tracks only the `Resource` struct.
-pub const ROLE_CAPABILITY_VERSION: u32 = 1;
+///
+/// - `1`: `role_inventory_page`, actor and target on role-rotation events.
+/// - `2`: `verifier_key_history` (#1238).
+pub const ROLE_CAPABILITY_VERSION: u32 = 2;
 
 /// Maximum byte length of a settlement transaction hash stored in a
 /// [`PaymentReceipt`]. Stellar transaction hashes are 64 hex characters
@@ -315,6 +321,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("remove_moderator", "admin"),
     ("is_moderator", "—"),
     ("role_inventory_page", "—"),
+    ("verifier_key_history", "—"),
     ("flag_resource", "moderator"),
     ("unflag_resource", "moderator"),
     ("set_flag_reason_hash", "moderator"),
@@ -1027,6 +1034,58 @@ pub struct VerifierStatusPage {
     pub next_cursor: Option<u32>,
 }
 
+/// What a [`VerifierKeyChange`] did to the verifier role. The discriminants
+/// are stable; new actions are only appended.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum VerifierKeyAction {
+    /// `add_verifier` granted the role to `verifier`.
+    Added = 0,
+    /// `remove_verifier` revoked the role from `verifier`.
+    Removed = 1,
+    /// `rotate_verifier` revoked the role from `previous` and granted it to
+    /// `verifier` in one step.
+    Rotated = 2,
+}
+
+/// One entry of the registry-wide verifier key history (#1238).
+///
+/// Entries are append-only and never rewritten: a later change to the same
+/// key adds a new entry instead of editing this one.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct VerifierKeyChange {
+    /// 1-based position in the history, assigned in the order changes were
+    /// made. Entry `revision` is read with cursor `revision - 1`.
+    pub revision: u32,
+    pub action: VerifierKeyAction,
+    /// The key this change is about: the key granted (`Added`, and the new
+    /// key of `Rotated`) or the key revoked (`Removed`).
+    pub verifier: Address,
+    /// For `Rotated`, the key that was replaced. `None` otherwise.
+    pub previous: Option<Address>,
+    /// Whether `verifier` held the role right after this change. The key's
+    /// current state is `is_verifier(verifier)`.
+    pub active: bool,
+    /// Admin that authorized the change.
+    pub admin: Address,
+    /// Ledger sequence the change was made in.
+    pub ledger: u32,
+}
+
+/// One page of [`VerifierKeyChange`] entries, oldest first. Returned by
+/// `verifier_key_history`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct VerifierKeyHistoryPage {
+    pub changes: Vec<VerifierKeyChange>,
+    /// Cursor for the next page, or `None` when this page reaches the end of
+    /// the history as it stood when it was read.
+    pub next_cursor: Option<u32>,
+    /// Number of entries in the whole history when the page was read.
+    pub total: u32,
+}
+
 /// One page of active holders of a protocol role, with a cursor for the next
 /// page. Returned by `role_inventory_page`. Mirrors `CatalogPage` semantics:
 /// `next_cursor` is `None` at end-of-list. The page is a read-only projection
@@ -1219,6 +1278,11 @@ pub enum DataKeyExt {
     /// to reject fee changes that would invalidate active lease pricing (#991).
     /// Absent (read as `None`) when no open leases exist.
     ActiveLeasePriceFloor,
+    /// Number of entries in the verifier key history (#1238). Absent (read as
+    /// `0`) until the first verifier grant.
+    VerifierKeyChangeCount,
+    /// Verifier key history entry at a 0-based position.
+    VerifierKeyChange(u32),
 }
 
 /// Payload of every role grant/revoke event (`addverif`/`rmverif`,
@@ -4259,14 +4323,23 @@ impl VaultRegistry {
     pub fn add_verifier(env: Env, verifier: Address) -> Result<(), Error> {
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
-        Self::add_verifier_internal(&env, &admin, verifier)
+        let was_active = Self::is_verifier(env.clone(), verifier.clone());
+        Self::add_verifier_internal(&env, &admin, verifier.clone())?;
+        if !was_active {
+            Self::log_verifier_key_change(&env, &admin, VerifierKeyAction::Added, verifier, None);
+        }
+        Ok(())
     }
 
     /// Revoke the verifier role from `verifier`. Only the admin may call this.
     pub fn remove_verifier(env: Env, verifier: Address) -> Result<(), Error> {
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
-        Self::remove_verifier_internal(&env, &admin, verifier);
+        let was_active = Self::is_verifier(env.clone(), verifier.clone());
+        Self::remove_verifier_internal(&env, &admin, verifier.clone());
+        if was_active {
+            Self::log_verifier_key_change(&env, &admin, VerifierKeyAction::Removed, verifier, None);
+        }
         Ok(())
     }
 
@@ -4290,6 +4363,13 @@ impl VaultRegistry {
 
         Self::remove_verifier_internal(&env, &admin, old_verifier.clone());
         Self::add_verifier_internal(&env, &admin, new_verifier.clone())?;
+        Self::log_verifier_key_change(
+            &env,
+            &admin,
+            VerifierKeyAction::Rotated,
+            new_verifier.clone(),
+            Some(old_verifier.clone()),
+        );
         env.events().publish(
             (symbol_short!("verrot"), old_verifier.clone()),
             VerifierRotation {
@@ -4308,6 +4388,57 @@ impl VaultRegistry {
             .instance()
             .get(&DataKey::Verifier(address))
             .unwrap_or(false)
+    }
+
+    /// Bounded, read-only page of the registry-wide verifier key history
+    /// (#1238): every grant, revocation and rotation of the verifier role, with
+    /// the key's activation state after the change, the admin that made it and
+    /// the ledger it was made in.
+    ///
+    /// - **Ordering**: oldest first, by `revision`. A change appends one entry;
+    ///   entries are never edited, removed or reordered.
+    /// - **Cursor**: a 0-based position. Pass `0` for the first page, then the
+    ///   returned `next_cursor`. Entry `revision` sits at cursor
+    ///   `revision - 1`. Because the history only grows at the end, a cursor
+    ///   stays valid across later changes: resuming from a saved cursor
+    ///   returns exactly the entries added since. A cursor at or past `total`
+    ///   returns an empty page with `next_cursor: None`.
+    /// - **Limit**: clamped to `1..=`[`VERIFIER_KEY_HISTORY_PAGE_CAP`] (20),
+    ///   so a `0` limit still makes progress.
+    /// - **What is recorded**: only calls that change the role. Granting a
+    ///   key that already holds it, or revoking one that does not, records
+    ///   nothing. A rotation is one `Rotated` entry, not a removal plus an
+    ///   addition. Changes made before this history existed are not
+    ///   back-filled; the `addverif` / `rmverif` / `verrot` events cover them.
+    ///
+    /// Never fails and never writes role state.
+    pub fn verifier_key_history(env: Env, cursor: u32, limit: u32) -> VerifierKeyHistoryPage {
+        let page_size = limit.clamp(1, VERIFIER_KEY_HISTORY_PAGE_CAP);
+        let total: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKeyExt::VerifierKeyChangeCount)
+            .unwrap_or(0);
+        let mut changes = Vec::new(&env);
+        let mut i = cursor;
+        while i < total && changes.len() < page_size {
+            let key = DataKeyExt::VerifierKeyChange(i);
+            if let Some(change) = env
+                .storage()
+                .persistent()
+                .get::<DataKeyExt, VerifierKeyChange>(&key)
+            {
+                Self::bump_persistent(&env, &key);
+                changes.push_back(change);
+            }
+            i += 1;
+        }
+        let next_cursor = if i < total { Some(i) } else { None };
+        VerifierKeyHistoryPage {
+            changes,
+            next_cursor,
+            total,
+        }
     }
 
     /// Rebuild the pagination index (`list`/`list_page`/`count`) from an
@@ -7088,6 +7219,38 @@ impl VaultRegistry {
         env.storage()
             .instance()
             .set(&DataKey::CreatorCount(creator.clone()), &value);
+        Self::bump_instance(env);
+    }
+
+    /// Append one entry to the verifier key history read by
+    /// `verifier_key_history`.
+    fn log_verifier_key_change(
+        env: &Env,
+        admin: &Address,
+        action: VerifierKeyAction,
+        verifier: Address,
+        previous: Option<Address>,
+    ) {
+        let index: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKeyExt::VerifierKeyChangeCount)
+            .unwrap_or(0);
+        let change = VerifierKeyChange {
+            revision: index + 1,
+            action,
+            verifier,
+            previous,
+            active: action != VerifierKeyAction::Removed,
+            admin: admin.clone(),
+            ledger: env.ledger().sequence(),
+        };
+        let key = DataKeyExt::VerifierKeyChange(index);
+        env.storage().persistent().set(&key, &change);
+        Self::bump_persistent(env, &key);
+        env.storage()
+            .instance()
+            .set(&DataKeyExt::VerifierKeyChangeCount, &(index + 1));
         Self::bump_instance(env);
     }
 

@@ -11828,4 +11828,5 @@ include!("test/stellar_wave_981_982_983_984.rs");
 include!("test/stellar_wave_977_978_979_980.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
+include!("test/verifier_key_history.rs");
 include!("test/pause_scope_matrix.rs");
