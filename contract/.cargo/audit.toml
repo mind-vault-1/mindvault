@@ -1,0 +1,18 @@
+[advisories]
+# RUSTSEC-2026-0387: crypto-bigint 0.5.5 — fixed in >=0.7.6, but Soroban SDK
+# pins an older version; no upgrade path is available without an SDK bump.
+ignore = [
+    "RUSTSEC-2026-0387",
+    # RUSTSEC-2026-0543: chrono — no fixed version available upstream.
+    "RUSTSEC-2026-0543",
+    # RUSTSEC-2024-0388: derivative — no fixed version available upstream.
+    "RUSTSEC-2024-0388",
+    # RUSTSEC-2024-0436: paste — no fixed version available upstream.
+    "RUSTSEC-2024-0436",
+    # RUSTSEC-2026-0190: anyhow 1.0.102 — fixed in >=1.0.103 but Soroban SDK
+    # controls the version; bumping requires a full SDK update.
+    "RUSTSEC-2026-0190",
+    # RUSTSEC-2026-0486: rustix 1.1.4 — fixed in >=1.1.6; version is
+    # transitively pinned by the Soroban toolchain.
+    "RUSTSEC-2026-0486",
+]
