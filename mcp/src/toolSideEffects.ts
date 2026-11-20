@@ -70,6 +70,7 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_setup_wallet: { local: "overwrite", remote: "api", payment: "none" },
   mindvault_wallet_info: READ,
   mindvault_wallet_allowance: READ,
+  mindvault_wallet_balances: READ,
   // Replaces the target profile's wallet secret after a Horizon read.
   mindvault_repair_sponsored_account: { local: "overwrite", remote: "none", payment: "none" },
   mindvault_use_profile: { local: "write", remote: "none", payment: "none" },
@@ -111,7 +112,9 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_check_bindings: READ,
   mindvault_onchain_preflight: READ,
   mindvault_verify_deployment: READ,
+  mindvault_server_endpoints: READ,
   mindvault_check_consistency: READ,
+  mindvault_metadata_diff: READ,
   mindvault_verify_attestation: READ,
   mindvault_registry_lookup: READ,
   // Explains a contract error from a table; it reads nothing and writes nothing.
@@ -147,6 +150,7 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_compare_state_backup: READ,
   mindvault_restore_state: { local: "overwrite", remote: "none", payment: "none" },
   mindvault_check_state_permissions: READ,
+  mindvault_migration_preview: READ,
 
   // ── Diagnostics ──────────────────────────────────────────────────────────
   // `reset: true` clears the in-process counters other calls report.
@@ -157,6 +161,7 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_mainnet_banner: READ,
   mindvault_verify_install: READ,
   mindvault_debug_bundle: READ,
+  mindvault_support_bundle: READ,
 };
 
 /** The annotation hints a side-effect row implies. */
