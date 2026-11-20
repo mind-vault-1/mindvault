@@ -427,6 +427,24 @@ This follows the ADR's direct-payment model, where refunds are separate
 transactions rather than contract-held escrow.
 
 
+#### Creator index consistency on transfer
+
+`CreatorResources` / `CreatorCount` and `CreatorListedCount` are derived indexes:
+they describe the resources (and listed resources) currently owned by an
+address. `transfer_ownership`, `accept_transfer` and
+`transfer_ownership_with_terms` all move an id from the previous owner's index
+to the new owner's in the same transaction that updates `Resource.creator`, and
+they derive each count from the rewritten index. The listed-count delta is
+applied only when an entry actually moves, so an old duplicate in the
+destination index is repaired rather than counted twice. Rejected calls leave
+both the indexes and the emitted events unchanged.
+
+No ABI, argument, or event-topic changes are involved: the public methods and
+their signatures are unchanged, and TypeScript bindings regenerated from the
+contract describe the same interface as before. Operators do not need to
+migrate storage — the first transfer involving an affected address repairs its
+own index entries.
+
 ### Roles
 
 Three roles sit alongside the per-resource `creator` and the pre-existing admin:
@@ -713,14 +731,14 @@ if (page.next_cursor !== null) {
 | `53` | `RecoveryAdminNotSet`            | `recover_admin` was called but no recovery admin is configured.                          |
 | `54` | `UnsupportedResourceSchema`      | A resource uses a schema version this deployment cannot safely read or upgrade.          |
 | `55` | `RevisionOverflow`               | A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state. |
-| `56` | `RoleCapacityReached`           | A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role. |
 | `56` | `UnclaimedFees`                 | A fee-recipient or fee-destination change was attempted while accrued fees remain unclaimed. Call `claim_fees` first, then retry. |
+| `57` | `RoleCapacityReached`           | A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role. |
 
 #### Error budget
 
 This enum is declared with `#[contracterror(export = false)]`. The protocol
 caps a *spec-exported* contract error enum at 50 cases
-(`ScSpecUdtErrorEnumV0.cases` is `VecM<_, 50>`), and codes `1`–`56` are all
+(`ScSpecUdtErrorEnumV0.cases` is `VecM<_, 50>`), and codes `1`–`57` are all
 allocated, so a spec-exported `#[contracterror]` would fail to compile with
 `LengthExceedsMax` on a `51` variant. Disabling the spec export keeps the
 contract buildable; the discriminants and names below remain the on-wire
@@ -735,7 +753,9 @@ into a broader existing code would hide the cause from callers.
 
 Code `56` (`UnclaimedFees`) was added for the accrued-fee guard (#985):
 it blocks fee-recipient/destination rotation while settled fees remain
-unclaimed, with `claim_fees` as the safe migration path.
+unclaimed, with `claim_fees` as the safe migration path. Code `57`
+(`RoleCapacityReached`) was appended for the role-inventory guard because
+`56` was already allocated when that guard landed.
 
 Plan new validation around an existing code where the semantics genuinely fit,
 or prefer a behavior that needs no new code (a documented no-op, or folding the

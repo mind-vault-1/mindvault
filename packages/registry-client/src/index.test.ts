@@ -149,7 +149,8 @@ describe("generated bindings (drift guard)", () => {
     53: "RecoveryAdminNotSet",
     54: "UnsupportedResourceSchema",
     55: "RevisionOverflow",
-    56: "RoleCapacityReached",
+    56: "UnclaimedFees",
+    57: "RoleCapacityReached",
   };
   // The full set of contract methods consumers call, mirroring the contract's
   // METHOD_SCHEMA. Adding, removing or renaming a contract function changes

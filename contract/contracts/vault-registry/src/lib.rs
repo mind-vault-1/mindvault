@@ -444,17 +444,8 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (53, "RecoveryAdminNotSet", "`recover_admin` was called but no recovery admin is configured."),
     (54, "UnsupportedResourceSchema", "A resource uses a schema version this deployment cannot safely read or upgrade."),
     (55, "RevisionOverflow", "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state."),
-    (56, "RoleCapacityReached", "A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role."),
-    (47, "RevocationReasonHashTooLong", "`revocation_reason_hash` exceeds `MAX_REVOCATION_REASON_HASH_LEN` (64 bytes)."),
-    (48, "PaymentAmountMismatch", "Payment amount differs from the resource price or cumulative refunds exceed the original payment."),
-    (49, "DuplicateTxHash", "A payment or refund receipt already uses the supplied transaction hash (`tx_hash`)."),
-    (50, "FeeConfigNotSet", "`set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`."),
-    (51, "AdminNominationExpired", "The pending admin nomination is missing or has expired."),
-    (52, "InvalidMetadataPointers", "`set_metadata_pointers` received zero, more than `MAX_METADATA_POINTERS`, or duplicate pointers, or an out-of-range `primary` index."),
-    (53, "AdminAlreadySet", "`bootstrap_dual_admin` was called after an admin was already set."),
-    (54, "RecoveryAdminNotSet", "`recover_admin` was called but no recovery admin is configured."),
-    (55, "UnsupportedResourceSchema", "A resource uses a schema version this deployment cannot safely read or upgrade."),
-    (56, "RevisionOverflow", "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state."),
+    (56, "UnclaimedFees", "A fee-recipient or fee-destination change was attempted while accrued fees remain unclaimed. Call `claim_fees` first to acknowledge receipt of outstanding fees, then retry the change."),
+    (57, "RoleCapacityReached", "A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -658,6 +649,8 @@ pub enum RoleKind {
     Moderator = 2,
     /// Multi-member settler role (`is_settler`).
     Settler = 3,
+}
+
 /// Registry-level maintenance posture: which kind of pause is in effect.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -1075,7 +1068,7 @@ pub struct TransferWithTermsEvent {
     pub attestation_reset: bool,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone)]
 pub enum DataKey {
     Resource(String),
@@ -1117,8 +1110,6 @@ pub enum DataKey {
     RefundedAmount(String),
     /// Configured creator-refund window length, in ledgers.
     RefundWindow,
-    /// Ordered history of verification status changes for a verifier address.
-    VerifierHistory(Address),
     /// Aggregated settled-payment earnings for a creator wallet address.
     CreatorEarnings(Address),
     /// Moderator who last set a resource's dispute flag or reason hash.
@@ -1156,9 +1147,6 @@ pub enum DataKey {
     /// enum code): this carries a digest of free-form detail a moderator
     /// recorded off-chain, analogous to `CreatorTerms`.
     FlagReasonHash(String),
-    /// Last moderator address that acted on the moderation state of a resource,
-    /// stored by resource id. Read by `flag_details`.
-    FlagModerator(String),
     /// Hash of a verifier's off-chain attestation document, provided during a
     /// status change via `set_verification_status`.
     AttestationHash(String),
@@ -1646,7 +1634,7 @@ pub enum Error {
     RevisionOverflow = 55,
     /// A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for
     /// that role. The grant is rejected without modifying state.
-    RoleCapacityReached = 56,
+    RoleCapacityReached = 57,
     /// A fee-recipient or fee-destination change was attempted while accrued
     /// fees remain unclaimed. Call `claim_fees` first to acknowledge receipt
     /// of outstanding fees, then retry the change.
@@ -4114,11 +4102,15 @@ impl VaultRegistry {
     /// every call, including no-op transitions.
     pub fn set_payment_paused(env: Env, admin: Address, paused: bool) -> Result<(), Error> {
         Self::require_current_admin(&env, &admin)?;
-        env.storage().instance().set(&DataKey::PaymentPaused, &paused);
+        env.storage()
+            .instance()
+            .set(&DataKey::PaymentPaused, &paused);
         env.storage().instance().remove(&DataKey::PaymentPauseUntil);
         Self::bump_instance(&env);
-        env.events()
-            .publish((symbol_short!("payment_pause"), admin.clone()), (paused, admin));
+        env.events().publish(
+            (Symbol::new(&env, "payment_pause"), admin.clone()),
+            (paused, admin),
+        );
         Ok(())
     }
 
@@ -4128,10 +4120,16 @@ impl VaultRegistry {
     /// clock. The existing `set_payment_paused(admin, true)` entry point remains the
     /// way to create an indefinite pause. A deadline at or before the current
     /// ledger timestamp takes effect as an immediate resume.
-    pub fn set_payment_paused_until(env: Env, admin: Address, pause_until: u64) -> Result<(), Error> {
+    pub fn set_payment_paused_until(
+        env: Env,
+        admin: Address,
+        pause_until: u64,
+    ) -> Result<(), Error> {
         Self::require_current_admin(&env, &admin)?;
         let active = pause_until > env.ledger().timestamp();
-        env.storage().instance().set(&DataKey::PaymentPaused, &active);
+        env.storage()
+            .instance()
+            .set(&DataKey::PaymentPaused, &active);
         if active {
             env.storage()
                 .instance()
@@ -4141,7 +4139,7 @@ impl VaultRegistry {
         }
         Self::bump_instance(&env);
         env.events().publish(
-            (symbol_short!("payment_pause"), admin.clone()),
+            (Symbol::new(&env, "payment_pause"), admin.clone()),
             (active, admin.clone()),
         );
         env.events().publish(
@@ -4348,8 +4346,7 @@ impl VaultRegistry {
         Self::validate_fee_destination_for_fee_config(&config, &destination)?;
 
         // Reject fee-recipient rotation when accrued fees are unclaimed.
-        let existing: Option<FeeConfig> =
-            env.storage().instance().get(&DataKey::FeeConfig);
+        let existing: Option<FeeConfig> = env.storage().instance().get(&DataKey::FeeConfig);
         if let Some(ref old) = existing {
             if old.fee_recipient != config.fee_recipient {
                 Self::require_no_unclaimed_fees(&env)?;
@@ -4583,7 +4580,7 @@ impl VaultRegistry {
     /// assumptions, which we prevent here.
     fn validate_fee_config_for_leases(env: &Env, config: &FeeConfig) -> Result<(), Error> {
         let combined_fee_bps = config.platform_fee_bps + config.royalty_bps;
-        
+
         // If there are no fees, there's no conflict
         if combined_fee_bps == 0 {
             return Ok(());
@@ -4592,10 +4589,14 @@ impl VaultRegistry {
         // Scan listed resources to find minimum price. We check listed resources
         // because only listed resources can have leases sold on them.
         let count: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
-        
+
         for i in 0..count {
             let index_key = DataKey::Index(i);
-            if let Some(resource_id) = env.storage().persistent().get::<DataKey, String>(&index_key) {
+            if let Some(resource_id) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, String>(&index_key)
+            {
                 if let Ok(resource) = Self::load(env, &resource_id) {
                     // Only check listed resources (leases can only be created on listed resources)
                     if resource.state == ResourceState::Listed {
@@ -4786,10 +4787,8 @@ impl VaultRegistry {
 
         match validation_result {
             Ok(()) => {
-                env.events().publish(
-                    (symbol_short!("simvalid"),),
-                    (true, Option::<u32>::None),
-                );
+                env.events()
+                    .publish((symbol_short!("simvalid"),), (true, Option::<u32>::None));
                 Ok(PaymentReceipt {
                     receipt_id: receipt_id.clone(),
                     resource_id,
@@ -4798,6 +4797,7 @@ impl VaultRegistry {
                     state: PaymentState::Escrowed,
                     tx_hash,
                     recorded_at: env.ledger().sequence(),
+                    ledger: env.ledger().sequence(),
                 })
             }
             Err(e) => {
@@ -4810,10 +4810,8 @@ impl VaultRegistry {
                     Error::InvalidTxHash => Some(24u32),
                     _ => None,
                 };
-                env.events().publish(
-                    (symbol_short!("simvalid"),),
-                    (false, error_code),
-                );
+                env.events()
+                    .publish((symbol_short!("simvalid"),), (false, error_code));
                 Err(e)
             }
         }
@@ -4967,7 +4965,11 @@ impl VaultRegistry {
         // in integer arithmetic (truncation is fine — leftover sub-stroop
         // dust is not tracked). Only non-zero fees are accrued so the
         // guard is inactive when no platform fee is configured.
-        if let Some(fee_config) = env.storage().instance().get::<DataKey, FeeConfig>(&DataKey::FeeConfig) {
+        if let Some(fee_config) = env
+            .storage()
+            .instance()
+            .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
+        {
             if fee_config.platform_fee_bps > 0 && fee_config.fee_recipient.is_some() {
                 let fee_amount = receipt.amount * i128::from(fee_config.platform_fee_bps)
                     / i128::from(FEE_BPS_DENOM);
@@ -6242,7 +6244,7 @@ impl VaultRegistry {
         let next_refunded = refunded
             .checked_add(amount)
             .ok_or(Error::PaymentAmountMismatch)?;
-        
+
         // Calculate remaining balance after this refund
         let remaining_balance = payment.amount.saturating_sub(next_refunded).max(0);
 
@@ -6904,19 +6906,28 @@ impl VaultRegistry {
         Self::bump_persistent(env, &Self::creator_key(env, creator));
     }
 
-    fn remove_from_creator_index(env: &Env, creator: &Address, id: &String) {
+    /// Remove every occurrence of `id` from `creator`'s index.
+    ///
+    /// Returns whether the index actually changed. Callers that maintain
+    /// derived counters use that to apply a listed-count delta only when an
+    /// entry really moved, so repairing a stale duplicate cannot double-count.
+    fn remove_from_creator_index(env: &Env, creator: &Address, id: &String) -> bool {
         let list = Self::creator_list(env, creator);
         let mut out: Vec<String> = Vec::new(env);
+        let mut removed = false;
         for i in 0..list.len() {
             let v = list.get(i).unwrap();
             if v != *id {
                 out.push_back(v);
+            } else {
+                removed = true;
             }
         }
         env.storage()
             .persistent()
             .set(&Self::creator_key(env, creator), &out);
         Self::bump_persistent(env, &Self::creator_key(env, creator));
+        removed
     }
 
     /// Move a resource id from `previous_owner`'s index/count to `new_owner`'s,
@@ -6932,7 +6943,7 @@ impl VaultRegistry {
         // Rewrite each side once. Removing every occurrence repairs any stale
         // duplicate left by an old transfer, while the destination insert is
         // idempotent so A→B→C transitions cannot accumulate duplicate ids.
-        Self::remove_from_creator_index(env, previous_owner, id);
+        let removed_from_source = Self::remove_from_creator_index(env, previous_owner, id);
         let mut destination = Self::creator_list(env, new_owner);
         let mut found = false;
         for i in 0..destination.len() {
@@ -6958,9 +6969,16 @@ impl VaultRegistry {
 
         // A listed resource changing hands is one fewer listed for the previous
         // owner and one more for the new one; the global count is unchanged.
+        // Each delta is tied to an actual index change: when the destination
+        // already held a stale copy, adding another would double-count, and
+        // when the source no longer held the id there is nothing to subtract.
         if listed {
-            Self::bump_creator_listed_count(env, previous_owner, -1);
-            Self::bump_creator_listed_count(env, new_owner, 1);
+            if removed_from_source {
+                Self::bump_creator_listed_count(env, previous_owner, -1);
+            }
+            if !found {
+                Self::bump_creator_listed_count(env, new_owner, 1);
+            }
         }
     }
 
@@ -7005,11 +7023,7 @@ impl VaultRegistry {
         Self::bump_instance(env);
     }
 
-    fn add_verifier_internal(
-        env: &Env,
-        admin: &Address,
-        verifier: Address,
-    ) -> Result<(), Error> {
+    fn add_verifier_internal(env: &Env, admin: &Address, verifier: Address) -> Result<(), Error> {
         Self::role_index_add(env, RoleKind::Verifier, &verifier)?;
         env.storage()
             .instance()
