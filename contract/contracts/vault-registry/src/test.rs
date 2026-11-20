@@ -4967,6 +4967,28 @@ fn full_workflow_emits_exactly_the_documented_events() {
     record(&env, &client, &mut observed);
     client.settle_payment(&settler, &workflow_receipt); // -> "settle"
     record(&env, &client, &mut observed);
+    client.simulate_record_payment(
+        &settler,
+        &String::from_str(&env, "wfrcpt2"),
+        &r0,
+        &payer,
+        &200i128,
+        &String::from_str(&env, "txhash124"),
+    ); // -> "simvalid"
+    record(&env, &client, &mut observed);
+    client.claim_fees(); // -> "claimfee"
+    record(&env, &client, &mut observed);
+    client.set_refund_window(&admin2, &(DAY_IN_LEDGERS * 2)); // -> "refwin"
+    record(&env, &client, &mut observed);
+    client.record_admin_refund(
+        &admin2,
+        &String::from_str(&env, "wfrefund1"),
+        &workflow_receipt,
+        &payer,
+        &50i128,
+        &String::from_str(&env, "refundtx1"),
+    ); // -> "refund"
+    record(&env, &client, &mut observed);
     // Time-limited access leases: buy (pending), settle, revoke.
     let lease_amount = client.lease_price(&r0, &LeaseTier::Hour);
     client.buy_lease(
@@ -4989,6 +5011,12 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.set_paused_until(&admin2, &200); // -> "pause", "pause_until"
     record(&env, &client, &mut observed);
     client.set_paused(&admin2, &false);
+    record(&env, &client, &mut observed);
+    client.set_payment_paused(&admin2, &true); // -> "payment_pause"
+    record(&env, &client, &mut observed);
+    client.set_payment_paused_until(&admin2, &200); // -> "payment_pause", "payment_pause_until"
+    record(&env, &client, &mut observed);
+    client.set_payment_paused(&admin2, &false);
     record(&env, &client, &mut observed);
     client.set_maintenance_status(&admin2, &MaintenanceKind::Scheduled, &1u32); // -> "mntstat"
     record(&env, &client, &mut observed);
@@ -5709,7 +5737,7 @@ fn remove_verifier_revokes_verification_ability() {
 
 #[test]
 fn admin_can_rotate_verifier_with_audit_event() {
-    let (env, _creator, _admin, client) = setup_with_admin();
+    let (env, _creator, admin, client) = setup_with_admin();
     let old_verifier = Address::generate(&env);
     let new_verifier = Address::generate(&env);
 
@@ -5738,6 +5766,7 @@ fn admin_can_rotate_verifier_with_audit_event() {
         assert_eq!(
             payload,
             VerifierRotation {
+                admin: admin.clone(),
                 old_verifier: old_verifier.clone(),
                 new_verifier: new_verifier.clone(),
                 ledger,
@@ -11810,4 +11839,6 @@ include!("test/stellar_wave_981_982_983_984.rs");
 include!("test/stellar_wave_977_978_979_980.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
+include!("test/verifier_key_history.rs");
+include!("test/event_indexing_guide.rs");
 include!("test/pause_scope_matrix.rs");

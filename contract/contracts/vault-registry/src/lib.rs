@@ -140,6 +140,9 @@ pub const MAX_ROLE_HOLDERS: u32 = 32;
 /// Maximum number of holders returned per `role_inventory_page` call.
 /// `limit` is clamped to `1..=ROLE_INVENTORY_PAGE_CAP`.
 pub const ROLE_INVENTORY_PAGE_CAP: u32 = 20;
+/// Most entries `verifier_key_history` returns in one page. A `limit` above
+/// it (or `0`) is clamped to `1..=VERIFIER_KEY_HISTORY_PAGE_CAP`.
+pub const VERIFIER_KEY_HISTORY_PAGE_CAP: u32 = 20;
 
 // ── Fee / royalty configuration ──────────────────────────────────────────────
 /// Fee basis-point ceiling: 50 % (5 000 bp). Neither platform_fee_bps nor
@@ -174,7 +177,10 @@ pub const PREVIOUS_RESOURCE_SCHEMA_VERSION: u32 = 6;
 /// `role_inventory_page`, or a new field on the role-rotation event), so
 /// clients can detect support before invoking them. Independent of
 /// `RESOURCE_SCHEMA_VERSION`, which tracks only the `Resource` struct.
-pub const ROLE_CAPABILITY_VERSION: u32 = 1;
+///
+/// - `1`: `role_inventory_page`, actor and target on role-rotation events.
+/// - `2`: `verifier_key_history` (#1238).
+pub const ROLE_CAPABILITY_VERSION: u32 = 2;
 
 /// Maximum byte length of a settlement transaction hash stored in a
 /// [`PaymentReceipt`]. Stellar transaction hashes are 64 hex characters
@@ -302,6 +308,8 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("set_payment_paused_until", "admin"),
     ("is_payment_paused", "—"),
     ("payment_pause_until", "—"),
+    ("set_maintenance_status", "admin"),
+    ("maintenance_status", "—"),
     // ── Settler role ──────────────────────────────────────────────────────
     ("add_settler", "admin"),
     ("record_payment_with_memo", "settler + payer"),
@@ -313,6 +321,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("remove_moderator", "admin"),
     ("is_moderator", "—"),
     ("role_inventory_page", "—"),
+    ("verifier_key_history", "—"),
     ("flag_resource", "moderator"),
     ("unflag_resource", "moderator"),
     ("set_flag_reason_hash", "moderator"),
@@ -445,16 +454,9 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (54, "UnsupportedResourceSchema", "A resource uses a schema version this deployment cannot safely read or upgrade."),
     (55, "RevisionOverflow", "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state."),
     (56, "RoleCapacityReached", "A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role."),
-    (47, "RevocationReasonHashTooLong", "`revocation_reason_hash` exceeds `MAX_REVOCATION_REASON_HASH_LEN` (64 bytes)."),
-    (48, "PaymentAmountMismatch", "Payment amount differs from the resource price or cumulative refunds exceed the original payment."),
-    (49, "DuplicateTxHash", "A payment or refund receipt already uses the supplied transaction hash (`tx_hash`)."),
-    (50, "FeeConfigNotSet", "`set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`."),
-    (51, "AdminNominationExpired", "The pending admin nomination is missing or has expired."),
-    (52, "InvalidMetadataPointers", "`set_metadata_pointers` received zero, more than `MAX_METADATA_POINTERS`, or duplicate pointers, or an out-of-range `primary` index."),
-    (53, "AdminAlreadySet", "`bootstrap_dual_admin` was called after an admin was already set."),
-    (54, "RecoveryAdminNotSet", "`recover_admin` was called but no recovery admin is configured."),
-    (55, "UnsupportedResourceSchema", "A resource uses a schema version this deployment cannot safely read or upgrade."),
-    (56, "RevisionOverflow", "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state."),
+    (57, "UnclaimedFees", "A fee-recipient or fee-destination change was attempted while accrued fees remain unclaimed. Call `claim_fees` first, then retry."),
+    (58, "LeaseFeeConfigConflict", "`set_fee_config` was called with a combined fee bps ≥ the price of a resource with active leases; the change is rejected to preserve existing lease terms."),
+    (59, "InvalidMaintenanceReason", "`reason_code` in `set_maintenance_status` exceeds `MAX_MAINTENANCE_REASON_CODE` (255)."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -512,11 +514,11 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("reindex", "new_count: u32 (topic carries old_count: u32)"),
     (
         "payment",
-        "PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at }",
+        "PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at, ledger }",
     ),
     (
         "settle",
-        "PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at }",
+        "PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at, ledger }",
     ),
     ("addsettlr", "RoleChange { admin, target, granted: true }"),
     ("rmsettlr", "RoleChange { admin, target, granted: false }"),
@@ -555,16 +557,18 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
         "setdest",
         "FeeDestinationUpdated { old_destination, new_destination, ledger }",
     ),
-    ("claimfee", "(claimed_amount: i128, remaining_amount: i128)"),
+    ("claimfee", "FeesClaimed { claimed_amount, remaining_amount }"),
     ("ttlext", "()"),
     (
         "txfrterms",
         "TransferWithTermsEvent { id, previous_owner, new_owner, terms_hash, attestation_reset }",
     ),
-    ("lease", "(resource_id: String, lease: Lease)"),
-    ("leasesetl", "(resource_id: String, lease: Lease)"),
+    ("lease", "Lease (topic also carries resource_id)"),
+    ("leasesetl", "Lease (topic also carries resource_id)"),
     ("simvalid", "(passed: bool, error_code: Option<u32>)"),
-    ("leaserevk", "(resource_id: String, lease: Lease)"),
+    ("refund", "RefundReceipt { refund_id, payment_receipt_id, resource_id, recipient, amount, tx_hash, initiated_by, recorded_at, admin_override, remaining_balance }"),
+    ("refwin", "(old_window: u32, new_window: u32)"),
+    ("leaserevk", "Lease (topic also carries resource_id)"),
 ];
 
 /// Registry discovery metadata returned by [`VaultRegistry::registry_info`].
@@ -658,6 +662,8 @@ pub enum RoleKind {
     Moderator = 2,
     /// Multi-member settler role (`is_settler`).
     Settler = 3,
+}
+
 /// Registry-level maintenance posture: which kind of pause is in effect.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -1030,6 +1036,58 @@ pub struct VerifierStatusPage {
     pub next_cursor: Option<u32>,
 }
 
+/// What a [`VerifierKeyChange`] did to the verifier role. The discriminants
+/// are stable; new actions are only appended.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum VerifierKeyAction {
+    /// `add_verifier` granted the role to `verifier`.
+    Added = 0,
+    /// `remove_verifier` revoked the role from `verifier`.
+    Removed = 1,
+    /// `rotate_verifier` revoked the role from `previous` and granted it to
+    /// `verifier` in one step.
+    Rotated = 2,
+}
+
+/// One entry of the registry-wide verifier key history (#1238).
+///
+/// Entries are append-only and never rewritten: a later change to the same
+/// key adds a new entry instead of editing this one.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct VerifierKeyChange {
+    /// 1-based position in the history, assigned in the order changes were
+    /// made. Entry `revision` is read with cursor `revision - 1`.
+    pub revision: u32,
+    pub action: VerifierKeyAction,
+    /// The key this change is about: the key granted (`Added`, and the new
+    /// key of `Rotated`) or the key revoked (`Removed`).
+    pub verifier: Address,
+    /// For `Rotated`, the key that was replaced. `None` otherwise.
+    pub previous: Option<Address>,
+    /// Whether `verifier` held the role right after this change. The key's
+    /// current state is `is_verifier(verifier)`.
+    pub active: bool,
+    /// Admin that authorized the change.
+    pub admin: Address,
+    /// Ledger sequence the change was made in.
+    pub ledger: u32,
+}
+
+/// One page of [`VerifierKeyChange`] entries, oldest first. Returned by
+/// `verifier_key_history`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct VerifierKeyHistoryPage {
+    pub changes: Vec<VerifierKeyChange>,
+    /// Cursor for the next page, or `None` when this page reaches the end of
+    /// the history as it stood when it was read.
+    pub next_cursor: Option<u32>,
+    /// Number of entries in the whole history when the page was read.
+    pub total: u32,
+}
+
 /// One page of active holders of a protocol role, with a cursor for the next
 /// page. Returned by `role_inventory_page`. Mirrors `CatalogPage` semantics:
 /// `next_cursor` is `None` at end-of-list. The page is a read-only projection
@@ -1117,8 +1175,6 @@ pub enum DataKey {
     RefundedAmount(String),
     /// Configured creator-refund window length, in ledgers.
     RefundWindow,
-    /// Ordered history of verification status changes for a verifier address.
-    VerifierHistory(Address),
     /// Aggregated settled-payment earnings for a creator wallet address.
     CreatorEarnings(Address),
     /// Moderator who last set a resource's dispute flag or reason hash.
@@ -1134,8 +1190,6 @@ pub enum DataKey {
     Paused,
     /// Unix timestamp at which a scheduled pause automatically expires.
     PauseUntil,
-    /// Registry-level maintenance status (kind + bounded reason code).
-    MaintenanceStatus,
     /// Settler role grant, authorizing `record_payment` / `settle_payment`.
     Settler(Address),
     /// Immutable purchase receipt anchor for `(resource_id, buyer)`.
@@ -1156,17 +1210,9 @@ pub enum DataKey {
     /// enum code): this carries a digest of free-form detail a moderator
     /// recorded off-chain, analogous to `CreatorTerms`.
     FlagReasonHash(String),
-    /// Last moderator address that acted on the moderation state of a resource,
-    /// stored by resource id. Read by `flag_details`.
-    FlagModerator(String),
     /// Hash of a verifier's off-chain attestation document, provided during a
     /// status change via `set_verification_status`.
     AttestationHash(String),
-    /// Hash of a verifier's off-chain revocation reason document. When an
-    /// attestation is revoked (cleared), the verifier may optionally store
-    /// a bounded hash referencing an immutable explanation. This preserves
-    /// auditability while allowing obsolete attestations to be revoked.
-    RevocationReasonHash(String),
     /// Ledger sequence at which the pending admin nomination expires.
     PendingAdminExpiry,
     /// Ledger sequence at which the pending admin nomination was created.
@@ -1186,11 +1232,6 @@ pub enum DataKey {
     /// mutated; `None` for resources registered through the other entry points.
     MemoHash(String),
     FeeDestination,
-    /// Accumulated platform-fee amounts (in USDC stroops) that have been
-    /// settled but not yet acknowledged via `claim_fees`. When non-zero,
-    /// fee-recipient and fee-destination changes are blocked until the
-    /// current recipient calls `claim_fees` to reset the counter.
-    AccruedFees,
     /// Redundant metadata pointers set via `set_metadata_pointers`. The
     /// entry at `primary` always mirrors `Resource.metadata`.
     MetadataPointers(String),
@@ -1201,6 +1242,30 @@ pub enum DataKey {
     /// metadata or price change. Absent (read as `0`) until the first such
     /// mutation. Read by `get_revision`.
     Revision(String),
+}
+
+/// Storage keys that no longer fit in [`DataKey`].
+///
+/// A `#[contracttype]` enum can have at most 50 variants, and `DataKey` is at
+/// that limit. Variants are encoded by name only (`[Symbol(variant), ..]`),
+/// not by the enum they belong to, so a key moved here keeps the exact
+/// storage key it had in `DataKey`. Add new keys here, and never reuse a
+/// variant name that exists in `DataKey`.
+#[contracttype]
+#[derive(Clone)]
+pub enum DataKeyExt {
+    /// Registry-level maintenance status (kind + bounded reason code).
+    MaintenanceStatus,
+    /// Hash of a verifier's off-chain revocation reason document. When an
+    /// attestation is revoked (cleared), the verifier may optionally store
+    /// a bounded hash referencing an immutable explanation. This preserves
+    /// auditability while allowing obsolete attestations to be revoked.
+    RevocationReasonHash(String),
+    /// Accumulated platform-fee amounts (in USDC stroops) that have been
+    /// settled but not yet acknowledged via `claim_fees`. When non-zero,
+    /// fee-recipient and fee-destination changes are blocked until the
+    /// current recipient calls `claim_fees` to reset the counter.
+    AccruedFees,
     /// Ordered index of active holders of a multi-member protocol role
     /// (verifier, moderator, or settler), maintained by the corresponding
     /// `add_*` / `remove_*` entry points and read by `role_inventory_page`.
@@ -1210,6 +1275,16 @@ pub enum DataKey {
     PaymentPaused,
     /// Unix timestamp at which a scheduled payment pause automatically expires.
     PaymentPauseUntil,
+    /// Minimum price among all resources that currently have at least one
+    /// open (Pending or unexpired Active) lease. Used by `set_fee_config`
+    /// to reject fee changes that would invalidate active lease pricing (#991).
+    /// Absent (read as `None`) when no open leases exist.
+    ActiveLeasePriceFloor,
+    /// Number of entries in the verifier key history (#1238). Absent (read as
+    /// `0`) until the first verifier grant.
+    VerifierKeyChangeCount,
+    /// Verifier key history entry at a 0-based position.
+    VerifierKeyChange(u32),
 }
 
 /// Payload of every role grant/revoke event (`addverif`/`rmverif`,
@@ -1650,7 +1725,16 @@ pub enum Error {
     /// A fee-recipient or fee-destination change was attempted while accrued
     /// fees remain unclaimed. Call `claim_fees` first to acknowledge receipt
     /// of outstanding fees, then retry the change.
-    UnclaimedFees = 56,
+    UnclaimedFees = 57,
+    /// `set_fee_config` was called with a combined `platform_fee_bps +
+    /// royalty_bps` that is ≥ the price of a resource with one or more
+    /// open (Pending or unexpired Active) leases. The fee change is
+    /// rejected to prevent invalidating the price terms under which those
+    /// leases were sold.
+    LeaseFeeConfigConflict = 58,
+    /// `reason_code` in `set_maintenance_status` exceeds
+    /// `MAX_MAINTENANCE_REASON_CODE`.
+    InvalidMaintenanceReason = 59,
 }
 
 #[contract]
@@ -4114,11 +4198,17 @@ impl VaultRegistry {
     /// every call, including no-op transitions.
     pub fn set_payment_paused(env: Env, admin: Address, paused: bool) -> Result<(), Error> {
         Self::require_current_admin(&env, &admin)?;
-        env.storage().instance().set(&DataKey::PaymentPaused, &paused);
-        env.storage().instance().remove(&DataKey::PaymentPauseUntil);
+        env.storage()
+            .instance()
+            .set(&DataKeyExt::PaymentPaused, &paused);
+        env.storage()
+            .instance()
+            .remove(&DataKeyExt::PaymentPauseUntil);
         Self::bump_instance(&env);
-        env.events()
-            .publish((symbol_short!("payment_pause"), admin.clone()), (paused, admin));
+        env.events().publish(
+            (Symbol::new(&env, "payment_pause"), admin.clone()),
+            (paused, admin),
+        );
         Ok(())
     }
 
@@ -4128,20 +4218,28 @@ impl VaultRegistry {
     /// clock. The existing `set_payment_paused(admin, true)` entry point remains the
     /// way to create an indefinite pause. A deadline at or before the current
     /// ledger timestamp takes effect as an immediate resume.
-    pub fn set_payment_paused_until(env: Env, admin: Address, pause_until: u64) -> Result<(), Error> {
+    pub fn set_payment_paused_until(
+        env: Env,
+        admin: Address,
+        pause_until: u64,
+    ) -> Result<(), Error> {
         Self::require_current_admin(&env, &admin)?;
         let active = pause_until > env.ledger().timestamp();
-        env.storage().instance().set(&DataKey::PaymentPaused, &active);
+        env.storage()
+            .instance()
+            .set(&DataKeyExt::PaymentPaused, &active);
         if active {
             env.storage()
                 .instance()
-                .set(&DataKey::PaymentPauseUntil, &pause_until);
+                .set(&DataKeyExt::PaymentPauseUntil, &pause_until);
         } else {
-            env.storage().instance().remove(&DataKey::PaymentPauseUntil);
+            env.storage()
+                .instance()
+                .remove(&DataKeyExt::PaymentPauseUntil);
         }
         Self::bump_instance(&env);
         env.events().publish(
-            (symbol_short!("payment_pause"), admin.clone()),
+            (Symbol::new(&env, "payment_pause"), admin.clone()),
             (active, admin.clone()),
         );
         env.events().publish(
@@ -4163,12 +4261,61 @@ impl VaultRegistry {
         let pause_until = env
             .storage()
             .instance()
-            .get::<DataKey, u64>(&DataKey::PaymentPauseUntil)
+            .get::<DataKeyExt, u64>(&DataKeyExt::PaymentPauseUntil)
             .filter(|pause_until| *pause_until > env.ledger().timestamp());
         if pause_until.is_some() {
             Self::bump_instance(&env);
         }
         pause_until
+    }
+
+    /// Record the registry-level maintenance status. Only the current admin
+    /// may call this. `kind` distinguishes a scheduled pause from an
+    /// emergency pause; `reason_code` is a bounded operator-defined code
+    /// (`0..=MAX_MAINTENANCE_REASON_CODE`) in a stable, append-only
+    /// namespace — a published code never changes meaning and consumers must
+    /// ignore unknown codes. Errors `AdminNotSet` / `Unauthorized` /
+    /// [`Error::InvalidMaintenanceReason`]. Emits `mntstat`.
+    pub fn set_maintenance_status(
+        env: Env,
+        admin: Address,
+        kind: MaintenanceKind,
+        reason_code: u32,
+    ) -> Result<(), Error> {
+        Self::require_current_admin(&env, &admin)?;
+        if reason_code > MAX_MAINTENANCE_REASON_CODE {
+            return Err(Error::InvalidMaintenanceReason);
+        }
+        let status = MaintenanceStatus { kind, reason_code };
+        env.storage()
+            .instance()
+            .set(&DataKeyExt::MaintenanceStatus, &status);
+        Self::bump_instance(&env);
+        env.events().publish(
+            (symbol_short!("mntstat"),),
+            MaintenanceStatusEvent {
+                kind: status.kind,
+                reason_code: status.reason_code,
+                admin,
+            },
+        );
+        Ok(())
+    }
+
+    /// The recorded maintenance status. Never blocked by the pause itself, so
+    /// reads remain available while the registry is paused. Returns
+    /// `MaintenanceKind::None` / reason code `0` when nothing has been set.
+    pub fn maintenance_status(env: Env) -> MaintenanceStatus {
+        let status = env
+            .storage()
+            .instance()
+            .get(&DataKeyExt::MaintenanceStatus)
+            .unwrap_or(MaintenanceStatus {
+                kind: MaintenanceKind::None,
+                reason_code: 0,
+            });
+        Self::bump_instance(&env);
+        status
     }
 
     /// Grant the verifier role to `verifier`, authorizing `set_verification_status`.
@@ -4178,14 +4325,23 @@ impl VaultRegistry {
     pub fn add_verifier(env: Env, verifier: Address) -> Result<(), Error> {
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
-        Self::add_verifier_internal(&env, &admin, verifier)
+        let was_active = Self::is_verifier(env.clone(), verifier.clone());
+        Self::add_verifier_internal(&env, &admin, verifier.clone())?;
+        if !was_active {
+            Self::log_verifier_key_change(&env, &admin, VerifierKeyAction::Added, verifier, None);
+        }
+        Ok(())
     }
 
     /// Revoke the verifier role from `verifier`. Only the admin may call this.
     pub fn remove_verifier(env: Env, verifier: Address) -> Result<(), Error> {
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
-        Self::remove_verifier_internal(&env, &admin, verifier);
+        let was_active = Self::is_verifier(env.clone(), verifier.clone());
+        Self::remove_verifier_internal(&env, &admin, verifier.clone());
+        if was_active {
+            Self::log_verifier_key_change(&env, &admin, VerifierKeyAction::Removed, verifier, None);
+        }
         Ok(())
     }
 
@@ -4209,6 +4365,13 @@ impl VaultRegistry {
 
         Self::remove_verifier_internal(&env, &admin, old_verifier.clone());
         Self::add_verifier_internal(&env, &admin, new_verifier.clone())?;
+        Self::log_verifier_key_change(
+            &env,
+            &admin,
+            VerifierKeyAction::Rotated,
+            new_verifier.clone(),
+            Some(old_verifier.clone()),
+        );
         env.events().publish(
             (symbol_short!("verrot"), old_verifier.clone()),
             VerifierRotation {
@@ -4227,6 +4390,57 @@ impl VaultRegistry {
             .instance()
             .get(&DataKey::Verifier(address))
             .unwrap_or(false)
+    }
+
+    /// Bounded, read-only page of the registry-wide verifier key history
+    /// (#1238): every grant, revocation and rotation of the verifier role, with
+    /// the key's activation state after the change, the admin that made it and
+    /// the ledger it was made in.
+    ///
+    /// - **Ordering**: oldest first, by `revision`. A change appends one entry;
+    ///   entries are never edited, removed or reordered.
+    /// - **Cursor**: a 0-based position. Pass `0` for the first page, then the
+    ///   returned `next_cursor`. Entry `revision` sits at cursor
+    ///   `revision - 1`. Because the history only grows at the end, a cursor
+    ///   stays valid across later changes: resuming from a saved cursor
+    ///   returns exactly the entries added since. A cursor at or past `total`
+    ///   returns an empty page with `next_cursor: None`.
+    /// - **Limit**: clamped to `1..=`[`VERIFIER_KEY_HISTORY_PAGE_CAP`] (20),
+    ///   so a `0` limit still makes progress.
+    /// - **What is recorded**: only calls that change the role. Granting a
+    ///   key that already holds it, or revoking one that does not, records
+    ///   nothing. A rotation is one `Rotated` entry, not a removal plus an
+    ///   addition. Changes made before this history existed are not
+    ///   back-filled; the `addverif` / `rmverif` / `verrot` events cover them.
+    ///
+    /// Never fails and never writes role state.
+    pub fn verifier_key_history(env: Env, cursor: u32, limit: u32) -> VerifierKeyHistoryPage {
+        let page_size = limit.clamp(1, VERIFIER_KEY_HISTORY_PAGE_CAP);
+        let total: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKeyExt::VerifierKeyChangeCount)
+            .unwrap_or(0);
+        let mut changes = Vec::new(&env);
+        let mut i = cursor;
+        while i < total && changes.len() < page_size {
+            let key = DataKeyExt::VerifierKeyChange(i);
+            if let Some(change) = env
+                .storage()
+                .persistent()
+                .get::<DataKeyExt, VerifierKeyChange>(&key)
+            {
+                Self::bump_persistent(&env, &key);
+                changes.push_back(change);
+            }
+            i += 1;
+        }
+        let next_cursor = if i < total { Some(i) } else { None };
+        VerifierKeyHistoryPage {
+            changes,
+            next_cursor,
+            total,
+        }
     }
 
     /// Rebuild the pagination index (`list`/`list_page`/`count`) from an
@@ -4347,9 +4561,12 @@ impl VaultRegistry {
         let destination = Self::load_fee_destination(&env);
         Self::validate_fee_destination_for_fee_config(&config, &destination)?;
 
+        // Prevent fee config changes that would invalidate active lease
+        // pricing (#991).
+        Self::validate_fee_config_for_active_leases(&env, &config)?;
+
         // Reject fee-recipient rotation when accrued fees are unclaimed.
-        let existing: Option<FeeConfig> =
-            env.storage().instance().get(&DataKey::FeeConfig);
+        let existing: Option<FeeConfig> = env.storage().instance().get(&DataKey::FeeConfig);
         if let Some(ref old) = existing {
             if old.fee_recipient != config.fee_recipient {
                 Self::require_no_unclaimed_fees(&env)?;
@@ -4475,7 +4692,9 @@ impl VaultRegistry {
 
         let claimed = Self::load_accrued_fees(&env);
         if claimed > 0 {
-            env.storage().instance().set(&DataKey::AccruedFees, &0i128);
+            env.storage()
+                .instance()
+                .set(&DataKeyExt::AccruedFees, &0i128);
             Self::bump_instance(&env);
         }
 
@@ -4514,7 +4733,7 @@ impl VaultRegistry {
     fn load_accrued_fees(env: &Env) -> i128 {
         env.storage()
             .instance()
-            .get(&DataKey::AccruedFees)
+            .get(&DataKeyExt::AccruedFees)
             .unwrap_or(0i128)
     }
 
@@ -4527,7 +4746,7 @@ impl VaultRegistry {
         let current = Self::load_accrued_fees(env);
         env.storage()
             .instance()
-            .set(&DataKey::AccruedFees, &(current + fee_amount));
+            .set(&DataKeyExt::AccruedFees, &(current + fee_amount));
     }
 
     /// Reject the call with `UnclaimedFees` if accrued platform fees are
@@ -4569,49 +4788,48 @@ impl VaultRegistry {
         Ok(())
     }
 
-    /// Validate that a fee config change won't invalidate active lease pricing.
-    ///
-    /// Each lease locks in a price calculated from the resource's price at purchase
-    /// time (stored in `lease.amount`). If the new combined fee percentage would
-    /// meet or exceed the price of ANY listed resource, we conservatively reject
-    /// the change, since we cannot efficiently enumerate all active leases without
-    /// a secondary index.
-    ///
-    /// This preserves the economic terms under which existing leases were sold:
-    /// if a lease was bought when fees were 10% and the resource was priced at 100,
-    /// increasing fees to 100% would retroactively invalidate that lease's pricing
-    /// assumptions, which we prevent here.
-    fn validate_fee_config_for_leases(env: &Env, config: &FeeConfig) -> Result<(), Error> {
-        let combined_fee_bps = config.platform_fee_bps + config.royalty_bps;
-        
-        // If there are no fees, there's no conflict
-        if combined_fee_bps == 0 {
+    // ── Active-lease price-floor guard (#991) ───────────────────────────────
+    //
+    // When a lease is created, the resource's current price is locked into
+    // `Lease.amount`. A later `set_fee_config` that raises the combined fee bps
+    // to or above that price would make the price invalid under
+    // `validate_price` and retroactively break the lease's terms. The contract
+    // keeps one `ActiveLeasePriceFloor` instance entry, the minimum price among
+    // resources that have had a lease written, and `set_fee_config` rejects
+    // any change whose combined bps is ≥ that floor. The floor is only ever
+    // lowered, so it stays a lower bound: a config below it is safe for every
+    // open lease.
+
+    /// Reject the fee config if its combined bps is ≥ the active-lease price
+    /// floor. `Ok(())` when no lease has been written (floor absent).
+    fn validate_fee_config_for_active_leases(env: &Env, config: &FeeConfig) -> Result<(), Error> {
+        let combined_bps = i128::from(config.platform_fee_bps + config.royalty_bps);
+        if combined_bps == 0 {
             return Ok(());
         }
-
-        // Scan listed resources to find minimum price. We check listed resources
-        // because only listed resources can have leases sold on them.
-        let count: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
-        
-        for i in 0..count {
-            let index_key = DataKey::Index(i);
-            if let Some(resource_id) = env.storage().persistent().get::<DataKey, String>(&index_key) {
-                if let Ok(resource) = Self::load(env, &resource_id) {
-                    // Only check listed resources (leases can only be created on listed resources)
-                    if resource.state == ResourceState::Listed {
-                        // The fee config is invalid if combined_fee_bps >= resource.price
-                        // (same invariant as validate_price, but we're checking it preemptively
-                        // for all resources that could have leases)
-                        let combined_fee = i128::from(combined_fee_bps);
-                        if combined_fee >= resource.price {
-                            return Err(Error::LeaseFeeConfigConflict);
-                        }
-                    }
-                }
-            }
+        match env
+            .storage()
+            .instance()
+            .get::<DataKeyExt, i128>(&DataKeyExt::ActiveLeasePriceFloor)
+        {
+            Some(floor) if combined_bps >= floor => Err(Error::LeaseFeeConfigConflict),
+            _ => Ok(()),
         }
+    }
 
-        Ok(())
+    /// Lower the active-lease price floor to `resource_price` when it is the
+    /// cheapest leased resource so far, or set it when no floor exists yet.
+    fn update_lease_price_floor(env: &Env, resource_price: i128) {
+        let current = env
+            .storage()
+            .instance()
+            .get::<DataKeyExt, i128>(&DataKeyExt::ActiveLeasePriceFloor);
+        if current.is_none_or(|floor| resource_price < floor) {
+            env.storage()
+                .instance()
+                .set(&DataKeyExt::ActiveLeasePriceFloor, &resource_price);
+            Self::bump_instance(env);
+        }
     }
 
     /// Store a hash of creator marketplace terms.
@@ -4786,10 +5004,8 @@ impl VaultRegistry {
 
         match validation_result {
             Ok(()) => {
-                env.events().publish(
-                    (symbol_short!("simvalid"),),
-                    (true, Option::<u32>::None),
-                );
+                env.events()
+                    .publish((symbol_short!("simvalid"),), (true, Option::<u32>::None));
                 Ok(PaymentReceipt {
                     receipt_id: receipt_id.clone(),
                     resource_id,
@@ -4798,6 +5014,7 @@ impl VaultRegistry {
                     state: PaymentState::Escrowed,
                     tx_hash,
                     recorded_at: env.ledger().sequence(),
+                    ledger: env.ledger().sequence(),
                 })
             }
             Err(e) => {
@@ -4810,10 +5027,8 @@ impl VaultRegistry {
                     Error::InvalidTxHash => Some(24u32),
                     _ => None,
                 };
-                env.events().publish(
-                    (symbol_short!("simvalid"),),
-                    (false, error_code),
-                );
+                env.events()
+                    .publish((symbol_short!("simvalid"),), (false, error_code));
                 Err(e)
             }
         }
@@ -4967,7 +5182,11 @@ impl VaultRegistry {
         // in integer arithmetic (truncation is fine — leftover sub-stroop
         // dust is not tracked). Only non-zero fees are accrued so the
         // guard is inactive when no platform fee is configured.
-        if let Some(fee_config) = env.storage().instance().get::<DataKey, FeeConfig>(&DataKey::FeeConfig) {
+        if let Some(fee_config) = env
+            .storage()
+            .instance()
+            .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
+        {
             if fee_config.platform_fee_bps > 0 && fee_config.fee_recipient.is_some() {
                 let fee_amount = receipt.amount * i128::from(fee_config.platform_fee_bps)
                     / i128::from(FEE_BPS_DENOM);
@@ -5598,7 +5817,7 @@ impl VaultRegistry {
         let all: Vec<Address> = env
             .storage()
             .instance()
-            .get(&DataKey::RoleHolders(role))
+            .get(&DataKeyExt::RoleHolders(role))
             .unwrap_or_else(|| Vec::new(&env));
         let total = all.len();
         let mut holders = Vec::new(&env);
@@ -6242,7 +6461,7 @@ impl VaultRegistry {
         let next_refunded = refunded
             .checked_add(amount)
             .ok_or(Error::PaymentAmountMismatch)?;
-        
+
         // Calculate remaining balance after this refund
         let remaining_balance = payment.amount.saturating_sub(next_refunded).max(0);
 
@@ -7005,11 +7224,39 @@ impl VaultRegistry {
         Self::bump_instance(env);
     }
 
-    fn add_verifier_internal(
+    /// Append one entry to the verifier key history read by
+    /// `verifier_key_history`.
+    fn log_verifier_key_change(
         env: &Env,
         admin: &Address,
+        action: VerifierKeyAction,
         verifier: Address,
-    ) -> Result<(), Error> {
+        previous: Option<Address>,
+    ) {
+        let index: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKeyExt::VerifierKeyChangeCount)
+            .unwrap_or(0);
+        let change = VerifierKeyChange {
+            revision: index + 1,
+            action,
+            verifier,
+            previous,
+            active: action != VerifierKeyAction::Removed,
+            admin: admin.clone(),
+            ledger: env.ledger().sequence(),
+        };
+        let key = DataKeyExt::VerifierKeyChange(index);
+        env.storage().persistent().set(&key, &change);
+        Self::bump_persistent(env, &key);
+        env.storage()
+            .instance()
+            .set(&DataKeyExt::VerifierKeyChangeCount, &(index + 1));
+        Self::bump_instance(env);
+    }
+
+    fn add_verifier_internal(env: &Env, admin: &Address, verifier: Address) -> Result<(), Error> {
         Self::role_index_add(env, RoleKind::Verifier, &verifier)?;
         env.storage()
             .instance()
@@ -7046,7 +7293,7 @@ impl VaultRegistry {
     /// already present. Fails `RoleCapacityReached` when the index is already
     /// at [`MAX_ROLE_HOLDERS`], leaving state unchanged.
     fn role_index_add(env: &Env, role: RoleKind, address: &Address) -> Result<(), Error> {
-        let key = DataKey::RoleHolders(role);
+        let key = DataKeyExt::RoleHolders(role);
         let existing: Vec<Address> = env
             .storage()
             .instance()
@@ -7069,7 +7316,7 @@ impl VaultRegistry {
     /// Remove `address` from the ordered holder index for `role`, if present.
     /// A no-op when the address is not currently indexed.
     fn role_index_remove(env: &Env, role: RoleKind, address: &Address) {
-        let key = DataKey::RoleHolders(role);
+        let key = DataKeyExt::RoleHolders(role);
         let existing: Vec<Address> = env
             .storage()
             .instance()
@@ -7356,7 +7603,7 @@ impl VaultRegistry {
         let paused = env
             .storage()
             .instance()
-            .get::<DataKey, bool>(&DataKey::PaymentPaused)
+            .get::<DataKeyExt, bool>(&DataKeyExt::PaymentPaused)
             .unwrap_or(false);
 
         if !paused {
@@ -7368,7 +7615,7 @@ impl VaultRegistry {
         let result = env
             .storage()
             .instance()
-            .get::<DataKey, u64>(&DataKey::PaymentPauseUntil)
+            .get::<DataKeyExt, u64>(&DataKeyExt::PaymentPauseUntil)
             .map(|pause_until| pause_until > env.ledger().timestamp())
             .unwrap_or(true);
 
