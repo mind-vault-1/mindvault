@@ -11792,6 +11792,126 @@ fn differently_cased_tags_indexed_under_same_normalized_tag() {
     assert_eq!(results.len(), 2);
 }
 
+// ─── Purchase-time recipient snapshot (#1261) ──────────────────────────────
+
+/// Helper: read the immutable payment recipient snapshot written at purchase.
+fn payment_recipient_snapshot(
+    env: &Env,
+    contract: &soroban_sdk::Address,
+    receipt_id: &String,
+) -> Option<Address> {
+    let key = DataKey::PaymentRecipient(receipt_id.clone());
+    env.as_contract(contract, || env.storage().persistent().get(&key))
+}
+
+#[test]
+fn transfer_before_purchase_snapshots_new_owner_as_refund_authority() {
+    let (env, original_creator, _admin, settler, client) = setup_with_settler();
+    let id = register_default(&env, &original_creator, &client, "snapbefore");
+    let new_owner = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let receipt_id = String::from_str(&env, "snap-rcpt-before");
+
+    client.transfer_ownership(&id, &new_owner);
+    client.record_payment(
+        &settler,
+        &receipt_id,
+        &id,
+        &payer,
+        &100i128,
+        &String::from_str(&env, "snap-tx-before"),
+    );
+    client.settle_payment(&settler, &receipt_id);
+
+    assert_eq!(
+        payment_recipient_snapshot(&env, &client.address, &receipt_id),
+        Some(new_owner.clone())
+    );
+    assert_eq!(
+        client.try_record_creator_refund(
+            &original_creator,
+            &String::from_str(&env, "snap-refund-old"),
+            &receipt_id,
+            &payer,
+            &10i128,
+            &String::from_str(&env, "snap-refund-tx-old"),
+        ),
+        Err(Ok(Error::Unauthorized))
+    );
+    client.record_creator_refund(
+        &new_owner,
+        &String::from_str(&env, "snap-refund-new"),
+        &receipt_id,
+        &payer,
+        &10i128,
+        &String::from_str(&env, "snap-refund-tx-new"),
+    );
+    assert_eq!(client.get_refunded_amount(&receipt_id), 10i128);
+}
+
+#[test]
+fn transfer_after_purchase_keeps_receipt_identity_and_refund_authority() {
+    let (env, original_creator, _admin, settler, client) = setup_with_settler();
+    let id = register_default(&env, &original_creator, &client, "snapafter");
+    let new_owner = Address::generate(&env);
+    let later_owner = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let receipt_id = String::from_str(&env, "snap-rcpt-after");
+    let tx_hash = String::from_str(&env, "snap-tx-after");
+
+    client.record_payment(&settler, &receipt_id, &id, &payer, &100i128, &tx_hash);
+    let recorded = client.get_payment(&receipt_id);
+    client.settle_payment(&settler, &receipt_id);
+
+    client.transfer_ownership(&id, &new_owner);
+    client.transfer_ownership(&id, &later_owner);
+
+    // The live resource owner changed, but the receipt and its purchase-time
+    // recipient snapshot did not. Both receipt lookup paths still agree.
+    assert_eq!(client.get(&id).creator, later_owner);
+    let historical = client.get_payment(&receipt_id);
+    assert_eq!(historical, client.get_payment_receipt(&id, &payer));
+    assert_eq!(historical.receipt_id, receipt_id);
+    assert_eq!(historical.resource_id, id);
+    assert_eq!(historical.payer, payer);
+    assert_eq!(historical.tx_hash, tx_hash);
+    assert_eq!(historical.state, PaymentState::Settled);
+    assert_eq!(recorded.recorded_at, historical.recorded_at);
+    assert_eq!(
+        payment_recipient_snapshot(&env, &client.address, &receipt_id),
+        Some(original_creator.clone())
+    );
+
+    for stranger in [&new_owner, &later_owner] {
+        assert_eq!(
+            client.try_record_creator_refund(
+                stranger,
+                &String::from_str(&env, "snap-refund-wrong"),
+                &receipt_id,
+                &payer,
+                &10i128,
+                &String::from_str(&env, "snap-refund-tx-wrong"),
+            ),
+            Err(Ok(Error::Unauthorized))
+        );
+    }
+
+    let refund_id = String::from_str(&env, "snap-refund-ok");
+    client.record_creator_refund(
+        &original_creator,
+        &refund_id,
+        &receipt_id,
+        &payer,
+        &10i128,
+        &String::from_str(&env, "snap-refund-tx-ok"),
+    );
+    let refund = client.get_refund(&refund_id);
+    assert_eq!(refund.initiated_by, original_creator);
+    assert_eq!(refund.resource_id, id);
+    assert_eq!(refund.recipient, payer);
+    assert_eq!(client.get_refunded_amount(&receipt_id), 10i128);
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 

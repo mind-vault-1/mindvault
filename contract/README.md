@@ -420,6 +420,18 @@ as long as their cumulative amount does not exceed the settled payment.
 deadline or without creator authorization, but cannot change the recipient or
 exceed the original amount.
 
+**Snapshot semantics.** A payment receipt records the resource identity
+(`resource_id`) and the creator address that received the payment
+(`PaymentRecipient`) when `record_payment` is called. Neither is rewritten by
+`settle_payment` or by a later ownership transfer, so refund authority and
+receipt lookups continue to describe the original purchase. A transfer *before*
+purchase snapshots the new owner; a transfer *after* purchase leaves the
+original recipient authoritative for that receipt. The refund deadline is
+likewise fixed at settlement. By contrast, `get_owner`, `price`, and listing
+state are live resource state and do change on transfer. Receipts recorded
+before the recipient snapshot existed fall back to the live owner, so legacy
+refunds still work when ownership has not changed.
+
 These methods store the supplied refund transaction hash and emit `refund` for
 indexers; they do not custody USDC or verify the hash's transfer contents. The
 caller must submit the record only after the external transfer is complete.
