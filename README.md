@@ -121,6 +121,8 @@ All env vars are optional — the defaults point to the hosted testnet backend:
 
 Every tool validates its arguments against an explicit schema before doing any work: unknown or malformed arguments are rejected with a deterministic error instead of reaching the API as a failed request. See **[docs/mcp-tool-arguments.md](docs/mcp-tool-arguments.md)** for the per-tool contract and error shape.
 
+Adding a tool? **[docs/mcp-adding-a-tool.md](docs/mcp-adding-a-tool.md)** lists every file a new tool must be declared in, the tests that guard each one, and the commands to validate it before opening a PR.
+
 An agent can set up a wallet, register as a publisher, publish a resource (paying for verification), and then another agent can discover and buy that resource. The full agent-to-agent economy runs through x402.
 
 Operators who want lightweight visibility into tool usage can enable opt-in metrics (`MINDVAULT_METRICS=1`) and read them with the `mindvault_metrics` tool (JSON or OTLP format; `MINDVAULT_METRICS_EXPORT_CONSOLE=1` mirrors each call's metrics to stderr). See **[docs/mcp-metrics.md](docs/mcp-metrics.md)**.
