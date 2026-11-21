@@ -1104,8 +1104,10 @@ pub enum DataKey {
     /// `receipt_id` recorded for it, guaranteeing one payment receipt per
     /// Stellar tx (`DuplicateTxHash` on reuse).
     PaymentTxHash(String),
-    /// Address that originally funded a payment receipt, preserved across
-    /// settlement so refunds can be routed back without re-deriving it.
+    /// Resource creator who received the payment when the receipt was
+    /// recorded. Written once by `write_payment` and never rewritten by
+    /// settlement or ownership transfer, so refund authority stays with the
+    /// creator who was paid for that specific receipt.
     PaymentRecipient(String),
     /// Canonical refund receipt, keyed by its caller-assigned `refund_id`.
     RefundReceipt(String),
@@ -1368,6 +1370,11 @@ pub enum PaymentState {
 /// `tx_hash` is the Stellar transaction hash of the USDC transfer (max 128
 /// bytes), present from creation so indexers can verify settlement on-chain
 /// without a second round-trip.
+///
+/// `resource_id` is the purchase-time identity of the paid resource. The
+/// resource's `creator` is snapshotted separately under
+/// [`DataKey::PaymentRecipient`] when the receipt is recorded, so a later
+/// ownership transfer cannot move refund authority for this receipt.
 ///
 /// Fields are intentionally read-only after recording. To update state,
 /// call `settle_payment` which transitions `Escrowed → Settled` and
@@ -4957,6 +4964,8 @@ impl VaultRegistry {
         let deadline_key = DataKey::RefundDeadline(receipt_id.clone());
         env.storage().persistent().set(&deadline_key, &deadline);
         Self::bump_persistent(&env, &deadline_key);
+        // The purchase-time recipient snapshot is immutable: settlement only
+        // refreshes its TTL, never rewrites it to the resource's current owner.
         let recipient_key = DataKey::PaymentRecipient(receipt_id.clone());
         if env.storage().persistent().has(&recipient_key) {
             Self::bump_persistent(&env, &recipient_key);
@@ -6203,13 +6212,19 @@ impl VaultRegistry {
         if recipient != payment.payer {
             return Err(Error::Unauthorized);
         }
-        let resource = Self::load(env, &payment.resource_id)?;
+        // Authorize against the creator snapshotted when the receipt was
+        // recorded, not the resource's current owner. The live-resource read
+        // is only a fallback for legacy receipts recorded before the snapshot
+        // key was written; new receipts always carry the snapshot.
         let recipient_key = DataKey::PaymentRecipient(payment_receipt_id.clone());
-        let payment_recipient = env
+        let payment_recipient = match env
             .storage()
             .persistent()
             .get::<DataKey, Address>(&recipient_key)
-            .unwrap_or(resource.creator);
+        {
+            Some(creator) => creator,
+            None => Self::load(env, &payment.resource_id)?.creator,
+        };
         if !admin_override && payment_recipient != initiator {
             return Err(Error::Unauthorized);
         }
@@ -6397,6 +6412,16 @@ impl VaultRegistry {
 
         env.storage().persistent().set(&receipt_key, &receipt);
         Self::bump_persistent(env, &receipt_key);
+
+        // Snapshot the creator that was paid for this receipt at purchase time.
+        // `resource.creator` is live state and moves on ownership transfer;
+        // this key does not, so refund authority stays with the original
+        // recipient. Written once here and only TTL-bumped by `settle_payment`.
+        let recipient_key = DataKey::PaymentRecipient(receipt_id.clone());
+        env.storage()
+            .persistent()
+            .set(&recipient_key, &resource.creator);
+        Self::bump_persistent(env, &recipient_key);
 
         // Secondary indexes: `(resource_id, payer)` -> most recent receipt id
         // (for `get_payment_receipt`), and `tx_hash` -> receipt id (enforces
