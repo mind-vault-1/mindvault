@@ -110,6 +110,7 @@ import { dryRunPublish, dryRunBuy, type DryRunPublishLive } from "./dryRun.js";
 import { correlationHeaders } from "./correlation.js";
 import { initAuditLogging } from "./auditLog.js";
 import { REGISTRY_LIST_DEFAULT_LIMIT, REGISTRY_LIST_DEFAULT_START } from "./registryPagination.js";
+import { checkRegistrySchema, CURRENT_RESOURCE_SCHEMA_VERSION } from "./registrySchema.js";
 import {
   assertToolTimeoutOverridesWithinDeadline,
   resolveTransportTimeoutMax,
@@ -179,10 +180,7 @@ import {
   trimUsdc,
   usdcToStroops as toStroops,
 } from "./usdcAmount.js";
-import {
-  buildWalletAllowanceSummary,
-  formatWalletAllowanceSummary,
-} from "./walletAllowance.js";
+import { buildWalletAllowanceSummary, formatWalletAllowanceSummary } from "./walletAllowance.js";
 import { findCanonicalUsdc } from "./usdcIdentity.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
@@ -2005,8 +2003,7 @@ async function walletAllowanceOutcome(): Promise<ToolOutcome> {
   const wallet = requireWallet();
   const profile = activeProfileName;
   const network = NETWORK; // e.g. "stellar:testnet"
-  const usdcContractId =
-    process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
+  const usdcContractId = process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
   const ceiling = process.env.MINDVAULT_MAX_AUTO_PAY_USDC ?? DEFAULT_MAX_AUTO_PAY_USDC;
 
   // Fetch live balance — same call as walletInfo.
@@ -4242,7 +4239,31 @@ export async function recoverCatalogCache(): Promise<string> {
   );
 }
 
-function registryInfo(): string {
+async function registryInfo(): Promise<string> {
+  // Run the schema check using the in-memory cache (60 s TTL) so a repeated
+  // call within the same session is free. On a cache miss it makes one RPC
+  // call; on network failure it falls back gracefully to status "error".
+  const schemaCheck = await checkRegistrySchema({
+    contractId: REGISTRY_CONTRACT_ID,
+    rpcUrl: SOROBAN_RPC_URL,
+    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    network: STELLAR_NETWORK,
+  });
+
+  const schemaVersion: {
+    detected: number | null;
+    supported: number[];
+    current: number;
+    status: "supported" | "unsupported" | "error" | "unchecked";
+  } = {
+    detected: schemaCheck.detectedVersion ?? null,
+    supported: [...schemaCheck.supportedVersions],
+    current: CURRENT_RESOURCE_SCHEMA_VERSION,
+    status: !REGISTRY_CONTRACT_ID
+      ? "unchecked"
+      : (schemaCheck.status as "supported" | "unsupported" | "error"),
+  };
+
   const info: {
     contractId: string;
     networkPassphrase: string;
@@ -4251,6 +4272,7 @@ function registryInfo(): string {
     x402Network: string;
     resourceFields: (keyof Resource)[];
     mainnetDiagnostics: string;
+    schemaVersion: typeof schemaVersion;
   } = {
     contractId: REGISTRY_CONTRACT_ID,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -4264,6 +4286,7 @@ function registryInfo(): string {
       registryContractId: REGISTRY_CONTRACT_ID,
       allowMainnetEnv: mainnetAllowedFromEnv(),
     }),
+    schemaVersion,
   };
   return JSON.stringify(info, null, 2);
 }
