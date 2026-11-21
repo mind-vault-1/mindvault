@@ -64,6 +64,8 @@ import {
   RESOURCE_SUBSCRIPTION_OUTPUT_SCHEMA,
   RPC_HEALTH_OUTPUT_SCHEMA,
   STATE_DIAGNOSTICS_OUTPUT_SCHEMA,
+  CACHE_CHAIN_DIFF_OUTPUT_SCHEMA,
+  UPSTREAM_HEALTH_OUTPUT_SCHEMA,
   SERVER_ENDPOINTS_OUTPUT_SCHEMA,
   TX_STATUS_OUTPUT_SCHEMA,
   USE_PROFILE_OUTPUT_SCHEMA,
@@ -883,6 +885,38 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: METADATA_DIFF_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Metadata Diff",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_cache_chain_diff",
+    description:
+      "Compare the catalog records held in the offline catalog cache (what browse, search and preview would serve when the API is unreachable) with the on-chain vault-registry. Per resource it reports in_sync, drift, missing_onchain, missing_in_cache, not_found or lookup_failed, and for each drifted resource a field-level diff of price, metadata pointer, listing status, creator and tags. Only snapshots for the active profile, network, contract and API origin are used. Needs no API access; makes one read-only RPC call per resource, at most 50. Returns an overall verdict (in_sync, drift, incomplete, no_cache) and next steps. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceIds: {
+          type: "array",
+          items: { type: "string", pattern: "^[A-Za-z0-9._-]+$", maxLength: 128 },
+          minItems: 1,
+          maxItems: 50,
+          description:
+            "Compare exactly these resource ids, cached or not. Omit to compare cached resources in id order.",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 50,
+          description: "How many cached resources to compare when resourceIds is omitted (default 20).",
+        },
+      },
+      required: [],
+    },
+    outputSchema: CACHE_CHAIN_DIFF_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Cache vs Chain Diff",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -1740,6 +1774,37 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: RPC_HEALTH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "RPC Health",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_upstream_health",
+    description:
+      "Operator health probe for every configured upstream: the MindVault API, Horizon, Soroban RPC and the sponsored account service. Each is probed once, with no retries, and all in parallel. For each upstream it reports status (ok, degraded, down, not_configured, skipped), HTTP status, latency in milliseconds, the network passphrase that Horizon and Soroban RPC report and whether it matches the configured network, and a suggested action. The overall verdict is healthy, degraded or unhealthy; unhealthy means the API, Horizon or Soroban RPC is unreachable or not configured. URLs are shown without credentials or query strings. Never signs, pays or creates accounts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        upstreams: {
+          type: "array",
+          items: { type: "string", enum: ["api", "horizon", "soroban_rpc", "sponsored_account"] },
+          minItems: 1,
+          maxItems: 4,
+          description: "Probe only these upstreams. Omit to probe all of them.",
+        },
+        timeoutMs: {
+          type: "integer",
+          minimum: 100,
+          maximum: 30000,
+          description: "Per-upstream timeout in milliseconds (default 5000).",
+        },
+      },
+      required: [],
+    },
+    outputSchema: UPSTREAM_HEALTH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Upstream Health Probe",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

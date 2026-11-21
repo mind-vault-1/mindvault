@@ -210,6 +210,12 @@ import {
   type StateLoadDiagnostics,
   type StateLoadReason,
 } from "./stateRecovery.js";
+import {
+  compareCacheWithChain,
+  formatCacheChainDiff,
+  type OnchainLookupResult,
+} from "./cacheChainDiff.js";
+import { formatUpstreamProbe, probeUpstreams, type UpstreamId } from "./upstreamProbe.js";
 import { provenanceChain, recordResourceHistory, resourceChangeLog } from "./resourceHistory.js";
 import { logger } from "./logger.js";
 import {
@@ -292,6 +298,7 @@ import {
   catalogCacheLabel,
   type CatalogFallbackReason,
   getCatalogSnapshot,
+  listCachedRecords,
   getPreviewSnapshot,
   recordCatalogSnapshot,
   recordPreviewSnapshot,
@@ -982,6 +989,81 @@ async function rpcHealthOutcome(): Promise<ToolOutcome> {
       endpoints,
       summary,
     },
+  };
+}
+
+// ── #1205: Operator health probe for every configured upstream ──────────────
+async function upstreamHealthOutcome(
+  only?: UpstreamId[],
+  timeoutMs?: number,
+): Promise<ToolOutcome> {
+  const report = await probeUpstreams({
+    profile: activeProfileName,
+    expectedNetworkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    urls: {
+      api: BASE_URL,
+      horizon: HORIZON_URL,
+      soroban_rpc: SOROBAN_RPC_URL,
+      sponsored_account: SPONSORED_ACCOUNT_URL,
+    },
+    fetch: (url, init) => httpFetch(url, init),
+    only,
+    timeoutMs,
+    userAgent: USER_AGENT,
+  });
+  return {
+    text: formatUpstreamProbe(report),
+    structured: report as unknown as Record<string, unknown>,
+  };
+}
+
+// ── #1203: Cached catalog records vs on-chain registry ──────────────────────
+async function onchainRecordLookup(resourceId: string): Promise<OnchainLookupResult> {
+  try {
+    const client = createRegistryClient({
+      contractId: REGISTRY_CONTRACT_ID,
+      rpcUrl: SOROBAN_RPC_URL,
+      networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+    });
+    const tx = await client.get({ id: resourceId });
+    if (tx.result.isOk()) {
+      const r: any = tx.result.unwrap();
+      return {
+        found: true,
+        record: {
+          price: r.price,
+          metadata: typeof r.metadata === "string" ? r.metadata : null,
+          listed: Boolean(r.listed),
+          creator: typeof r.creator === "string" ? r.creator : null,
+          tags: Array.isArray(r.tags) ? r.tags : [],
+        },
+      };
+    }
+    const err = tx.result.unwrapErr();
+    if (err.message === RegistryErrors[2].message) return { found: false };
+    return { error: `Contract error: ${err.message}` };
+  } catch (err) {
+    return { error: safeErrorMessage(err) };
+  }
+}
+
+async function cacheChainDiffOutcome(resourceIds?: string[], limit?: number): Promise<ToolOutcome> {
+  if (!REGISTRY_CONTRACT_ID) {
+    throw new Error(
+      "VAULT_REGISTRY_CONTRACT_ID is not set, so there is no on-chain registry to compare the cache with.",
+    );
+  }
+  const context = catalogCacheContext();
+  const report = await compareCacheWithChain({
+    context: { ...context, rpcUrl: SOROBAN_RPC_URL },
+    snapshots: listCachedRecords(context),
+    lookup: onchainRecordLookup,
+    resourceIds,
+    limit,
+  });
+  return {
+    text: formatCacheChainDiff(report),
+    structured: report as unknown as Record<string, unknown>,
   };
 }
 
@@ -5035,6 +5117,16 @@ async function dispatchToolOutcome(
         return registryHealth();
       case "mindvault_rpc_health":
         return rpcHealthOutcome();
+      case "mindvault_upstream_health":
+        return upstreamHealthOutcome(
+          Array.isArray(args.upstreams) ? (args.upstreams as UpstreamId[]) : undefined,
+          typeof args.timeoutMs === "number" ? args.timeoutMs : undefined,
+        );
+      case "mindvault_cache_chain_diff":
+        return cacheChainDiffOutcome(
+          Array.isArray(args.resourceIds) ? (args.resourceIds as string[]) : undefined,
+          typeof args.limit === "number" ? args.limit : undefined,
+        );
       case "mindvault_prewarm_catalog":
         return prewarmCatalogCache();
       case "mindvault_client_config":

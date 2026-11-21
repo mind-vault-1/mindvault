@@ -142,3 +142,41 @@ request against data that could never reflect it.
 ## Concurrent misses (#1040)
 
 Concurrent catalog requests for the same URL and preview requests for the same resource ID share an in-flight upstream fetch. Different keys proceed independently. The shared promise is discarded on both success and failure, so this is request coalescing rather than a persistent response cache. The existing offline snapshot and retry rules remain unchanged.
+
+## Comparing the cache with the chain (#1203)
+
+A snapshot can drift from the vault-registry. A price can change, a listing
+can be revoked, or ownership can be transferred after the snapshot was taken.
+An agent served that snapshot while offline would act on outdated data.
+`mindvault_cache_chain_diff` reports that drift. It complements
+`mindvault_metadata_diff`, which compares the *live* API with the chain: this
+tool compares what the server would *serve from cache* with the chain, so it
+needs no API access.
+
+- **Scope.** Only snapshots for the active cache context (profile, network,
+  contract ID, API origin) are used. Expired snapshots (past
+  `MINDVAULT_CATALOG_CACHE_MAX_AGE_MS`) are dropped first. When a resource
+  appears in several snapshots (browse pages, previews), the newest one is
+  compared.
+- **Inputs.** `resourceIds` (1–50 ids) compares exactly those ids, cached or
+  not. Without it, cached ids are compared in sorted order, up to `limit`
+  (default 20, max 50); `truncated` says whether more were held.
+- **Per resource.** The status is one of:
+  - `in_sync`
+  - `drift`: a field-level diff of `price`, `metadata`, `listed`, `creator`
+    and `tags`
+  - `missing_onchain`: cached but not registered
+  - `missing_in_cache`
+  - `not_found`
+  - `lookup_failed`: the RPC read failed; the error is reported and the call
+    does not fail.
+- **Verdict.** `in_sync`, `drift`, `incomplete` (only lookups failed) or
+  `no_cache`. `nextSteps` names the tool to run next, for example
+  `mindvault_prewarm_catalog` to refresh the cache or `mindvault_rpc_health`
+  when reads fail.
+- **Cost.** One read-only Soroban simulation per compared resource, run one at
+  a time. Nothing is signed or submitted, and no wall-clock age is included,
+  so the same cache and chain state always give the same report.
+
+Coverage: [`mcp/src/cacheChainDiff.test.ts`](../mcp/src/cacheChainDiff.test.ts)
+and [`mcp/src/operatorDiagnostics.integration.test.ts`](../mcp/src/operatorDiagnostics.integration.test.ts).
