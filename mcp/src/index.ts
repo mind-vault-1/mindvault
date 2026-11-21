@@ -41,8 +41,10 @@ import {
 import { PROMPT_DEFINITIONS, getPrompt } from "./prompts.js";
 import {
   createProgressEmitter,
+  resolveProgressMinIntervalMs,
   scopeProgressToRequest,
   sequenceProgressNotifications,
+  throttleProgressEmitter,
 } from "./progress.js";
 import { truncateResponse } from "./truncation.js";
 import { applyPreviewLimits, serializePreview } from "./previewLimits.js";
@@ -179,10 +181,7 @@ import {
   trimUsdc,
   usdcToStroops as toStroops,
 } from "./usdcAmount.js";
-import {
-  buildWalletAllowanceSummary,
-  formatWalletAllowanceSummary,
-} from "./walletAllowance.js";
+import { buildWalletAllowanceSummary, formatWalletAllowanceSummary } from "./walletAllowance.js";
 import { findCanonicalUsdc } from "./usdcIdentity.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
@@ -2005,8 +2004,7 @@ async function walletAllowanceOutcome(): Promise<ToolOutcome> {
   const wallet = requireWallet();
   const profile = activeProfileName;
   const network = NETWORK; // e.g. "stellar:testnet"
-  const usdcContractId =
-    process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
+  const usdcContractId = process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
   const ceiling = process.env.MINDVAULT_MAX_AUTO_PAY_USDC ?? DEFAULT_MAX_AUTO_PAY_USDC;
 
   // Fetch live balance — same call as walletInfo.
@@ -5164,13 +5162,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   // notification for this call goes out ahead of it and none after (#841).
   const progress =
     progressToken != null
-      ? scopeProgressToRequest(
-          createProgressEmitter({
-            token: progressToken,
-            // Stamped with a replay-safe event id per notification (#1061).
-            send: sequenceProgressNotifications(extra.sendNotification),
-          }),
-        )
+      ? (() => {
+          const throttled = throttleProgressEmitter(
+            createProgressEmitter({
+              token: progressToken,
+              // Stamped with a replay-safe event id per notification (#1061).
+              send: sequenceProgressNotifications(extra.sendNotification),
+            }),
+            { minIntervalMs: resolveProgressMinIntervalMs(process.env) },
+          );
+          return scopeProgressToRequest(throttled.emit, { flush: throttled.flush });
+        })()
       : undefined;
   try {
     const result = await measureTool(metrics, name, () =>
