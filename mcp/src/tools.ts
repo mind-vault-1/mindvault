@@ -294,7 +294,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_import_profiles",
     description:
-      "Import a versioned, non-secret profile setup payload. It merges profile names and preferences without overwriting wallet credentials or publisher API keys.",
+      "Import a versioned, non-secret profile setup payload. It merges profile names and preferences without overwriting wallet credentials or publisher API keys. Network bindings are validated before merging: an unknown network, or one that would rebind a profile whose wallet is already bound to the other network, rejects the whole payload with a per-profile list and merges nothing.",
     inputSchema: {
       type: "object",
       properties: { data: { type: "string", description: "JSON profile-export payload." } },
@@ -1245,7 +1245,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_restore_state",
     description:
-      "Restore ~/.mindvault/state.json from an encrypted backup produced by mindvault_backup_state. Validates integrity (wrong passphrase or tampered data fails before any write). Replaces in-memory profiles and re-persists to disk (mode 0600). Existing reset behavior is unchanged.",
+      "Restore ~/.mindvault/state.json from an encrypted backup produced by mindvault_backup_state. Validates integrity (wrong passphrase or tampered data fails before any write), then validates every network identity before anything is merged: each profile's network must be testnet or mainnet and match this server's network, and each wallet's secret key must derive its stored public key. Failures list every offending field (never key material) and leave state unchanged. Replaces in-memory profiles and re-persists to disk (mode 0600). Existing reset behavior is unchanged.",
     inputSchema: {
       type: "object",
       properties: {
