@@ -103,6 +103,7 @@ import { applyMigratedState, migrationPreviewTool } from "./stateMigrationPrevie
 import { supportBundleTool } from "./supportBundle.js";
 import { applyRetentionPolicies } from "./retention.js";
 import { exportReceiptsToolWithTimeout } from "./receipts.js";
+import { verifyPaymentReceipt, type PaymentReceiptExpectations } from "./receiptVerification.js";
 import { normalizeToolResult, outcomeText, type ToolOutcome } from "./toolResult.js";
 import { advertisedTools, hasOutputSchema, outputSchemaFor } from "./toolSurface.js";
 import { enforceOutputContract } from "./outputValidation.js";
@@ -179,10 +180,7 @@ import {
   trimUsdc,
   usdcToStroops as toStroops,
 } from "./usdcAmount.js";
-import {
-  buildWalletAllowanceSummary,
-  formatWalletAllowanceSummary,
-} from "./walletAllowance.js";
+import { buildWalletAllowanceSummary, formatWalletAllowanceSummary } from "./walletAllowance.js";
 import { findCanonicalUsdc } from "./usdcIdentity.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
@@ -2005,8 +2003,7 @@ async function walletAllowanceOutcome(): Promise<ToolOutcome> {
   const wallet = requireWallet();
   const profile = activeProfileName;
   const network = NETWORK; // e.g. "stellar:testnet"
-  const usdcContractId =
-    process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
+  const usdcContractId = process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
   const ceiling = process.env.MINDVAULT_MAX_AUTO_PAY_USDC ?? DEFAULT_MAX_AUTO_PAY_USDC;
 
   // Fetch live balance — same call as walletInfo.
@@ -4908,6 +4905,15 @@ async function dispatchToolOutcome(
         return exportReceiptsToolWithTimeout(
           rawRecord,
           timeoutForTool("mindvault_export_receipts", "http", TIMEOUTS, TOOL_TIMEOUTS),
+        );
+      case "mindvault_verify_receipt":
+        return JSON.stringify(
+          verifyPaymentReceipt(
+            args.receipt,
+            args.expected as PaymentReceiptExpectations | undefined,
+          ),
+          null,
+          2,
         );
       case "mindvault_register_onchain":
         return registerOnchain(requiredString(args, "resourceId"), onProgress);

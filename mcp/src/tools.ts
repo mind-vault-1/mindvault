@@ -51,6 +51,7 @@ import {
   PROFILE_EXPORT_OUTPUT_SCHEMA,
   PROFILE_IMPORT_OUTPUT_SCHEMA,
   PURCHASE_HISTORY_OUTPUT_SCHEMA,
+  RECEIPT_VERIFICATION_OUTPUT_SCHEMA,
   BUY_OUTPUT_SCHEMA,
   RECOVER_CACHE_OUTPUT_SCHEMA,
   REGISTER_ONCHAIN_OUTPUT_SCHEMA,
@@ -704,6 +705,47 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: RECEIPT_EXPORT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Export Receipts",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_verify_receipt",
+    description:
+      "Verify a payment receipt and return a machine-readable typed validation result for amount, currency, transaction hash, network, and resource identity. Reports valid, invalid, or indeterminate outcomes, handling partial and malformed receipts deterministically without network calls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        receipt: {
+          type: "object",
+          description:
+            "Payment receipt object to verify (expected fields: amount, currency, txHash, network, resourceId).",
+        },
+        expected: {
+          type: "object",
+          description:
+            "Optional expected field values to match against (amount, currency, txHash, network, resourceId).",
+          properties: {
+            amount: { type: "string", description: "Expected positive decimal USDC amount." },
+            currency: { type: "string", description: "Expected currency code (e.g. USDC)." },
+            txHash: {
+              type: "string",
+              description: "Expected 64-character hexadecimal transaction hash.",
+            },
+            network: {
+              type: "string",
+              description: "Expected network identifier (e.g. stellar:testnet or stellar:pubnet).",
+            },
+            resourceId: { type: "string", description: "Expected resource identifier." },
+          },
+        },
+      },
+      required: ["receipt"],
+    },
+    outputSchema: RECEIPT_VERIFICATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Verify Payment Receipt",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
