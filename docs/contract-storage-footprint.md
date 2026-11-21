@@ -122,7 +122,9 @@ quietly raising rent. When growth is intended:
 2. Raise the affected budget in `storage_footprint_report`.
 3. Update the tables in this document to match.
 
-Related: [`contract-upgrade-checklist.md`](contract-upgrade-checklist.md) for
+Related: [`contract-ttl-lifecycle.md`](contract-ttl-lifecycle.md) for how
+these entries stay live and how operators extend or restore them;
+[`contract-upgrade-checklist.md`](contract-upgrade-checklist.md) for
 the deployment steps a storage-shape change implies, and the WASM size budget
 in
 [`contract/contracts/vault-registry/Makefile`](../contract/contracts/vault-registry/Makefile),
