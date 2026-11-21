@@ -63,6 +63,9 @@ import {
   REGISTRY_LOOKUP_OUTPUT_SCHEMA,
   RESOURCE_SUBSCRIPTION_OUTPUT_SCHEMA,
   RPC_HEALTH_OUTPUT_SCHEMA,
+  STATE_DIAGNOSTICS_OUTPUT_SCHEMA,
+  CACHE_CHAIN_DIFF_OUTPUT_SCHEMA,
+  UPSTREAM_HEALTH_OUTPUT_SCHEMA,
   SERVER_ENDPOINTS_OUTPUT_SCHEMA,
   TX_STATUS_OUTPUT_SCHEMA,
   USE_PROFILE_OUTPUT_SCHEMA,
@@ -70,7 +73,6 @@ import {
   WALLET_BALANCES_OUTPUT_SCHEMA,
   WALLET_INFO_OUTPUT_SCHEMA,
   WALLET_SETUP_OUTPUT_SCHEMA,
-  WALLET_ALLOWANCE_OUTPUT_SCHEMA,
 } from "./outputSchemas.js";
 import {
   RECEIPT_EXPORT_MAX_LIMIT,
@@ -294,7 +296,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_import_profiles",
     description:
-      "Import a versioned, non-secret profile setup payload. It merges profile names and preferences without overwriting wallet credentials or publisher API keys.",
+      "Import a versioned, non-secret profile setup payload. It merges profile names and preferences without overwriting wallet credentials or publisher API keys. Network bindings are validated before merging: an unknown network, or one that would rebind a profile whose wallet is already bound to the other network, rejects the whole payload with a per-profile list and merges nothing.",
     inputSchema: {
       type: "object",
       properties: { data: { type: "string", description: "JSON profile-export payload." } },
@@ -889,6 +891,39 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_cache_chain_diff",
+    description:
+      "Compare the catalog records held in the offline catalog cache (what browse, search and preview would serve when the API is unreachable) with the on-chain vault-registry. Per resource it reports in_sync, drift, missing_onchain, missing_in_cache, not_found or lookup_failed, and for each drifted resource a field-level diff of price, metadata pointer, listing status, creator and tags. Only snapshots for the active profile, network, contract and API origin are used. Needs no API access; makes one read-only RPC call per resource, at most 50. Returns an overall verdict (in_sync, drift, incomplete, no_cache) and next steps. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceIds: {
+          type: "array",
+          items: { type: "string", pattern: "^[A-Za-z0-9._-]+$", maxLength: 128 },
+          minItems: 1,
+          maxItems: 50,
+          description:
+            "Compare exactly these resource ids, cached or not. Omit to compare cached resources in id order.",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 50,
+          description:
+            "How many cached resources to compare when resourceIds is omitted (default 20).",
+        },
+      },
+      required: [],
+    },
+    outputSchema: CACHE_CHAIN_DIFF_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Cache vs Chain Diff",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_verify_attestation",
     description:
       "Verify a resource's verifier attestation hash directly against the vault-registry contract. Pass the attestation hash computed for the content received after purchase; the tool compares it with the value registered on-chain and reports whether verification succeeded.",
@@ -1245,7 +1280,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_restore_state",
     description:
-      "Restore ~/.mindvault/state.json from an encrypted backup produced by mindvault_backup_state. Validates integrity (wrong passphrase or tampered data fails before any write). Replaces in-memory profiles and re-persists to disk (mode 0600). Existing reset behavior is unchanged.",
+      "Restore ~/.mindvault/state.json from an encrypted backup produced by mindvault_backup_state. Validates integrity (wrong passphrase or tampered data fails before any write), then validates every network identity before anything is merged: each profile's network must be testnet or mainnet and match this server's network, and each wallet's secret key must derive its stored public key. Failures list every offending field (never key material) and leave state unchanged. Replaces in-memory profiles and re-persists to disk (mode 0600). Existing reset behavior is unchanged.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1666,6 +1701,19 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_state_diagnostics",
+    description:
+      "Report what happened when the local state file (~/.mindvault/state.json) was loaded at startup, and how to recover. When the file was unreadable, not valid JSON, or held no valid profile, it is moved aside to state.json.corrupt-<ms> (never deleted) and the server starts with empty state; this tool returns the reason, the position of a JSON syntax error, where the original was preserved, the encrypted backups and earlier quarantined copies available, and ordered recovery steps. If the file could not be moved aside, writesBlocked is true and the server refuses to save so the damaged file is not overwritten. Read-only; never returns file contents.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: STATE_DIAGNOSTICS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "State File Diagnostics",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_check_state_permissions",
     description:
       "Verify the state file (~/.mindvault/state.json) has safe permissions (mode 0600). Warns when the file is world-readable or group-readable, which would expose wallet secret keys and API keys to other system users. Safe by default; run after any manual file operations or environment migration.",
@@ -1727,6 +1775,37 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: RPC_HEALTH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "RPC Health",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_upstream_health",
+    description:
+      "Operator health probe for every configured upstream: the MindVault API, Horizon, Soroban RPC and the sponsored account service. Each is probed once, with no retries, and all in parallel. For each upstream it reports status (ok, degraded, down, not_configured, skipped), HTTP status, latency in milliseconds, the network passphrase that Horizon and Soroban RPC report and whether it matches the configured network, and a suggested action. The overall verdict is healthy, degraded or unhealthy; unhealthy means the API, Horizon or Soroban RPC is unreachable or not configured. URLs are shown without credentials or query strings. Never signs, pays or creates accounts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        upstreams: {
+          type: "array",
+          items: { type: "string", enum: ["api", "horizon", "soroban_rpc", "sponsored_account"] },
+          minItems: 1,
+          maxItems: 4,
+          description: "Probe only these upstreams. Omit to probe all of them.",
+        },
+        timeoutMs: {
+          type: "integer",
+          minimum: 100,
+          maximum: 30000,
+          description: "Per-upstream timeout in milliseconds (default 5000).",
+        },
+      },
+      required: [],
+    },
+    outputSchema: UPSTREAM_HEALTH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Upstream Health Probe",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

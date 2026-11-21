@@ -147,12 +147,15 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_compare_state_backup: READ,
   mindvault_restore_state: { local: "overwrite", remote: "none", payment: "none" },
   mindvault_check_state_permissions: READ,
+  mindvault_state_diagnostics: READ,
 
   // ── Diagnostics ──────────────────────────────────────────────────────────
   // `reset: true` clears the in-process counters other calls report.
   mindvault_metrics: { local: "memory", remote: "none", payment: "none" },
   mindvault_registry_health: READ,
   mindvault_rpc_health: READ,
+  mindvault_upstream_health: READ,
+  mindvault_cache_chain_diff: READ,
   mindvault_client_config: READ,
   mindvault_mainnet_banner: READ,
   mindvault_verify_install: READ,

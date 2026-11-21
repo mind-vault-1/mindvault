@@ -168,6 +168,45 @@ export function getCatalogSnapshot(
   return { savedAtMs: snapshot.savedAtMs, resources: [...snapshot.resources] };
 }
 
+/**
+ * Every unexpired catalog and preview snapshot held for one cache context
+ * (#1203). Catalog snapshots are keyed by request URL, so a context can hold
+ * several (one per filter combination); each is returned with its key.
+ * Ordered by key so callers that fold them together get a stable result.
+ * Expired snapshots are dropped, as getCatalogSnapshot does.
+ */
+export function listCachedRecords(
+  context: CatalogCacheContext,
+  nowMs: number = Date.now(),
+): {
+  catalog: Array<{ key: string; snapshot: CatalogSnapshot }>;
+  previews: Array<{ resourceId: string; snapshot: PreviewSnapshot }>;
+} {
+  const prefix = `${JSON.stringify(context)}:`;
+  const collect = <T extends { savedAtMs: number }>(map: Map<string, T>) => {
+    const out: Array<[string, T]> = [];
+    for (const [cacheKey, snap] of map) {
+      if (!cacheKey.startsWith(prefix)) continue;
+      if (isExpired(snap.savedAtMs, nowMs)) {
+        map.delete(cacheKey);
+        continue;
+      }
+      out.push([cacheKey.slice(prefix.length), snap]);
+    }
+    return out.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  };
+  return {
+    catalog: collect(catalog).map(([key, s]) => ({
+      key,
+      snapshot: { savedAtMs: s.savedAtMs, resources: [...s.resources] },
+    })),
+    previews: collect(previews).map(([resourceId, s]) => ({
+      resourceId,
+      snapshot: { meta: s.meta, savedAtMs: s.savedAtMs },
+    })),
+  };
+}
+
 /** Record a successful preview read for a resource id. */
 export function recordPreviewSnapshot(
   resourceId: string,
