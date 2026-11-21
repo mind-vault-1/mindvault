@@ -147,6 +147,7 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_compare_state_backup: READ,
   mindvault_restore_state: { local: "overwrite", remote: "none", payment: "none" },
   mindvault_check_state_permissions: READ,
+  mindvault_state_diagnostics: READ,
 
   // ── Diagnostics ──────────────────────────────────────────────────────────
   // `reset: true` clears the in-process counters other calls report.

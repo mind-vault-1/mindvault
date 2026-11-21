@@ -540,6 +540,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     confirmPaid: CONFIRM_PAID,
   },
   mindvault_check_state_permissions: {},
+  mindvault_state_diagnostics: {},
   mindvault_registry_health: {},
   mindvault_rpc_health: {},
   mindvault_prewarm_catalog: {},

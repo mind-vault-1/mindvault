@@ -1063,6 +1063,46 @@ export const RPC_HEALTH_OUTPUT_SCHEMA = {
   required: ["profile", "horizonUrl", "sorobanRpcUrl", "allOk", "endpoints", "summary"],
 } as const;
 
+/** mindvault_state_diagnostics (#1207). Mirrors StateLoadDiagnostics in stateRecovery.ts. */
+export const STATE_DIAGNOSTICS_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    status: { type: "string", enum: ["ok", "missing", "recovered", "unrecovered"] },
+    stateFile: { type: "string" },
+    reason: { type: ["string", "null"], enum: ["unreadable", "invalid_json", "no_profiles", null] },
+    detail: { type: ["string", "null"] },
+    position: {
+      anyOf: [
+        {
+          type: "object",
+          properties: { line: { type: "integer" }, column: { type: "integer" } },
+          required: ["line", "column"],
+        },
+        { type: "null" },
+      ],
+    },
+    quarantinePath: { type: ["string", "null"] },
+    writesBlocked: { type: "boolean" },
+    detectedAt: { type: ["string", "null"] },
+    backups: { type: "array", items: { type: "string" } },
+    quarantinedFiles: { type: "array", items: { type: "string" } },
+    nextSteps: { type: "array", items: { type: "string" } },
+  },
+  required: [
+    "status",
+    "stateFile",
+    "reason",
+    "detail",
+    "position",
+    "quarantinePath",
+    "writesBlocked",
+    "detectedAt",
+    "backups",
+    "quarantinedFiles",
+    "nextSteps",
+  ],
+} as const;
+
 export const METADATA_DIFF_OUTPUT_SCHEMA = {
   type: "object",
   properties: {

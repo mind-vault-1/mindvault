@@ -200,6 +200,16 @@ import {
   quarantineStateFile,
   writeAtomically,
 } from "./stateBackup.js";
+import {
+  buildStateDiagnostics,
+  formatStateDiagnostics,
+  jsonErrorPosition,
+  listRecoveryArtifacts,
+  safeJsonErrorDetail,
+  STATE_LOAD_REASON_TEXT,
+  type StateLoadDiagnostics,
+  type StateLoadReason,
+} from "./stateRecovery.js";
 import { provenanceChain, recordResourceHistory, resourceChangeLog } from "./resourceHistory.js";
 import { logger } from "./logger.js";
 import {
@@ -429,6 +439,14 @@ function sorobanRpcFetch(init: RequestInit, label: string): Promise<Response> {
 
 const STATE_DIR = join(homedir(), ".mindvault");
 const STATE_FILE = join(STATE_DIR, "state.json");
+const STATE_BACKUP_DIR = join(STATE_DIR, "backups");
+
+// What happened when the state file was loaded at startup (#1207). Read by
+// mindvault_state_diagnostics; `writesBlocked` also gates saveState().
+let stateDiagnostics: StateLoadDiagnostics = buildStateDiagnostics({
+  status: "missing",
+  stateFile: STATE_FILE,
+});
 
 let profiles: Record<string, WalletProfile> = {};
 let activeProfileName: string = DEFAULT_PROFILE;
@@ -505,29 +523,56 @@ export function compareStateBackupTool(blob: string, passphrase: string): string
   return JSON.stringify(compareStateWithBackup(blob, passphrase), null, 2);
 }
 
-function quarantineCorruptState(reason: string, detail: string): void {
+/**
+ * Move a corrupt state file aside and record recoverable diagnostics (#1207).
+ * When the move fails, writes are blocked: saving fresh state would otherwise
+ * overwrite the only copy of the user's data.
+ */
+function quarantineCorruptState(
+  reason: StateLoadReason,
+  detail: string,
+  position: { line: number; column: number } | null = null,
+): void {
+  const detectedAt = new Date();
+  let quarantinePath: string | null = null;
   try {
-    const quarantined = quarantineStateFile(STATE_FILE);
+    quarantinePath = quarantineStateFile(STATE_FILE, detectedAt.getTime());
     console.error(
-      `MindVault MCP: state file ${STATE_FILE} ${reason} and was quarantined to ${quarantined}; ` +
-        `starting fresh.${detail ? ` ${detail}` : ""}`,
+      `MindVault MCP: state file ${STATE_FILE} ${STATE_LOAD_REASON_TEXT[reason]} and was quarantined to ` +
+        `${quarantinePath}; starting fresh.${detail ? ` ${detail}` : ""} ` +
+        `Run mindvault_state_diagnostics for recovery steps.`,
     );
   } catch (err) {
     console.error(
-      `MindVault MCP: state file ${STATE_FILE} ${reason}; starting fresh ` +
-        `(could not quarantine the file: ${safeErrorMessage(err)}).`,
+      `MindVault MCP: state file ${STATE_FILE} ${STATE_LOAD_REASON_TEXT[reason]} and could not be ` +
+        `quarantined (${safeErrorMessage(err)}); writes are blocked so it is not overwritten. ` +
+        `Run mindvault_state_diagnostics for recovery steps.`,
     );
   }
+  const artifacts = listRecoveryArtifacts(STATE_FILE, STATE_BACKUP_DIR);
+  stateDiagnostics = buildStateDiagnostics({
+    status: quarantinePath ? "recovered" : "unrecovered",
+    stateFile: STATE_FILE,
+    reason,
+    detail: detail || null,
+    position,
+    quarantinePath,
+    detectedAt,
+    ...artifacts,
+  });
 }
 
 function loadState(): void {
-  if (!existsSync(STATE_FILE)) return;
+  if (!existsSync(STATE_FILE)) {
+    stateDiagnostics = buildStateDiagnostics({ status: "missing", stateFile: STATE_FILE });
+    return;
+  }
 
   let raw: string;
   try {
     raw = readFileSync(STATE_FILE, "utf-8");
   } catch (err) {
-    quarantineCorruptState("could not be read", safeErrorMessage(err));
+    quarantineCorruptState("unreadable", safeErrorMessage(err));
     return;
   }
 
@@ -535,16 +580,20 @@ function loadState(): void {
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    quarantineCorruptState("is not valid JSON", safeErrorMessage(err));
+    // The parser message quotes part of the file, which may hold a secret key,
+    // so only its kind and position are kept.
+    quarantineCorruptState("invalid_json", safeJsonErrorDetail(err), jsonErrorPosition(raw, err));
     return;
   }
 
   const { state, migrated, legacy } = migrateState(parsed);
 
   if (Object.keys(state.profiles).length === 0) {
-    quarantineCorruptState("did not contain a recognisable profile", "");
+    quarantineCorruptState("no_profiles", "The file parsed but held no valid profile.");
     return;
   }
+
+  stateDiagnostics = buildStateDiagnostics({ status: "ok", stateFile: STATE_FILE });
 
   profiles = state.profiles;
   activeProfileName = state.activeProfile;
@@ -595,6 +644,13 @@ function persistableProfiles(): Record<string, WalletProfile> {
  * keep ignoring the result.
  */
 function saveState(): boolean {
+  if (stateDiagnostics.writesBlocked) {
+    console.error(
+      `MindVault MCP: not saving state — ${STATE_FILE} is damaged and could not be moved aside, ` +
+        `so writing would destroy it. Run mindvault_state_diagnostics.`,
+    );
+    return false;
+  }
   try {
     const state: ProfileState = {
       version: STATE_VERSION,
@@ -656,6 +712,36 @@ function checkStatePermissionsTool(): string {
     result.message,
   ].filter((l): l is string => l !== null);
   return lines.join("\n");
+}
+
+/**
+ * mindvault_state_diagnostics (#1207): what happened when the state file was
+ * loaded, and how to recover. Backups and quarantined copies are re-listed on
+ * every call so the answer reflects files created since startup.
+ */
+function stateDiagnosticsOutcome(): ToolOutcome {
+  const current =
+    stateDiagnostics.status === "recovered" || stateDiagnostics.status === "unrecovered"
+      ? buildStateDiagnostics({
+          status: stateDiagnostics.status,
+          stateFile: stateDiagnostics.stateFile,
+          reason: stateDiagnostics.reason,
+          detail: stateDiagnostics.detail,
+          position: stateDiagnostics.position,
+          quarantinePath: stateDiagnostics.quarantinePath,
+          detectedAt: stateDiagnostics.detectedAt ? new Date(stateDiagnostics.detectedAt) : null,
+          ...listRecoveryArtifacts(STATE_FILE, STATE_BACKUP_DIR),
+        })
+      : stateDiagnostics;
+  return {
+    text: formatStateDiagnostics(current),
+    structured: current as unknown as Record<string, unknown>,
+  };
+}
+
+/** Test hook: the diagnostics recorded by the last state load. */
+export function _stateDiagnostics(): StateLoadDiagnostics {
+  return stateDiagnostics;
 }
 
 interface DependencyStatus {
@@ -4941,6 +5027,8 @@ async function dispatchToolOutcome(
         return restoreStateTool(requiredString(args, "blob"), requiredString(args, "passphrase"));
       case "mindvault_metrics":
         return toolMetrics(flag(args, "reset"), normalizeMetricsExportFormat(args.format));
+      case "mindvault_state_diagnostics":
+        return stateDiagnosticsOutcome();
       case "mindvault_check_state_permissions":
         return checkStatePermissionsTool();
       case "mindvault_registry_health":

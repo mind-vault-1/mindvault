@@ -122,6 +122,7 @@ export function groupOf(name: string): string {
       "mindvault_restore_state",
       "mindvault_reset",
       "mindvault_check_state_permissions",
+      "mindvault_state_diagnostics",
       "mindvault_migration_preview",
       "mindvault_compare_state_backup",
     ].includes(name)

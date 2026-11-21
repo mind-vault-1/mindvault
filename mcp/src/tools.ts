@@ -63,6 +63,7 @@ import {
   REGISTRY_LOOKUP_OUTPUT_SCHEMA,
   RESOURCE_SUBSCRIPTION_OUTPUT_SCHEMA,
   RPC_HEALTH_OUTPUT_SCHEMA,
+  STATE_DIAGNOSTICS_OUTPUT_SCHEMA,
   SERVER_ENDPOINTS_OUTPUT_SCHEMA,
   TX_STATUS_OUTPUT_SCHEMA,
   USE_PROFILE_OUTPUT_SCHEMA,
@@ -1660,6 +1661,19 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Set Royalty Recipient",
       readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_state_diagnostics",
+    description:
+      "Report what happened when the local state file (~/.mindvault/state.json) was loaded at startup, and how to recover. When the file was unreadable, not valid JSON, or held no valid profile, it is moved aside to state.json.corrupt-<ms> (never deleted) and the server starts with empty state; this tool returns the reason, the position of a JSON syntax error, where the original was preserved, the encrypted backups and earlier quarantined copies available, and ordered recovery steps. If the file could not be moved aside, writesBlocked is true and the server refuses to save so the damaged file is not overwritten. Read-only; never returns file contents.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: STATE_DIAGNOSTICS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "State File Diagnostics",
+      readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
     },

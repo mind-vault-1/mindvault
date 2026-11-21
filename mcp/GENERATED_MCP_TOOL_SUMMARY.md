@@ -5,7 +5,7 @@
 
 This file is a generated, human-readable summary of the MCP tool surface (ListTools). It is scoped to the `mcp/` package and intended as a quick reference for integrators and reviewers.
 
-Generated from `mcp/src/tools.ts` (72 tools).
+Generated from `mcp/src/tools.ts` (73 tools).
 
 ## Tools
 
@@ -62,6 +62,7 @@ Generated from `mcp/src/tools.ts` (72 tools).
 - `mindvault_freeze`: Permanently freeze the on-chain metadata pointer for a resource. Only the resource creator/owner may call this. This is irreversible and requires confirm: "freeze_metadata".
 - `mindvault_fee_config`: Read the on-chain registry fee configuration: platform fee, royalty fee, total fee, creator payout basis points, and fee recipient. Use this before quoting creator payout.
 - `mindvault_royalty`: Set or clear a resource-specific royalty recipient override on the vault registry contract. Only the resource creator/owner may call this.
+- `mindvault_state_diagnostics`: Report what happened when the local state file (~/.mindvault/state.json) was loaded at startup, and how to recover. When the file was unreadable, not valid JSON, or held no valid profile, it is moved aside to state.json.corrupt-<ms> (never deleted) and the server starts with empty state; this tool returns the reason, the position of a JSON syntax error, where the original was preserved, the encrypted backups and earlier quarantined copies available, and ordered recovery steps. If the file could not be moved aside, writesBlocked is true and the server refuses to save so the damaged file is not overwritten. Read-only; never returns file contents.
 - `mindvault_check_state_permissions`: Verify the state file (~/.mindvault/state.json) has safe permissions (mode 0600). Warns when the file is world-readable or group-readable, which would expose wallet secret keys and API keys to other system users. Safe by default; run after any manual file operations or environment migration.
 - `mindvault_registry_health`: Check the health of every dependency the MCP server relies on: MindVault API, Horizon, Soroban RPC, vault-registry contract, and x402 network alignment. Returns per-dependency status (ok/error) with actionable failure messages. Does not leak secrets or environment variables.
 - `mindvault_explain_error_code`: Explain a vault-registry contract error: what the code means, whether repeating the call can help, and the one step that recovers. A failed Soroban invocation reports only a number, and the number alone cannot say whether to look the resource up, wait for a pause to lift, or stop. Pass exactly one of `code` (the on-chain discriminant) or `name` (e.g. "NotFound"). An unknown code is reported as unknown — with the codes that do exist — instead of being guessed at. Read-only: it explains, it does not act.
