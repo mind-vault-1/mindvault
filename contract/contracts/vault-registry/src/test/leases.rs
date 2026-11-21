@@ -201,6 +201,95 @@ fn lease_rejects_wrong_amount_bad_hash_and_unlisted_resources() {
 }
 
 #[test]
+fn lease_renewal_rejects_delisted_and_tombstoned_resources_without_writes() {
+    let (env, creator, settler, holder, client) = lease_setup();
+    let admin = client.admin().unwrap();
+    let id = register_priced(&env, &creator, &client, "leaseclosed", 100i128);
+    let tx = String::from_str(&env, "lease-tx");
+
+    env.ledger().set_sequence_number(100);
+    client.record_lease(&settler, &holder, &id, &LeaseTier::Hour, &100i128, &tx);
+    let prior_lease = client.get_lease(&id, &holder);
+    let new_holder = Address::generate(&env);
+
+    // An expired lease may be renewed only while its resource is Listed.
+    env.ledger().set_sequence_number(100 + LEASE_HOUR_LEDGERS);
+    client.delist(&id);
+    let before_rejection_events = env.events().all().len();
+    assert_eq!(
+        client.try_buy_lease(&holder, &id, &LeaseTier::Hour, &100i128, &tx),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(
+        client.try_record_lease(&settler, &holder, &id, &LeaseTier::Hour, &100i128, &tx),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(
+        client.try_buy_lease(&new_holder, &id, &LeaseTier::Hour, &100i128, &tx),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(client.get_lease(&id, &holder), prior_lease);
+    assert_eq!(client.try_get_lease(&id, &new_holder), Err(Ok(Error::NotFound)));
+    assert_eq!(env.events().all().len(), before_rejection_events);
+
+    client.tombstone_resource(&id, &admin);
+    let before_tombstone_rejection_events = env.events().all().len();
+    assert_eq!(
+        client.try_buy_lease(&holder, &id, &LeaseTier::Hour, &100i128, &tx),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(
+        client.try_record_lease(&settler, &holder, &id, &LeaseTier::Hour, &100i128, &tx),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(client.get_lease(&id, &holder), prior_lease);
+    assert_eq!(env.events().all().len(), before_tombstone_rejection_events);
+}
+
+#[test]
+fn pending_lease_cannot_be_settled_after_delisting_or_tombstoning() {
+    let (env, creator, settler, holder, client) = lease_setup();
+    let admin = client.admin().unwrap();
+    let tx = String::from_str(&env, "pending-lease-tx");
+    let delisted = register_priced(&env, &creator, &client, "pendingoff", 100i128);
+    let pending = client.buy_lease(&holder, &delisted, &LeaseTier::Hour, &100i128, &tx);
+
+    client.delist(&delisted);
+    let before_events = env.events().all().len();
+    assert_eq!(
+        client.try_settle_lease(&settler, &delisted, &holder),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(client.get_lease(&delisted, &holder), pending);
+    assert_eq!(env.events().all().len(), before_events);
+
+    // Relisting permits settlement of the unchanged, still-pending lease.
+    client.reactivate_resource(&delisted);
+    let settled = client.settle_lease(&settler, &delisted, &holder);
+    assert_eq!(settled.state, LeaseState::Active);
+    assert_eq!(settled.amount, pending.amount);
+    assert_eq!(settled.tx_hash, pending.tx_hash);
+    assert_eq!(settled.expiry_ledger, pending.expiry_ledger);
+
+    let tombstoned = register_priced(&env, &creator, &client, "pendinggone", 100i128);
+    let pending_tombstone = client.buy_lease(
+        &holder,
+        &tombstoned,
+        &LeaseTier::Hour,
+        &100i128,
+        &tx,
+    );
+    client.tombstone_resource(&tombstoned, &admin);
+    let before_tombstone_events = env.events().all().len();
+    assert_eq!(
+        client.try_settle_lease(&settler, &tombstoned, &holder),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(client.get_lease(&tombstoned, &holder), pending_tombstone);
+    assert_eq!(env.events().all().len(), before_tombstone_events);
+}
+
+#[test]
 fn one_open_lease_per_pair_but_expired_or_revoked_leases_are_replaced() {
     let (env, creator, settler, holder, client) = lease_setup();
     let id = register_priced(&env, &creator, &client, "leaseonce", 100i128);

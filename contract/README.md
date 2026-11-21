@@ -1165,6 +1165,11 @@ directly. Both require a `Listed` resource, `amount == lease_price`, and no
 pending or unexpired active lease for the pair; an expired or revoked lease
 is replaced.
 
+Before `settle_lease` promotes a pending lease to `Active`, it checks that
+its resource is still `Listed`. If the resource has since been delisted,
+frozen, disputed, or tombstoned, settlement returns `ResourceNotMutable`
+without changing the pending lease, its payment reference, or expiry.
+
 ```text
 Pending --settle_lease--> Active --(ledger >= expiry_ledger)--> expired
    |                        |
