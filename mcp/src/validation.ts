@@ -350,6 +350,10 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     },
     intervalMs: { kind: "integer", min: MIN_SETTLEMENT_INTERVAL_MS },
   },
+  mindvault_verify_receipt: {
+    receipt: { kind: "object", required: true },
+    expected: { kind: "object" },
+  },
   mindvault_export_receipts: {
     format: { kind: "enum", values: ["json", "csv", "ndjson"] },
     resourceId: { ...RESOURCE_ID, required: false },

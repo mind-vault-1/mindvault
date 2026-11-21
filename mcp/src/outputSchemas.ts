@@ -1154,3 +1154,86 @@ export const REGISTRY_ERROR_EXPLANATION_OUTPUT_SCHEMA = {
   },
   required: ["code", "name", "known", "description", "category", "retry", "nextSteps"],
 } as const;
+
+const RECEIPT_FIELD_VERIFICATION_SCHEMA = {
+  type: "object",
+  properties: {
+    field: {
+      type: "string",
+      enum: ["amount", "currency", "txHash", "network", "resourceId"],
+    },
+    outcome: { type: "string", enum: ["valid", "invalid", "indeterminate"] },
+    value: { type: ["string", "null"] },
+    expected: { type: ["string", "null"] },
+    code: {
+      type: "string",
+      enum: [
+        "ok",
+        "missing",
+        "malformed",
+        "malformed_receipt",
+        "non_positive",
+        "unsupported_currency",
+        "unknown_network",
+        "mismatch",
+      ],
+    },
+    message: { type: "string" },
+  },
+  required: ["field", "outcome", "value", "expected", "code", "message"],
+} as const;
+
+/**
+ * Output schema for `mindvault_verify_receipt`.
+ *
+ * Returns a typed, machine-readable verification result for receipt amount,
+ * currency, transaction hash, network, and resource identity.
+ */
+export const RECEIPT_VERIFICATION_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    schema: { type: "string", const: "mindvault.receipt-verification/v1" },
+    outcome: { type: "string", enum: ["valid", "invalid", "indeterminate"] },
+    valid: { type: "boolean" },
+    fields: {
+      type: "object",
+      properties: {
+        amount: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+        currency: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+        txHash: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+        network: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+        resourceId: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+      },
+      required: ["amount", "currency", "txHash", "network", "resourceId"],
+    },
+    issues: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          field: {
+            type: "string",
+            enum: ["amount", "currency", "txHash", "network", "resourceId"],
+          },
+          outcome: { type: "string", enum: ["invalid", "indeterminate"] },
+          code: {
+            type: "string",
+            enum: [
+              "missing",
+              "malformed",
+              "malformed_receipt",
+              "non_positive",
+              "unsupported_currency",
+              "unknown_network",
+              "mismatch",
+            ],
+          },
+          message: { type: "string" },
+        },
+        required: ["field", "outcome", "code", "message"],
+      },
+    },
+    summary: { type: "string" },
+  },
+  required: ["schema", "outcome", "valid", "fields", "issues", "summary"],
+} as const;
