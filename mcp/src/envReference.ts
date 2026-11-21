@@ -21,6 +21,7 @@
  * changes in code changes the generated reference in the same PR.
  */
 
+import { LOCAL_VALIDATION_TRUE_VALUES } from "./localValidation.js";
 import { DEFAULT_MAX_AUTO_PAY_USDC } from "./paymentCeiling.js";
 import { DEFAULT_PAID_CONFIRMATION_POLICY } from "./paidOperations.js";
 import { DEFAULT_MAINNET_MUTATION_POLICY } from "./mainnetGuardrails.js";
@@ -188,6 +189,14 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     default: "unset (full surface)",
     values: ["1", "true", "yes", "on"],
     source: "mcp/src/readOnlyMode.ts",
+  },
+  {
+    name: "MINDVAULT_LOCAL_VALIDATION",
+    description:
+      "Validate every tool call locally instead of executing it. Arguments and configuration are checked with no API, Horizon, RPC, x402, or sponsored-wallet request; the reply is a mindvault.local-validation/v1 report with findings and limitations.",
+    default: "unset (live tool execution)",
+    values: [...LOCAL_VALIDATION_TRUE_VALUES],
+    source: "mcp/src/localValidation.ts",
   },
   {
     name: "MINDVAULT_CONFIRM_PAID_OPERATIONS",

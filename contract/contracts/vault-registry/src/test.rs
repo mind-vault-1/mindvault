@@ -11811,3 +11811,4 @@ include!("test/stellar_wave_977_978_979_980.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
 include!("test/pause_scope_matrix.rs");
+include!("test/payment_ownership_binding.rs");
