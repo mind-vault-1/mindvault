@@ -347,6 +347,7 @@ server will read from. Run both after changing a config.
 
 ## Related
 
+- [Client compatibility matrix](mcp-client-compatibility.md) — which MCP features each client needs, and what still works without them
 - [MCP quickstart](mcp-quickstart.md) — full agent session, wallet through purchase
 - [Tool reference](mcp-tool-reference.md) — every tool with its description, grouped by function
 - [Tool argument validation](mcp-tool-arguments.md)

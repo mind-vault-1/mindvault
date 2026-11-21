@@ -107,6 +107,8 @@ codex mcp add mindvault -- node /path/to/mindvault/mcp/dist/index.js
 
 Copy-ready configs for Claude Code, Claude Desktop, Codex, Cursor, VS Code, and Windsurf — plus the state file path, network profiles, and security notes — are in **[docs/mcp-client-configs.md](docs/mcp-client-configs.md)**.
 
+Which MCP features each client needs, and what still works when a client lacks one, is in **[docs/mcp-client-compatibility.md](docs/mcp-client-compatibility.md)**.
+
 All env vars are optional — the defaults point to the hosted testnet backend:
 
 | Variable                     | Default                                                | Description                                                           |
