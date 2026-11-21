@@ -760,7 +760,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_registry_info",
     description:
-      "Return the on-chain vault-registry contract ID, network passphrase, RPC URL, and the resource fields available for direct Soroban queries. Use this to verify ownership, price, and listing state directly from Stellar without trusting the MindVault API.",
+      "Return the on-chain vault-registry contract ID, network passphrase, RPC URL, resource fields, and schema version negotiation status. The schemaVersion field reports which resource schema versions this client supports, the current version it targets, and the version detected on the deployed contract (or null when the contract is unreachable). Use this to verify ownership, price, and listing state directly from Stellar, and to check schema compatibility before calling mutation tools.",
     inputSchema: { type: "object", properties: {}, required: [] },
     outputSchema: REGISTRY_INFO_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {

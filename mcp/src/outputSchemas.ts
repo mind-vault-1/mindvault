@@ -661,6 +661,19 @@ export const REGISTRY_INFO_OUTPUT_SCHEMA = {
     x402Network: { type: "string" },
     resourceFields: { type: "array", items: { type: "string" } },
     mainnetDiagnostics: { type: "string" },
+    schemaVersion: {
+      type: "object",
+      properties: {
+        detected: { type: ["number", "null"] },
+        supported: { type: "array", items: { type: "number" } },
+        current: { type: "number" },
+        status: {
+          type: "string",
+          enum: ["supported", "unsupported", "error", "unchecked"],
+        },
+      },
+      required: ["detected", "supported", "current", "status"],
+    },
   },
   required: [
     "contractId",
@@ -670,6 +683,7 @@ export const REGISTRY_INFO_OUTPUT_SCHEMA = {
     "x402Network",
     "resourceFields",
     "mainnetDiagnostics",
+    "schemaVersion",
   ],
 } as const;
 
