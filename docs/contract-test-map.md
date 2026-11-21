@@ -118,6 +118,7 @@ Generated and checked-in artifacts:
 | `src/test/tag_prefix_search.rs`              | yes      | `search_by_tag_prefix` (#974)                                                                                     |
 | `src/test/tags.rs`                           | no       | Tag removal events and `set_tags` validation (most also in `test.rs`)                                             |
 | `src/test/tombstone_read.rs`                 | yes      | Read behaviour after tombstoning (#624)                                                                           |
+| `src/test/ttl_operator_lifecycle.rs`         | yes      | TTL refresh behaviour behind [`contract-ttl-lifecycle.md`](contract-ttl-lifecycle.md)                             |
 
 ### About the files that are not compiled
 
