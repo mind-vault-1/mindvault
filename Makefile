@@ -61,6 +61,8 @@ validate:
 	pnpm run lint
 	@echo "==> Checking doc links..."
 	pnpm run docs:links
+	@echo "==> Checking contributor docs..."
+	pnpm run docs:contributing
 	@echo ""
 	@echo "All checks passed."
 

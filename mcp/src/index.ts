@@ -67,6 +67,11 @@ import {
 } from "./paidOperations.js";
 import { assertToolAllowedInReadOnlyMode, readOnlyModeEnabled } from "./readOnlyMode.js";
 import {
+  LOCAL_VALIDATION_OUTPUT_SCHEMA,
+  localValidationEnabled,
+  localValidationOutcome,
+} from "./localValidation.js";
+import {
   createMetricsRecorder,
   measureTool,
   metricsEnabledFromEnv,
@@ -179,10 +184,7 @@ import {
   trimUsdc,
   usdcToStroops as toStroops,
 } from "./usdcAmount.js";
-import {
-  buildWalletAllowanceSummary,
-  formatWalletAllowanceSummary,
-} from "./walletAllowance.js";
+import { buildWalletAllowanceSummary, formatWalletAllowanceSummary } from "./walletAllowance.js";
 import { findCanonicalUsdc } from "./usdcIdentity.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import {
@@ -346,7 +348,11 @@ function applyNetworkConfig(network: "testnet" | "mainnet"): void {
 // the validation result rather than exiting; the fail-fast decision stays here.
 // Warnings are printed but non-fatal; any error stops the server. Skipped under
 // tests and in mock mode so unit runs and offline local development never exit.
-if (!process.env.VITEST && !mockEnabledFromEnv(process.env)) {
+if (
+  !process.env.VITEST &&
+  !localValidationEnabled(process.env) &&
+  !mockEnabledFromEnv(process.env)
+) {
   const startup = resolveConfig(process.env);
   if (startup.report) console.error(startup.report);
   if (!startup.ok) process.exit(1);
@@ -2005,8 +2011,7 @@ async function walletAllowanceOutcome(): Promise<ToolOutcome> {
   const wallet = requireWallet();
   const profile = activeProfileName;
   const network = NETWORK; // e.g. "stellar:testnet"
-  const usdcContractId =
-    process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
+  const usdcContractId = process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
   const ceiling = process.env.MINDVAULT_MAX_AUTO_PAY_USDC ?? DEFAULT_MAX_AUTO_PAY_USDC;
 
   // Fetch live balance — same call as walletInfo.
@@ -4755,6 +4760,12 @@ async function dispatchToolOutcome(
     throw new UnknownToolError(name);
   }
 
+  // Local-only validation (#1249) takes precedence over every other mode and
+  // stops before auth, guardrails, handlers, and all outbound services.
+  if (localValidationEnabled(process.env)) {
+    return localValidationOutcome(name, rawArgs, process.env);
+  }
+
   // Read-only mode is checked before argument validation (#593): when the
   // server cannot run this tool at all, a malformed-arguments error would be
   // a misleading thing to report, and the refusal does not depend on the
@@ -5172,6 +5183,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
           }),
         )
       : undefined;
+  // Local-only mode replaces the tool's own schema with the validation report
+  // schema, so enforceOutputContract validates what is actually returned.
+  const localValidation = localValidationEnabled(process.env);
+  const activeOutputSchema = localValidation
+    ? LOCAL_VALIDATION_OUTPUT_SCHEMA
+    : outputSchemaFor(name);
   try {
     const result = await measureTool(metrics, name, () =>
       dispatchToolOutcome(name, args, progress?.emit),
@@ -5186,7 +5203,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     return enforceOutputContract(
       name,
       normalizeToolResult(name, result, hasOutputSchema),
-      outputSchemaFor(name),
+      activeOutputSchema,
     );
   } catch (err: any) {
     const mapped = mappedErrorOf(err);
@@ -5197,7 +5214,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         isError: true,
         ...(mapped ? { structuredContent: { troubleshooting: troubleshootingHint(mapped) } } : {}),
       },
-      outputSchemaFor(name),
+      activeOutputSchema,
     );
   } finally {
     await progress?.settle();
@@ -5228,7 +5245,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
   };
 });
 
-if (!process.env.VITEST && !MOCK) {
+if (!process.env.VITEST && !MOCK && !localValidationEnabled(process.env)) {
   void checkContractBindings({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
@@ -5276,18 +5293,20 @@ if (!process.env.VITEST) {
   // failed pre-warm just means the first mindvault_browse pays the normal
   // cold-cache cost, which is the status quo this is improving on, not a
   // regression.
-  prewarmCatalogCache().catch(() => {});
+  if (!localValidationEnabled(process.env)) {
+    prewarmCatalogCache().catch(() => {});
 
-  // Best-effort retention pass (#1044): prune expired state backups, rotated
-  // audit generations, and stale receipt records once per boot, under the
-  // documented MINDVAULT_* retention settings and their safe defaults. Never
-  // throws and never deletes the active state file or the live audit log;
-  // failures are logged and the server starts anyway.
-  const retentionReport = applyRetentionPolicies(process.env);
-  if (retentionReport.errors.length > 0) {
-    logger.warn(
-      `MindVault MCP: retention pass completed with errors: ${retentionReport.errors.join("; ")}`,
-    );
+    // Best-effort retention pass (#1044): prune expired state backups, rotated
+    // audit generations, and stale receipt records once per boot, under the
+    // documented MINDVAULT_* retention settings and their safe defaults. Never
+    // throws and never deletes the active state file or the live audit log;
+    // failures are logged and the server starts anyway.
+    const retentionReport = applyRetentionPolicies(process.env);
+    if (retentionReport.errors.length > 0) {
+      logger.warn(
+        `MindVault MCP: retention pass completed with errors: ${retentionReport.errors.join("; ")}`,
+      );
+    }
   }
 
   await server.connect(transport);
