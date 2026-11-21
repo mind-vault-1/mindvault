@@ -64,6 +64,18 @@ need to worry about case or surrounding whitespace:
 When you read a resource back, `resource.tags` already holds the normalized
 values, so comparing them against your input string is safe.
 
+### Atomic tag replacement
+
+`set_tags` replaces a resource's tag set in one validated call. The whole
+requested set is normalized and checked against every rule above, together with
+the caller's authorization and the resource's lifecycle state, before the
+resource or its tag index is written; a rejected call leaves the resource, its
+`TagIndex` entries and every tag search unchanged. The index is then updated
+from the normalized difference in a single pass: the resource is removed only
+from tags it drops and added only to tags it gains, so a tag kept across the
+replacement keeps the resource's original position in `list_by_tag` insertion
+order. Tag popularity counters are not changed.
+
 ### Tag popularity
 
 `top_tags(limit)` returns `TagPopularity { tag, count }` entries sorted by

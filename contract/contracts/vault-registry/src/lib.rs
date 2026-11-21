@@ -2314,15 +2314,30 @@ impl VaultRegistry {
         hash
     }
 
-    /// Replace a resource's discovery tags. Only the creator may call this.
-    /// Does not modify `metadata` (the off-chain content pointer).
+    /// Atomically replace a resource's discovery tags. Only the creator may
+    /// call this. Does not modify `metadata` (the off-chain content pointer).
     /// Tags are normalized to lowercase ASCII before storage; the normalized
     /// form is what gets indexed and returned from `list_by_tag`.
     ///
     /// No-op guard: if the normalized `tags` are identical to the resource's
     /// current tags (same values, same order), the call succeeds without
     /// touching storage or emitting a `settags` event.
+    ///
+    /// Atomicity: the whole requested set is normalized and validated (count,
+    /// length, empty/whitespace-only, duplicates after normalization) and the
+    /// caller's authorization and the resource's lifecycle state are checked
+    /// before any resource or `TagIndex` write. A rejected call leaves the
+    /// resource, its `TagIndex` memberships and every tag search
+    /// (`list_by_tag`, `list_by_tag_page`, `search_by_tag_prefix`) unchanged.
+    ///
+    /// Index maintenance is diff-based and single-pass: the id is removed only
+    /// from tags it no longer carries and added only to tags it newly carries,
+    /// so each affected `TagIndex` entry is written at most once and tags kept
+    /// across the replacement keep the resource's original position in the
+    /// per-tag insertion order.
     pub fn set_tags(env: Env, id: String, tags: Vec<String>) -> Result<(), Error> {
+        // Phase 1: validate everything. No resource or tag-index write happens
+        // before this phase completes.
         Self::require_not_paused(&env)?;
         Self::validate_resource_id(&id)?;
         let norm_tags = Self::normalize_and_validate_tags(&env, &tags)?;
@@ -2334,19 +2349,16 @@ impl VaultRegistry {
             return Ok(());
         }
 
-        // Capture previous tags before replacement for event emission and index
+        // Phase 2: plan the index delta against the previous tags.
         let prev_tags = resource.tags.clone();
+        let (removed, added) = Self::tag_set_delta(&env, &prev_tags, &norm_tags);
 
-        Self::tag_index_remove(&env, &prev_tags, &id);
-        Self::tag_index_add(&env, &norm_tags, &id);
-
+        // Phase 3: commit. Each touched `TagIndex` entry and the resource are
+        // written once.
+        Self::tag_index_remove(&env, &removed, &id);
+        Self::tag_index_add(&env, &added, &id);
         resource.tags = norm_tags.clone();
         Self::save(&env, &mut resource);
-
-        // Keep the derived tag index in sync: drop the id from every tag it
-        // no longer carries, then add it to the new set (adds are idempotent).
-        Self::tag_index_remove(&env, &prev_tags, &id);
-        Self::tag_index_add(&env, &norm_tags, &id);
 
         // Emit event with both previous and next tags for indexer reconciliation
         env.events()
@@ -7504,6 +7516,40 @@ impl VaultRegistry {
                 Self::bump_persistent(env, &idx_key);
             }
         }
+    }
+
+    /// Split a tag replacement into the normalized tags the resource stops
+    /// carrying (`removed`) and the ones it starts carrying (`added`). Tags in
+    /// both sets appear in neither, so their `TagIndex` entries are left
+    /// untouched. `prev` is re-normalized so legacy, non-normalized stored
+    /// tags diff correctly against the already-normalized `next`.
+    fn tag_set_delta(
+        env: &Env,
+        prev: &Vec<String>,
+        next: &Vec<String>,
+    ) -> (Vec<String>, Vec<String>) {
+        let mut prev_norm: Vec<String> = Vec::new(env);
+        for i in 0..prev.len() {
+            let tag = Self::normalize_tag(env, &prev.get(i).unwrap());
+            if !prev_norm.contains(&tag) {
+                prev_norm.push_back(tag);
+            }
+        }
+        let mut removed: Vec<String> = Vec::new(env);
+        for i in 0..prev_norm.len() {
+            let tag = prev_norm.get(i).unwrap();
+            if !next.contains(&tag) {
+                removed.push_back(tag);
+            }
+        }
+        let mut added: Vec<String> = Vec::new(env);
+        for i in 0..next.len() {
+            let tag = next.get(i).unwrap();
+            if !prev_norm.contains(&tag) {
+                added.push_back(tag);
+            }
+        }
+        (removed, added)
     }
 
     /// Remove `id` from the `TagIndex` entry for each tag in `tags`.
