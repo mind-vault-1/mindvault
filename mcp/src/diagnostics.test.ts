@@ -131,3 +131,144 @@ describe("collectStartupDiagnostics — service URL validation", () => {
     expect(diagnostics.filter((item) => item.variable.endsWith("URL"))).toEqual([]);
   });
 });
+
+describe("collectStartupDiagnostics — URL scheme validation", () => {
+  it.each(["ws://rpc.example.com", "wss://rpc.example.com", "ftp://rpc.example.com"] as const)(
+    "reports a blocking error for unsupported scheme %s on SOROBAN_RPC_URL",
+    (url) => {
+      const diagnostics = collectStartupDiagnostics(
+        { STELLAR_NETWORK: "testnet", SOROBAN_RPC_URL: url },
+        true,
+      );
+      const diagnostic = diagnostics.find((d) => d.variable === "SOROBAN_RPC_URL");
+      expect(diagnostic).toBeDefined();
+      expect(diagnostic?.severity).toBe("error");
+      expect(diagnostic?.message).toContain("Unsupported URL scheme");
+    },
+  );
+
+  it.each([
+    "ws://horizon.example.com",
+    "wss://horizon.example.com",
+    "ftp://horizon.example.com",
+  ] as const)("reports a blocking error for unsupported scheme %s on HORIZON_URL", (url) => {
+    const diagnostics = collectStartupDiagnostics(
+      { STELLAR_NETWORK: "testnet", HORIZON_URL: url },
+      true,
+    );
+    const diagnostic = diagnostics.find((d) => d.variable === "HORIZON_URL");
+    expect(diagnostic).toBeDefined();
+    expect(diagnostic?.severity).toBe("error");
+    expect(diagnostic?.message).toContain("Unsupported URL scheme");
+  });
+
+  it("names the actual unsupported scheme in the diagnostic message", () => {
+    const diagnostics = collectStartupDiagnostics(
+      { STELLAR_NETWORK: "testnet", SOROBAN_RPC_URL: "ftp://rpc.example.com" },
+      true,
+    );
+    const diagnostic = diagnostics.find((d) => d.variable === "SOROBAN_RPC_URL");
+    expect(diagnostic?.message).toContain("ftp");
+  });
+
+  it("distinguishes unsupported scheme from unparseable URL", () => {
+    const schemeDiag = collectStartupDiagnostics(
+      { STELLAR_NETWORK: "testnet", SOROBAN_RPC_URL: "ws://rpc.example.com" },
+      true,
+    ).find((d) => d.variable === "SOROBAN_RPC_URL");
+    const malformedDiag = collectStartupDiagnostics(
+      { STELLAR_NETWORK: "testnet", SOROBAN_RPC_URL: "not-a-url" },
+      true,
+    ).find((d) => d.variable === "SOROBAN_RPC_URL");
+
+    expect(schemeDiag?.message).toContain("Unsupported URL scheme");
+    expect(malformedDiag?.message).toContain("Not a valid URL");
+    expect(schemeDiag?.message).not.toContain("Not a valid URL");
+    expect(malformedDiag?.message).not.toContain("Unsupported URL scheme");
+  });
+});
+
+describe("collectStartupDiagnostics — embedded credentials in URLs", () => {
+  it.each(["HORIZON_URL", "SOROBAN_RPC_URL"] as const)(
+    "reports a blocking error when %s contains embedded credentials",
+    (variable) => {
+      // Use hostnames that contain "testnet" so validateNetworkConfig does not
+      // also fire a cross-network diagnostic, keeping the test focused.
+      const url =
+        variable === "SOROBAN_RPC_URL"
+          ? "https://user:s3cr3t@soroban-testnet.example.com"
+          : "https://user:s3cr3t@horizon-testnet.example.com";
+      const diagnostics = collectStartupDiagnostics(
+        { STELLAR_NETWORK: "testnet", [variable]: url },
+        true,
+      );
+      const diagnostic = diagnostics.find((d) => d.variable === variable);
+      expect(diagnostic).toBeDefined();
+      expect(diagnostic?.severity).toBe("error");
+      expect(diagnostic?.message).toContain("embedded credentials");
+    },
+  );
+
+  it("does not echo the plaintext password in the diagnostic message", () => {
+    const diagnostics = collectStartupDiagnostics(
+      {
+        STELLAR_NETWORK: "testnet",
+        SOROBAN_RPC_URL: "https://apiuser:supersecret@soroban-testnet.example.com",
+      },
+      true,
+    );
+    const diagnostic = diagnostics.find((d) => d.variable === "SOROBAN_RPC_URL");
+    expect(diagnostic?.message).not.toContain("supersecret");
+    expect(diagnostic?.message).not.toContain("apiuser");
+  });
+
+  it("does not echo the plaintext password in the formatted report", () => {
+    const diagnostics = collectStartupDiagnostics(
+      {
+        STELLAR_NETWORK: "testnet",
+        SOROBAN_RPC_URL: "https://apiuser:topsecret@soroban-testnet.example.com",
+      },
+      true,
+    );
+    const report = formatDiagnostics(diagnostics);
+    expect(report).not.toContain("topsecret");
+    expect(report).not.toContain("apiuser");
+  });
+
+  it("flags embedded credentials on MINDVAULT_URL and SPONSORED_ACCOUNT_URL as well", () => {
+    for (const variable of ["MINDVAULT_URL", "SPONSORED_ACCOUNT_URL"] as const) {
+      const diagnostics = collectStartupDiagnostics(
+        {
+          STELLAR_NETWORK: "testnet",
+          [variable]: "https://user:pass@service.example.com",
+        },
+        true,
+      );
+      const diagnostic = diagnostics.find((d) => d.variable === variable);
+      expect(diagnostic?.severity).toBe("error");
+      expect(diagnostic?.message).toContain("embedded credentials");
+    }
+  });
+
+  it("accepts a valid http(s) URL with no credentials", () => {
+    const diagnostics = collectStartupDiagnostics(
+      {
+        STELLAR_NETWORK: "testnet",
+        SOROBAN_RPC_URL: "https://soroban-testnet.example.com",
+      },
+      true,
+    );
+    expect(diagnostics.find((d) => d.variable === "SOROBAN_RPC_URL")).toBeUndefined();
+  });
+
+  it("blocks startup when any URL has embedded credentials", () => {
+    const diagnostics = collectStartupDiagnostics(
+      {
+        STELLAR_NETWORK: "testnet",
+        SOROBAN_RPC_URL: "https://user:pass@soroban-testnet.example.com",
+      },
+      true,
+    );
+    expect(hasBlockingDiagnostics(diagnostics)).toBe(true);
+  });
+});
