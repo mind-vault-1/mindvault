@@ -70,6 +70,34 @@ function isHttpUrl(value: string): boolean {
 }
 
 /**
+ * True when the URL string parses but has an unsupported scheme (not http/https).
+ * Distinguishes "wrong scheme" from "completely unparseable", so the diagnostic
+ * message can be more specific.
+ */
+function hasUnsupportedScheme(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol !== "http:" && url.protocol !== "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when the URL contains embedded userinfo (user:pass@ or user@).
+ * Returns false for unparseable strings — those are caught by the scheme/format
+ * checks above.
+ */
+function hasEmbeddedCredentials(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.username !== "" || url.password !== "";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Inspect the given environment and return every configuration problem found.
  * An empty array means the configuration is internally consistent. Errors are
  * blocking (the server should exit); warnings are advisory (safe to continue).
@@ -121,9 +149,14 @@ export function collectStartupDiagnostics(
     stellarNetwork,
     x402Network: normalizeX402Network(env.NETWORK ?? preset.x402Network),
     // Let the URL validation below report malformed overrides directly instead
-    // of also producing a misleading network-mismatch diagnostic.
-    sorobanRpcUrl: isHttpUrl(sorobanRpcUrl) ? sorobanRpcUrl : preset.sorobanRpcUrl,
-    horizonUrl: isHttpUrl(horizonUrl) ? horizonUrl : preset.horizonUrl,
+    // of also producing a misleading network-mismatch diagnostic. Skip URLs
+    // with unsupported schemes or embedded credentials — both are caught below.
+    sorobanRpcUrl:
+      isHttpUrl(sorobanRpcUrl) && !hasEmbeddedCredentials(sorobanRpcUrl)
+        ? sorobanRpcUrl
+        : preset.sorobanRpcUrl,
+    horizonUrl:
+      isHttpUrl(horizonUrl) && !hasEmbeddedCredentials(horizonUrl) ? horizonUrl : preset.horizonUrl,
     usdcSacContractId: env.USDC_CONTRACT_ID ?? preset.usdcSacContractId,
     registryContractId:
       env.VAULT_REGISTRY_CONTRACT_ID ?? preset.defaultRegistryContractId ?? undefined,
@@ -157,7 +190,13 @@ export function collectStartupDiagnostics(
     });
   }
 
-  // URL-shaped variables must be absolute http(s) URLs when set.
+  // URL-shaped variables must be absolute http(s) URLs when set, with no
+  // embedded credentials (user:pass@host). Three distinct failure modes:
+  //   1. Completely unparseable — "not a valid URL"
+  //   2. Parseable but wrong scheme (ws://, ftp://, etc.) — "unsupported scheme"
+  //   3. Parseable http(s) but with userinfo — "embedded credentials"
+  // Credentials are stripped from every message before it is emitted so that a
+  // diagnostic report is always safe to share.
   for (const variable of [
     "MINDVAULT_URL",
     "SPONSORED_ACCOUNT_URL",
@@ -165,12 +204,40 @@ export function collectStartupDiagnostics(
     "SOROBAN_RPC_URL",
   ] as const) {
     const value = env[variable];
-    if (typeof value === "string" && value.trim() && !isHttpUrl(value)) {
+    if (typeof value !== "string" || !value.trim()) continue;
+
+    if (!isHttpUrl(value)) {
+      if (hasUnsupportedScheme(value)) {
+        // Parseable URL but not http/https — name the actual scheme so the
+        // operator knows what to change.
+        let scheme = "unknown";
+        try {
+          scheme = new URL(value).protocol.replace(/:$/, "");
+        } catch {
+          // ignore
+        }
+        diagnostics.push({
+          variable,
+          severity: "error",
+          message: `Unsupported URL scheme "${scheme}://": only http and https are accepted.`,
+          expected: "an absolute http(s) URL (e.g. https://mindvault.example.com)",
+        });
+      } else {
+        diagnostics.push({
+          variable,
+          severity: "error",
+          message: `Not a valid URL: ${JSON.stringify(redactSecrets(value))}.`,
+          expected: "an absolute http(s) URL (e.g. https://mindvault.example.com)",
+        });
+      }
+    } else if (hasEmbeddedCredentials(value)) {
+      // Valid http(s) URL but with embedded user:pass — flag without echoing
+      // the credentials. The redacted form shows the host but drops the creds.
       diagnostics.push({
         variable,
         severity: "error",
-        message: `Not a valid URL: ${JSON.stringify(redactSecrets(value))}.`,
-        expected: "an absolute http(s) URL (e.g. https://mindvault.example.com)",
+        message: `URL must not contain embedded credentials (user:pass@host). Use environment variables or a secrets manager instead. Configured URL: ${redactSecrets(value)}`,
+        expected: "an http(s) URL without embedded credentials (e.g. https://rpc.example.com)",
       });
     }
   }
