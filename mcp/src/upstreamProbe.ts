@@ -132,7 +132,8 @@ function requestFor(id: UpstreamId, base: string, userAgent: string) {
 function passphraseFrom(id: UpstreamId, body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
   const b = body as Record<string, any>;
-  if (id === "horizon") return typeof b.network_passphrase === "string" ? b.network_passphrase : null;
+  if (id === "horizon")
+    return typeof b.network_passphrase === "string" ? b.network_passphrase : null;
   if (id === "soroban_rpc") {
     const r = b.result;
     if (r && typeof r === "object") {
@@ -155,7 +156,12 @@ function transportMessage(err: unknown, timeoutMs: number): string {
 async function probeOne(
   id: UpstreamId,
   base: string,
-  input: Required<Pick<UpstreamProbeInput, "fetch" | "now" | "timeoutMs" | "userAgent" | "expectedNetworkPassphrase">>,
+  input: Required<
+    Pick<
+      UpstreamProbeInput,
+      "fetch" | "now" | "timeoutMs" | "userAgent" | "expectedNetworkPassphrase"
+    >
+  >,
 ): Promise<UpstreamProbeResult> {
   const { url, init } = requestFor(id, base, input.userAgent);
   const result: UpstreamProbeResult = {
@@ -215,7 +221,8 @@ function verdictOf(results: UpstreamProbeResult[]): UpstreamVerdict {
   // The API, Horizon and Soroban RPC are required; without them the server
   // cannot browse, pay or read the registry.
   const required = probed.filter((r) => r.id !== "sponsored_account");
-  if (required.some((r) => r.status === "down" || r.status === "not_configured")) return "unhealthy";
+  if (required.some((r) => r.status === "down" || r.status === "not_configured"))
+    return "unhealthy";
   if (probed.some((r) => r.status !== "ok" && r.status !== "not_configured")) return "degraded";
   return "healthy";
 }
@@ -304,7 +311,11 @@ export function formatUpstreamProbe(report: UpstreamProbeReport): string {
       u.status,
       u.httpStatus !== null ? `HTTP ${u.httpStatus}` : null,
       u.latencyMs !== null ? `${u.latencyMs}ms` : null,
-      u.networkMatch === null ? null : u.networkMatch ? "network ok" : `network: ${u.networkPassphrase}`,
+      u.networkMatch === null
+        ? null
+        : u.networkMatch
+          ? "network ok"
+          : `network: ${u.networkPassphrase}`,
     ].filter(Boolean);
     lines.push(`${icon[u.status]} ${u.name}${u.url ? ` (${u.url})` : ""}: ${bits.join(", ")}`);
     if (u.error) lines.push(`    ${u.error}`);

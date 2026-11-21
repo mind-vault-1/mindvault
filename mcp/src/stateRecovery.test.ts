@@ -43,7 +43,18 @@ describe("jsonErrorPosition", () => {
   });
 
   it("agrees with JSON.parse on what is valid", () => {
-    const samples = ['{"a":1}', "[1,]", '{"a":1,}', "01", '"\\x"', "1 2", "[1e]", '{"a" 1}', "true", "nul"];
+    const samples = [
+      '{"a":1}',
+      "[1,]",
+      '{"a":1,}',
+      "01",
+      '"\\x"',
+      "1 2",
+      "[1e]",
+      '{"a" 1}',
+      "true",
+      "nul",
+    ];
     for (const raw of samples) {
       let parses = true;
       try {
@@ -66,7 +77,9 @@ describe("safeJsonErrorDetail", () => {
   });
 
   it("recognises a truncated file", () => {
-    expect(safeJsonErrorDetail(parseError(""))).toBe("JSON ends unexpectedly (the file looks truncated).");
+    expect(safeJsonErrorDetail(parseError(""))).toBe(
+      "JSON ends unexpectedly (the file looks truncated).",
+    );
     expect(safeJsonErrorDetail(parseError('{"profiles": {'))).toBe(
       "JSON is incomplete or malformed (a value, comma, colon or brace is missing).",
     );
@@ -89,7 +102,12 @@ describe("listRecoveryArtifacts", () => {
       ops(
         {
           [BACKUP_DIR]: ["state-2026-01-01.backup", "state-2026-02-01.backup", "notes.txt"],
-          "/home/u/.mindvault": ["state.json.corrupt-100", "state.json.corrupt-200", "state.json", "other.corrupt-1"],
+          "/home/u/.mindvault": [
+            "state.json.corrupt-100",
+            "state.json.corrupt-200",
+            "state.json",
+            "other.corrupt-1",
+          ],
         },
         {
           [`${BACKUP_DIR}/state-2026-01-01.backup`]: 1,
@@ -101,12 +119,18 @@ describe("listRecoveryArtifacts", () => {
     );
     expect(result).toEqual({
       backups: [`${BACKUP_DIR}/state-2026-02-01.backup`, `${BACKUP_DIR}/state-2026-01-01.backup`],
-      quarantinedFiles: ["/home/u/.mindvault/state.json.corrupt-200", "/home/u/.mindvault/state.json.corrupt-100"],
+      quarantinedFiles: [
+        "/home/u/.mindvault/state.json.corrupt-200",
+        "/home/u/.mindvault/state.json.corrupt-100",
+      ],
     });
   });
 
   it("treats missing directories as empty", () => {
-    expect(listRecoveryArtifacts(STATE_FILE, BACKUP_DIR, ops({}))).toEqual({ backups: [], quarantinedFiles: [] });
+    expect(listRecoveryArtifacts(STATE_FILE, BACKUP_DIR, ops({}))).toEqual({
+      backups: [],
+      quarantinedFiles: [],
+    });
   });
 });
 
@@ -133,24 +157,41 @@ describe("buildStateDiagnostics", () => {
     expect(d.detectedAt).toBe("2026-11-21T10:00:00.000Z");
     expect(d.nextSteps[0]).toContain(`${STATE_FILE}.corrupt-1`);
     expect(d.nextSteps[1]).toContain("line 7, column 3");
-    expect(d.nextSteps[2]).toContain(`mindvault_restore_state with blob = the contents of ${BACKUP_DIR}/state-x.backup`);
+    expect(d.nextSteps[2]).toContain(
+      `mindvault_restore_state with blob = the contents of ${BACKUP_DIR}/state-x.backup`,
+    );
     expect(d.nextSteps[3]).toContain("mindvault_backup_state");
   });
 
   it("blocks writes and says how to move the file aside when quarantine failed", () => {
-    const d = buildStateDiagnostics({ status: "unrecovered", stateFile: STATE_FILE, reason: "unreadable" });
+    const d = buildStateDiagnostics({
+      status: "unrecovered",
+      stateFile: STATE_FILE,
+      reason: "unreadable",
+    });
     expect(d.writesBlocked).toBe(true);
     expect(d.nextSteps[0]).toMatch(/Writes .* are blocked/);
     expect(d.nextSteps[1]).toContain(`mv "${STATE_FILE}"`);
   });
 
   it("points to wallet re-import when no backup exists", () => {
-    const steps = recoverySteps({ status: "recovered", stateFile: STATE_FILE, quarantinePath: "q", backups: [] });
+    const steps = recoverySteps({
+      status: "recovered",
+      stateFile: STATE_FILE,
+      quarantinePath: "q",
+      backups: [],
+    });
     expect(steps.join("\n")).toContain("mindvault_import_wallet");
   });
 
   it("is deterministic", () => {
-    const input = { status: "recovered" as const, stateFile: STATE_FILE, reason: "no_profiles" as const, quarantinePath: "q", detectedAt };
+    const input = {
+      status: "recovered" as const,
+      stateFile: STATE_FILE,
+      reason: "no_profiles" as const,
+      quarantinePath: "q",
+      detectedAt,
+    };
     expect(buildStateDiagnostics(input)).toEqual(buildStateDiagnostics(input));
   });
 });
@@ -173,12 +214,16 @@ describe("formatStateDiagnostics", () => {
   });
 
   it("flags an unrecovered file prominently", () => {
-    const text = formatStateDiagnostics(buildStateDiagnostics({ status: "unrecovered", stateFile: STATE_FILE, reason: "unreadable" }));
+    const text = formatStateDiagnostics(
+      buildStateDiagnostics({ status: "unrecovered", stateFile: STATE_FILE, reason: "unreadable" }),
+    );
     expect(text).toContain("Status: UNRECOVERED");
     expect(text).toContain("Writes are blocked");
   });
 
   it("says nothing needs doing for a missing or healthy file", () => {
-    expect(formatStateDiagnostics(buildStateDiagnostics({ status: "missing", stateFile: STATE_FILE }))).not.toContain("Next steps");
+    expect(
+      formatStateDiagnostics(buildStateDiagnostics({ status: "missing", stateFile: STATE_FILE })),
+    ).not.toContain("Next steps");
   });
 });

@@ -22,7 +22,10 @@ const { startIntegrationHarness } = await import("./integrationHarness.js");
 const TESTNET = "Test SDF Network ; September 2015";
 
 function jsonResponse(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 describe("operator diagnostics tools", () => {
@@ -58,22 +61,34 @@ describe("operator diagnostics tools", () => {
     it("probes every upstream once and returns schema-valid structured output", async () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
         const url = String(input);
-        if (init?.method === "POST") return jsonResponse({ jsonrpc: "2.0", id: 1, result: { passphrase: TESTNET } });
+        if (init?.method === "POST")
+          return jsonResponse({ jsonrpc: "2.0", id: 1, result: { passphrase: TESTNET } });
         if (url.includes("horizon")) return jsonResponse({ network_passphrase: TESTNET });
         return jsonResponse([]);
       });
       const result = await harness.callTool("mindvault_upstream_health", {});
       expect(result.isError).toBeUndefined();
       const s = result.structuredContent as any;
-      expect(s.upstreams.map((u: any) => u.id)).toEqual(["api", "horizon", "soroban_rpc", "sponsored_account"]);
-      expect(s.upstreams.find((u: any) => u.id === "horizon")).toMatchObject({ status: "ok", networkMatch: true });
+      expect(s.upstreams.map((u: any) => u.id)).toEqual([
+        "api",
+        "horizon",
+        "soroban_rpc",
+        "sponsored_account",
+      ]);
+      expect(s.upstreams.find((u: any) => u.id === "horizon")).toMatchObject({
+        status: "ok",
+        networkMatch: true,
+      });
       expect(s.verdict).toBe("healthy");
       expect(fetchSpy).toHaveBeenCalledTimes(4);
     });
 
     it("reports a down upstream instead of failing the call", async () => {
       vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("fetch failed"));
-      const result = await harness.callTool("mindvault_upstream_health", { upstreams: ["api"], timeoutMs: 500 });
+      const result = await harness.callTool("mindvault_upstream_health", {
+        upstreams: ["api"],
+        timeoutMs: 500,
+      });
       expect(result.isError).toBeUndefined();
       const s = result.structuredContent as any;
       expect(s.verdict).toBe("unhealthy");
@@ -83,7 +98,9 @@ describe("operator diagnostics tools", () => {
 
     it("rejects an unknown upstream before any request is made", async () => {
       const fetchSpy = vi.spyOn(globalThis, "fetch");
-      const result = await harness.callTool("mindvault_upstream_health", { upstreams: ["database"] });
+      const result = await harness.callTool("mindvault_upstream_health", {
+        upstreams: ["database"],
+      });
       expect(result.isError).toBe(true);
       expect(fetchSpy).not.toHaveBeenCalled();
     });

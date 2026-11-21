@@ -66,7 +66,10 @@ function lookupFrom(records: Record<string, OnchainRecord | "missing" | Error>):
 }
 
 const snapshotsOf = (...resources: unknown[][]) => ({
-  catalog: resources.map((list, i) => ({ key: `k${i}`, snapshot: { resources: list, savedAtMs: T0 + i } })),
+  catalog: resources.map((list, i) => ({
+    key: `k${i}`,
+    snapshot: { resources: list, savedAtMs: T0 + i },
+  })),
   previews: [],
 });
 
@@ -92,10 +95,18 @@ describe("collectCachedRecords", () => {
   it("lets the newest snapshot win and ignores entries without an id", () => {
     const records = collectCachedRecords({
       catalog: [
-        { key: "a", snapshot: { resources: [apiResource("x", { price: "1" }), { title: "no id" }], savedAtMs: 1 } },
+        {
+          key: "a",
+          snapshot: {
+            resources: [apiResource("x", { price: "1" }), { title: "no id" }],
+            savedAtMs: 1,
+          },
+        },
         { key: "b", snapshot: { resources: [apiResource("x", { price: "2" })], savedAtMs: 3 } },
       ],
-      previews: [{ resourceId: "x", snapshot: { meta: apiResource("x", { price: "9" }), savedAtMs: 2 } }],
+      previews: [
+        { resourceId: "x", snapshot: { meta: apiResource("x", { price: "9" }), savedAtMs: 2 } },
+      ],
     });
     expect([...records.keys()]).toEqual(["x"]);
     expect(records.get("x")).toMatchObject({ savedAtMs: 3, record: { price: "2.0000000" } });
@@ -110,7 +121,11 @@ describe("compareCacheWithChain", () => {
       lookup: lookupFrom({ a: chainRecord("a") }),
     });
     expect(report.verdict).toBe("in_sync");
-    expect(report.results[0]).toMatchObject({ resourceId: "a", status: "in_sync", cachedAt: new Date(T0).toISOString() });
+    expect(report.results[0]).toMatchObject({
+      resourceId: "a",
+      status: "in_sync",
+      cachedAt: new Date(T0).toISOString(),
+    });
     expect(report.results[0].fields.every((f) => f.status === "match")).toBe(true);
     expect(report.nextSteps).toEqual([]);
     expect(checkOutput(CACHE_CHAIN_DIFF_OUTPUT_SCHEMA as any, report)).toEqual({ valid: true });
@@ -135,7 +150,11 @@ describe("compareCacheWithChain", () => {
     const report = await compareCacheWithChain({
       context: CONTEXT,
       snapshots: snapshotsOf([apiResource("gone"), apiResource("rpcfail")]),
-      lookup: lookupFrom({ gone: "missing", fresh: chainRecord("fresh"), rpcfail: new Error("RPC timeout") }),
+      lookup: lookupFrom({
+        gone: "missing",
+        fresh: chainRecord("fresh"),
+        rpcfail: new Error("RPC timeout"),
+      }),
       resourceIds: ["rpcfail", "gone", "fresh", "nowhere", "gone"],
     });
     expect(report.requested).toEqual(["fresh", "gone", "nowhere", "rpcfail"]);
@@ -146,23 +165,38 @@ describe("compareCacheWithChain", () => {
       ["rpcfail", "lookup_failed"],
     ]);
     expect(report.results[3].error).toBe("RPC timeout");
-    expect(report.counts).toMatchObject({ missing_in_cache: 1, missing_onchain: 1, not_found: 1, lookup_failed: 1 });
+    expect(report.counts).toMatchObject({
+      missing_in_cache: 1,
+      missing_onchain: 1,
+      not_found: 1,
+      lookup_failed: 1,
+    });
     expect(report.verdict).toBe("drift");
-    expect(report.nextSteps.join("\n")).toMatch(/mindvault_registry_lookup[\s\S]*mindvault_rpc_health/);
+    expect(report.nextSteps.join("\n")).toMatch(
+      /mindvault_registry_lookup[\s\S]*mindvault_rpc_health/,
+    );
   });
 
   it("is incomplete, not in sync, when only lookups fail", async () => {
     const lookup: OnchainLookup = async () => {
       throw new Error("socket hang up");
     };
-    const report = await compareCacheWithChain({ context: CONTEXT, snapshots: snapshotsOf([apiResource("a")]), lookup });
+    const report = await compareCacheWithChain({
+      context: CONTEXT,
+      snapshots: snapshotsOf([apiResource("a")]),
+      lookup,
+    });
     expect(report.verdict).toBe("incomplete");
     expect(report.results[0]).toMatchObject({ status: "lookup_failed", error: "socket hang up" });
   });
 
   it("returns no_cache without any on-chain reads when nothing is cached", async () => {
     const lookup = lookupFrom({});
-    const report = await compareCacheWithChain({ context: CONTEXT, snapshots: { catalog: [], previews: [] }, lookup });
+    const report = await compareCacheWithChain({
+      context: CONTEXT,
+      snapshots: { catalog: [], previews: [] },
+      lookup,
+    });
     expect(report.verdict).toBe("no_cache");
     expect(lookup).not.toHaveBeenCalled();
     expect(report.nextSteps[0]).toContain("mindvault_prewarm_catalog");
@@ -194,7 +228,12 @@ describe("compareCacheWithChain", () => {
   it("rejects more ids than one call may compare", async () => {
     const ids = Array.from({ length: CACHE_CHAIN_DIFF_MAX_RESOURCES + 1 }, (_, i) => `r${i}`);
     await expect(
-      compareCacheWithChain({ context: CONTEXT, snapshots: snapshotsOf([]), lookup: lookupFrom({}), resourceIds: ids }),
+      compareCacheWithChain({
+        context: CONTEXT,
+        snapshots: snapshotsOf([]),
+        lookup: lookupFrom({}),
+        resourceIds: ids,
+      }),
     ).rejects.toThrow(/at most 50/);
   });
 

@@ -202,7 +202,10 @@ export function offsetToPosition(raw: string, offset: number): { line: number; c
  * null when no error is found. `err` is accepted for call-site symmetry with
  * the parser; the position is always computed from `raw` itself.
  */
-export function jsonErrorPosition(raw: string, _err?: unknown): { line: number; column: number } | null {
+export function jsonErrorPosition(
+  raw: string,
+  _err?: unknown,
+): { line: number; column: number } | null {
   const offset = findJsonErrorOffset(raw);
   return offset === null ? null : offsetToPosition(raw, offset);
 }
@@ -272,7 +275,10 @@ export function listRecoveryArtifacts(
   const quarantinedFiles = safeList(dirname(stateFile), ops)
     .filter((name) => name.startsWith(prefix))
     .map((name) => join(dirname(stateFile), name));
-  return { backups: newestFirst(backups, ops), quarantinedFiles: newestFirst(quarantinedFiles, ops) };
+  return {
+    backups: newestFirst(backups, ops),
+    quarantinedFiles: newestFirst(quarantinedFiles, ops),
+  };
 }
 
 export interface StateDiagnosticsInput {
@@ -340,7 +346,9 @@ export function formatStateDiagnostics(d: StateLoadDiagnostics): string {
       lines.push("Status: ok — the state file loaded normally.");
       break;
     case "missing":
-      lines.push("Status: missing — no state file yet (fresh install). Run mindvault_setup_wallet to create one.");
+      lines.push(
+        "Status: missing — no state file yet (fresh install). Run mindvault_setup_wallet to create one.",
+      );
       break;
     case "recovered":
       lines.push(

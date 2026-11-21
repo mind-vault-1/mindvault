@@ -5,7 +5,15 @@
  * imports index.ts fresh so its startup loadState() runs against that file.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { join } from "path";
 
 const paths = await vi.hoisted(async () => {
@@ -15,8 +23,14 @@ const paths = await vi.hoisted(async () => {
   return { home: mkdtempSync(joinPath(tmpdir(), "mv-state-diag-")) };
 });
 
-vi.mock("os", async (importOriginal) => ({ ...((await importOriginal()) as object), homedir: () => paths.home }));
-vi.mock("node:os", async (importOriginal) => ({ ...((await importOriginal()) as object), homedir: () => paths.home }));
+vi.mock("os", async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  homedir: () => paths.home,
+}));
+vi.mock("node:os", async (importOriginal) => ({
+  ...((await importOriginal()) as object),
+  homedir: () => paths.home,
+}));
 
 vi.mock("@modelcontextprotocol/sdk/server/index.js", () => ({
   Server: class MockServer {
@@ -69,16 +83,27 @@ describe("corrupt state file at startup (#1207)", () => {
 
   it("reports a missing state file as a fresh install", async () => {
     const mod = await bootWith(null);
-    expect(mod._stateDiagnostics()).toMatchObject({ status: "missing", writesBlocked: false, nextSteps: [] });
+    expect(mod._stateDiagnostics()).toMatchObject({
+      status: "missing",
+      writesBlocked: false,
+      nextSteps: [],
+    });
   });
 
   it("reports a valid state file as ok", async () => {
-    const mod = await bootWith(JSON.stringify({ version: 2, activeProfile: "default", profiles: { default: { network: "testnet" } } }));
+    const mod = await bootWith(
+      JSON.stringify({
+        version: 2,
+        activeProfile: "default",
+        profiles: { default: { network: "testnet" } },
+      }),
+    );
     expect(mod._stateDiagnostics().status).toBe("ok");
   });
 
   it("quarantines invalid JSON, keeps the original bytes, and explains how to recover", async () => {
-    const original = '{\n  "version": 2,\n  "profiles": {\n    "default": { "wallet": SECRETSEED }\n  }\n}';
+    const original =
+      '{\n  "version": 2,\n  "profiles": {\n    "default": { "wallet": SECRETSEED }\n  }\n}';
     const mod = await bootWith(original);
 
     const d = mod._stateDiagnostics();

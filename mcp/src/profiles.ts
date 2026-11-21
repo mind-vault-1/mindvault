@@ -221,7 +221,8 @@ export function validateProfileImportNetworks(state: ProfileState, input: unknow
   raw.profiles.forEach((value, index) => {
     if (!value || typeof value !== "object") return;
     const item = value as Record<string, unknown>;
-    if (!isValidProfileName(item.name) || item.network === undefined || item.network === null) return;
+    if (!isValidProfileName(item.name) || item.network === undefined || item.network === null)
+      return;
     const label = `profiles[${index}] ("${item.name}")`;
     if (item.network !== "testnet" && item.network !== "mainnet") {
       problems.push(`${label}: network must be "testnet" or "mainnet".`);

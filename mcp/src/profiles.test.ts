@@ -281,38 +281,61 @@ describe("profile import network identities (#1208)", () => {
   it("refuses to rebind a wallet-bearing profile to another network, and merges nothing", () => {
     const state = local("testnet");
     expect(() =>
-      importProfileState(state, payload([
-        { name: "alpha", network: "mainnet", preferences: {} },
-        { name: "beta", network: "testnet", preferences: {} },
-      ])),
+      importProfileState(
+        state,
+        payload([
+          { name: "alpha", network: "mainnet", preferences: {} },
+          { name: "beta", network: "testnet", preferences: {} },
+        ]),
+      ),
     ).toThrow(/profiles\[0\] \("alpha"\).*bound to testnet; importing mainnet would rebind it/s);
     // Nothing was merged: the input state is untouched and beta was not added.
     expect(state.profiles).toEqual({ alpha: { wallet, network: "testnet" } });
   });
 
   it("rejects unknown network values instead of silently dropping them", () => {
-    expect(validateProfileImportNetworks(local(), payload([{ name: "x", network: "futurenet" }]))).toEqual([
-      'profiles[0] ("x"): network must be "testnet" or "mainnet".',
-    ]);
+    expect(
+      validateProfileImportNetworks(local(), payload([{ name: "x", network: "futurenet" }])),
+    ).toEqual(['profiles[0] ("x"): network must be "testnet" or "mainnet".']);
   });
 
   it("allows binding a profile with no network yet, or one without a wallet", () => {
-    expect(validateProfileImportNetworks(local(), payload([{ name: "alpha", network: "mainnet" }]))).toEqual([]);
-    const noWallet = { version: STATE_VERSION, activeProfile: "a", profiles: { a: { network: "testnet" as const } } };
-    expect(validateProfileImportNetworks(noWallet, payload([{ name: "a", network: "mainnet" }]))).toEqual([]);
+    expect(
+      validateProfileImportNetworks(local(), payload([{ name: "alpha", network: "mainnet" }])),
+    ).toEqual([]);
+    const noWallet = {
+      version: STATE_VERSION,
+      activeProfile: "a",
+      profiles: { a: { network: "testnet" as const } },
+    };
+    expect(
+      validateProfileImportNetworks(noWallet, payload([{ name: "a", network: "mainnet" }])),
+    ).toEqual([]);
   });
 
   it("accepts the same network and imports normally", () => {
-    const result = importProfileState(local("testnet"), payload([{ name: "alpha", network: "testnet", preferences: { theme: "dark" } }]));
-    expect(result.state.profiles.alpha).toEqual({ wallet, network: "testnet", preferences: { theme: "dark" } });
+    const result = importProfileState(
+      local("testnet"),
+      payload([{ name: "alpha", network: "testnet", preferences: { theme: "dark" } }]),
+    );
+    expect(result.state.profiles.alpha).toEqual({
+      wallet,
+      network: "testnet",
+      preferences: { theme: "dark" },
+    });
   });
 
   it("lists every problem in payload order", () => {
-    const problems = validateProfileImportNetworks(local("testnet"), payload([
-      { name: "q", network: "devnet" },
-      { name: "alpha", network: "mainnet" },
-    ]));
-    expect(problems.map((p) => p.split(":")[0])).toEqual(['profiles[0] ("q")', 'profiles[1] ("alpha")']);
+    const problems = validateProfileImportNetworks(
+      local("testnet"),
+      payload([
+        { name: "q", network: "devnet" },
+        { name: "alpha", network: "mainnet" },
+      ]),
+    );
+    expect(problems.map((p) => p.split(":")[0])).toEqual([
+      'profiles[0] ("q")',
+      'profiles[1] ("alpha")',
+    ]);
   });
 });
-

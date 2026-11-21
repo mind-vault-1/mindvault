@@ -3,7 +3,12 @@
  * configured upstream.
  */
 import { describe, expect, it, vi } from "vitest";
-import { displayUrl, formatUpstreamProbe, probeUpstreams, type UpstreamProbeInput } from "./upstreamProbe.js";
+import {
+  displayUrl,
+  formatUpstreamProbe,
+  probeUpstreams,
+  type UpstreamProbeInput,
+} from "./upstreamProbe.js";
 import { UPSTREAM_HEALTH_OUTPUT_SCHEMA } from "./outputSchemas.js";
 import { checkOutput } from "./outputValidation.js";
 import { ToolValidationError, validateToolArgs } from "./validation.js";
@@ -29,7 +34,8 @@ function healthyHandler(overrides: Partial<Record<keyof typeof URLS, Handler>> =
       if (url.startsWith(base)) {
         if (overrides[id]) return overrides[id]!(url, init);
         if (id === "horizon") return json({ network_passphrase: TESTNET });
-        if (id === "soroban_rpc") return json({ jsonrpc: "2.0", id: 1, result: { passphrase: TESTNET } });
+        if (id === "soroban_rpc")
+          return json({ jsonrpc: "2.0", id: 1, result: { passphrase: TESTNET } });
         return json([]);
       }
     }
@@ -60,7 +66,11 @@ describe("probeUpstreams", () => {
       ["sponsored_account", "ok"],
     ]);
     const horizon = report.upstreams[1];
-    expect(horizon).toMatchObject({ httpStatus: 200, networkPassphrase: TESTNET, networkMatch: true });
+    expect(horizon).toMatchObject({
+      httpStatus: 200,
+      networkPassphrase: TESTNET,
+      networkMatch: true,
+    });
     expect(horizon.latencyMs).toBeGreaterThanOrEqual(0);
     expect(checkOutput(UPSTREAM_HEALTH_OUTPUT_SCHEMA as any, report)).toEqual({ valid: true });
   });
@@ -68,7 +78,9 @@ describe("probeUpstreams", () => {
   it("makes exactly one request per upstream, in parallel", async () => {
     const resolvers: Array<() => void> = [];
     const handler: Handler = (url, init) =>
-      new Promise<Response>((resolve) => resolvers.push(() => resolve(healthyHandler()(url, init) as Response)));
+      new Promise<Response>((resolve) =>
+        resolvers.push(() => resolve(healthyHandler()(url, init) as Response)),
+      );
     const pending = probeUpstreams(input(handler));
     await vi.waitFor(() => expect(resolvers).toHaveLength(4));
     resolvers.forEach((r) => r());
@@ -93,7 +105,11 @@ describe("probeUpstreams", () => {
       input(healthyHandler({ horizon: () => json({ network_passphrase: MAINNET }) })),
     );
     expect(report.verdict).toBe("degraded");
-    expect(report.upstreams[1]).toMatchObject({ status: "degraded", networkMatch: false, networkPassphrase: MAINNET });
+    expect(report.upstreams[1]).toMatchObject({
+      status: "degraded",
+      networkMatch: false,
+      networkPassphrase: MAINNET,
+    });
     expect(report.upstreams[1].action).toContain("HORIZON_URL");
   });
 
@@ -141,7 +157,10 @@ describe("probeUpstreams", () => {
       );
     const i = input(healthyHandler({ api: hung }), { timeoutMs: 100 });
     const report = await probeUpstreams(i);
-    expect(report.upstreams[0]).toMatchObject({ status: "down", error: "No response within 100ms." });
+    expect(report.upstreams[0]).toMatchObject({
+      status: "down",
+      error: "No response within 100ms.",
+    });
     const apiCalls = (i.fetch as any).mock.calls.filter(([u]: [string]) => u.startsWith(URLS.api));
     expect(apiCalls).toHaveLength(1);
   });
@@ -152,27 +171,40 @@ describe("probeUpstreams", () => {
       only: ["horizon", "sponsored_account"],
     });
     const report = await probeUpstreams(i);
-    expect(report.upstreams.map((u) => u.status)).toEqual(["skipped", "ok", "skipped", "not_configured"]);
+    expect(report.upstreams.map((u) => u.status)).toEqual([
+      "skipped",
+      "ok",
+      "skipped",
+      "not_configured",
+    ]);
     expect(report.upstreams[3].action).toContain("SPONSORED_ACCOUNT_URL");
     expect((i.fetch as any).mock.calls).toHaveLength(1);
     expect(report.verdict).toBe("healthy");
   });
 
   it("is unhealthy when a required upstream is not configured", async () => {
-    const report = await probeUpstreams(input(healthyHandler(), { urls: { ...URLS, horizon: null } }));
+    const report = await probeUpstreams(
+      input(healthyHandler(), { urls: { ...URLS, horizon: null } }),
+    );
     expect(report.verdict).toBe("unhealthy");
   });
 
   it("clamps timeoutMs into the supported range", async () => {
     expect((await probeUpstreams(input(healthyHandler(), { timeoutMs: 1 }))).timeoutMs).toBe(100);
-    expect((await probeUpstreams(input(healthyHandler(), { timeoutMs: 10 ** 9 }))).timeoutMs).toBe(30_000);
+    expect((await probeUpstreams(input(healthyHandler(), { timeoutMs: 10 ** 9 }))).timeoutMs).toBe(
+      30_000,
+    );
   });
 
   it("never shows credentials or query strings in URLs", async () => {
-    expect(displayUrl("https://user:pw@rpc.example/path?apikey=SECRET#x")).toBe("https://rpc.example/path");
+    expect(displayUrl("https://user:pw@rpc.example/path?apikey=SECRET#x")).toBe(
+      "https://rpc.example/path",
+    );
     expect(displayUrl("not a url")).toBe("(invalid URL)");
     const report = await probeUpstreams(
-      input(healthyHandler(), { urls: { ...URLS, soroban_rpc: "https://k:SECRET@rpc.example?key=SECRET" } }),
+      input(healthyHandler(), {
+        urls: { ...URLS, soroban_rpc: "https://k:SECRET@rpc.example?key=SECRET" },
+      }),
     );
     expect(JSON.stringify(report)).not.toContain("SECRET");
     expect(formatUpstreamProbe(report)).not.toContain("SECRET");
@@ -180,7 +212,9 @@ describe("probeUpstreams", () => {
 
   it("renders a verdict line and one line per upstream", async () => {
     const text = formatUpstreamProbe(await probeUpstreams(input(healthyHandler())));
-    expect(text.split("\n")[0]).toBe("Verdict: healthy — All probed upstreams are reachable and on the configured network.");
+    expect(text.split("\n")[0]).toBe(
+      "Verdict: healthy — All probed upstreams are reachable and on the configured network.",
+    );
     expect(text).toContain("✓ Horizon (https://horizon.example): ok, HTTP 200");
   });
 });

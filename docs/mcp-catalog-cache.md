@@ -149,8 +149,8 @@ A snapshot can drift from the vault-registry. A price can change, a listing
 can be revoked, or ownership can be transferred after the snapshot was taken.
 An agent served that snapshot while offline would act on outdated data.
 `mindvault_cache_chain_diff` reports that drift. It complements
-`mindvault_metadata_diff`, which compares the *live* API with the chain: this
-tool compares what the server would *serve from cache* with the chain, so it
+`mindvault_metadata_diff`, which compares the _live_ API with the chain: this
+tool compares what the server would _serve from cache_ with the chain, so it
 needs no API access.
 
 - **Scope.** Only snapshots for the active cache context (profile, network,

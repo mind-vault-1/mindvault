@@ -4,12 +4,12 @@
 broken right now, and is each one on the network this server is configured
 for?"
 
-| Upstream            | Env var                 | Request                          | Network identity       |
-| ------------------- | ----------------------- | -------------------------------- | ---------------------- |
-| `api`               | `MINDVAULT_URL`         | `GET /resources?limit=1`         | —                      |
-| `horizon`           | `HORIZON_URL`           | `GET /`                          | `network_passphrase`   |
-| `soroban_rpc`       | `SOROBAN_RPC_URL`       | `POST getNetwork` (JSON-RPC)     | `result.passphrase`    |
-| `sponsored_account` | `SPONSORED_ACCOUNT_URL` | `GET /` (the create path is never called) | —             |
+| Upstream            | Env var                 | Request                                   | Network identity     |
+| ------------------- | ----------------------- | ----------------------------------------- | -------------------- |
+| `api`               | `MINDVAULT_URL`         | `GET /resources?limit=1`                  | —                    |
+| `horizon`           | `HORIZON_URL`           | `GET /`                                   | `network_passphrase` |
+| `soroban_rpc`       | `SOROBAN_RPC_URL`       | `POST getNetwork` (JSON-RPC)              | `result.passphrase`  |
+| `sponsored_account` | `SPONSORED_ACCOUNT_URL` | `GET /` (the create path is never called) | —                    |
 
 ## Behaviour
 
@@ -31,6 +31,7 @@ for?"
   - `skipped`: not in the `upstreams` argument
 
   Every non-`ok` status comes with an `action` naming the env var to check.
+
 - **Verdict.** `unhealthy` when the API, Horizon or Soroban RPC is down or not
   configured, `degraded` when anything else is wrong (including a failing
   sponsored account service, which is optional), otherwise `healthy`.

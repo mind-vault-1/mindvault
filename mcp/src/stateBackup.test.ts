@@ -589,9 +589,14 @@ describe("restoreState rejects duplicate/conflicting profile identifiers (#1047)
     let restored: ProfileState | null = null;
     let error: unknown = null;
     try {
-      restoreState(buildBlobFromPayload(payload), PASS, (state) => {
-        restored = state;
-      }, expectedNetwork ? { expectedNetwork } : {});
+      restoreState(
+        buildBlobFromPayload(payload),
+        PASS,
+        (state) => {
+          restored = state;
+        },
+        expectedNetwork ? { expectedNetwork } : {},
+      );
     } catch (err) {
       error = err;
     }
@@ -602,7 +607,13 @@ describe("restoreState rejects duplicate/conflicting profile identifiers (#1047)
     // The server passes "stellar:testnet"; profiles store "testnet". Comparing the
     // raw strings rejected every network-bound backup before #1208.
     const { restored, error } = restoreOrErrors(
-      { version: 1, activeProfile: "publisher", profiles: { publisher: { wallet: { publicKey: GPUB, secretKey: SSECRET }, network: "testnet" } } },
+      {
+        version: 1,
+        activeProfile: "publisher",
+        profiles: {
+          publisher: { wallet: { publicKey: GPUB, secretKey: SSECRET }, network: "testnet" },
+        },
+      },
       "stellar:testnet",
     );
     expect(error).toBeNull();
@@ -611,7 +622,11 @@ describe("restoreState rejects duplicate/conflicting profile identifiers (#1047)
 
   it("rejects a mainnet profile on a testnet server, naming the profile, and writes nothing", () => {
     const { restored, error } = restoreOrErrors(
-      { version: 1, activeProfile: "prod", profiles: { prod: { wallet: { publicKey: GPUB, secretKey: SSECRET }, network: "mainnet" } } },
+      {
+        version: 1,
+        activeProfile: "prod",
+        profiles: { prod: { wallet: { publicKey: GPUB, secretKey: SSECRET }, network: "mainnet" } },
+      },
       "stellar:testnet",
     );
     expect(restored).toBeNull();
@@ -621,14 +636,22 @@ describe("restoreState rejects duplicate/conflicting profile identifiers (#1047)
   });
 
   it("treats stellar:pubnet and stellar:mainnet as mainnet", () => {
-    const payload = { version: 1, activeProfile: "prod", profiles: { prod: { network: "mainnet" } } };
+    const payload = {
+      version: 1,
+      activeProfile: "prod",
+      profiles: { prod: { network: "mainnet" } },
+    };
     expect(restoreOrErrors(payload, "stellar:pubnet").error).toBeNull();
     expect(restoreOrErrors(payload, "stellar:mainnet").error).toBeNull();
     expect(restoreOrErrors(payload, "mainnet").error).toBeNull();
   });
 
   it("rejects an unknown network binding instead of silently dropping it", () => {
-    const { restored, error } = restoreOrErrors({ version: 1, activeProfile: "x", profiles: { x: { network: "futurenet" } } });
+    const { restored, error } = restoreOrErrors({
+      version: 1,
+      activeProfile: "x",
+      profiles: { x: { network: "futurenet" } },
+    });
     expect(restored).toBeNull();
     expect(error?.message).toContain("profiles.x.network");
     expect(error?.message).toContain('Expected "testnet" or "mainnet"');
@@ -670,13 +693,22 @@ describe("restoreState rejects duplicate/conflicting profile identifiers (#1047)
     const second = restoreOrErrors(payload, "stellar:testnet").error?.message;
     expect(first).toBe(second);
     const fields = [...(first ?? "").matchAll(/• (profiles\.[\w.]+):/g)].map((m) => m[1]);
-    expect(fields).toEqual(["profiles.alpha.network", "profiles.alpha.wallet", "profiles.zeta.network"]);
+    expect(fields).toEqual([
+      "profiles.alpha.network",
+      "profiles.alpha.wallet",
+      "profiles.zeta.network",
+    ]);
   });
 
   it("validateBackupNetworkIdentities returns no errors for a clean backup", () => {
     expect(
       validateBackupNetworkIdentities(
-        { profiles: { a: { wallet: { publicKey: GPUB, secretKey: SSECRET }, network: "testnet" }, b: {} } },
+        {
+          profiles: {
+            a: { wallet: { publicKey: GPUB, secretKey: SSECRET }, network: "testnet" },
+            b: {},
+          },
+        },
         { expectedNetwork: "stellar:testnet" },
       ),
     ).toEqual([]);

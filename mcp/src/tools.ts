@@ -909,7 +909,8 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           type: "integer",
           minimum: 1,
           maximum: 50,
-          description: "How many cached resources to compare when resourceIds is omitted (default 20).",
+          description:
+            "How many cached resources to compare when resourceIds is omitted (default 20).",
         },
       },
       required: [],

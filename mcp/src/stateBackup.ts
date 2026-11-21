@@ -294,7 +294,9 @@ const PROFILE_NETWORKS = new Set(["testnet", "mainnet"]);
  * an x402 id (`stellar:testnet`, `stellar:pubnet`) to the deployment name that
  * profiles store. Returns undefined for anything else.
  */
-export function resolveProfileNetwork(network: string | undefined): "testnet" | "mainnet" | undefined {
+export function resolveProfileNetwork(
+  network: string | undefined,
+): "testnet" | "mainnet" | undefined {
   if (!network) return undefined;
   const trimmed = network.trim();
   if (trimmed === "testnet" || trimmed === "mainnet") return trimmed;
@@ -328,8 +330,8 @@ export function validateBackupNetworkIdentities(
   if (!rawProfiles || typeof rawProfiles !== "object" || Array.isArray(rawProfiles)) return errors;
 
   const expected = resolveProfileNetwork(options.expectedNetwork);
-  for (const [name, value] of Object.entries(rawProfiles as Record<string, unknown>).sort(([a], [b]) =>
-    a.localeCompare(b),
+  for (const [name, value] of Object.entries(rawProfiles as Record<string, unknown>).sort(
+    ([a], [b]) => a.localeCompare(b),
   )) {
     if (!value || typeof value !== "object") continue;
     const profile = value as { network?: unknown; wallet?: unknown };
@@ -352,22 +354,32 @@ export function validateBackupNetworkIdentities(
     const wallet = profile.wallet;
     if (wallet === undefined || wallet === null) continue;
     if (typeof wallet !== "object") {
-      errors.push({ field: `${field}.wallet`, message: "Wallet must be an object with publicKey and secretKey." });
+      errors.push({
+        field: `${field}.wallet`,
+        message: "Wallet must be an object with publicKey and secretKey.",
+      });
       continue;
     }
     const { publicKey, secretKey } = wallet as { publicKey?: unknown; secretKey?: unknown };
     const publicOk = typeof publicKey === "string" && StrKey.isValidEd25519PublicKey(publicKey);
     const secretOk = typeof secretKey === "string" && StrKey.isValidEd25519SecretSeed(secretKey);
     if (!publicOk) {
-      errors.push({ field: `${field}.wallet.publicKey`, message: "Not a valid Stellar account id (G...)." });
+      errors.push({
+        field: `${field}.wallet.publicKey`,
+        message: "Not a valid Stellar account id (G...).",
+      });
     }
     if (!secretOk) {
-      errors.push({ field: `${field}.wallet.secretKey`, message: "Not a valid Stellar secret seed (S...)." });
+      errors.push({
+        field: `${field}.wallet.secretKey`,
+        message: "Not a valid Stellar secret seed (S...).",
+      });
     }
     if (publicOk && secretOk && Keypair.fromSecret(secretKey as string).publicKey() !== publicKey) {
       errors.push({
         field: `${field}.wallet`,
-        message: "The secret key does not belong to the stored public key; this wallet would sign as a different account.",
+        message:
+          "The secret key does not belong to the stored public key; this wallet would sign as a different account.",
       });
     }
   }

@@ -1142,7 +1142,9 @@ export const CACHE_CHAIN_DIFF_OUTPUT_SCHEMA = {
     truncated: { type: "boolean" },
     counts: {
       type: "object",
-      properties: Object.fromEntries(CACHE_DIFF_RESOURCE_STATUSES.map((s) => [s, { type: "integer" }])),
+      properties: Object.fromEntries(
+        CACHE_DIFF_RESOURCE_STATUSES.map((s) => [s, { type: "integer" }]),
+      ),
       required: [...CACHE_DIFF_RESOURCE_STATUSES],
     },
     verdict: { type: "string", enum: ["in_sync", "drift", "incomplete", "no_cache"] },
@@ -1237,7 +1239,15 @@ export const UPSTREAM_HEALTH_OUTPUT_SCHEMA = {
     },
     summary: { type: "string" },
   },
-  required: ["profile", "expectedNetworkPassphrase", "timeoutMs", "verdict", "counts", "upstreams", "summary"],
+  required: [
+    "profile",
+    "expectedNetworkPassphrase",
+    "timeoutMs",
+    "verdict",
+    "counts",
+    "upstreams",
+    "summary",
+  ],
 } as const;
 
 export const METADATA_DIFF_OUTPUT_SCHEMA = {

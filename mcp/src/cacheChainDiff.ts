@@ -110,7 +110,11 @@ const str = (v: unknown): string | null => (typeof v === "string" && v.trim() !=
 /** Normalize one API catalog record (as cached) to the compared fields. */
 export function toCachedRecord(raw: Record<string, unknown>): CachedRecord {
   const priceText =
-    typeof raw.price === "number" ? String(raw.price) : typeof raw.price === "string" ? raw.price : null;
+    typeof raw.price === "number"
+      ? String(raw.price)
+      : typeof raw.price === "string"
+        ? raw.price
+        : null;
   const stroops = priceText === null ? null : usdcToStroops(priceText);
   return {
     // A price that is not a USDC decimal is kept verbatim so the diff shows it.
@@ -184,7 +188,11 @@ export function diffRecord(cached: CachedRecord, onchain: OnchainRecord): CacheF
   return [
     compareField("price", cached.price, onchainPrice(onchain.price)),
     compareField("metadata", cached.metadata, str(onchain.metadata)),
-    compareField("listed", cached.listed, typeof onchain.listed === "boolean" ? onchain.listed : null),
+    compareField(
+      "listed",
+      cached.listed,
+      typeof onchain.listed === "boolean" ? onchain.listed : null,
+    ),
     compareField("creator", cached.creator, str(onchain.creator)),
     compareField("tags", cached.tags, Array.isArray(onchain.tags) ? onchain.tags : []),
   ];
@@ -297,7 +305,13 @@ export async function compareCacheWithChain(
     if ("error" in looked) {
       entry = { resourceId, status: "lookup_failed", cachedAt, fields: [], error: looked.error };
     } else if (!looked.found) {
-      entry = { resourceId, status: held ? "missing_onchain" : "not_found", cachedAt, fields: [], error: null };
+      entry = {
+        resourceId,
+        status: held ? "missing_onchain" : "not_found",
+        cachedAt,
+        fields: [],
+        error: null,
+      };
     } else if (!held) {
       entry = { resourceId, status: "missing_in_cache", cachedAt, fields: [], error: null };
     } else {
@@ -345,7 +359,9 @@ export function formatCacheChainDiff(report: CacheChainDiffReport): string {
   if (report.results.length > 0) {
     lines.push("");
     for (const r of report.results) {
-      const changed = r.fields.filter((f) => f.status !== "match").map((f) => `${f.field} (${f.status})`);
+      const changed = r.fields
+        .filter((f) => f.status !== "match")
+        .map((f) => `${f.field} (${f.status})`);
       const detail = changed.length ? `: ${changed.join(", ")}` : r.error ? `: ${r.error}` : "";
       lines.push(`- ${r.resourceId}: ${r.status}${detail}`);
     }
