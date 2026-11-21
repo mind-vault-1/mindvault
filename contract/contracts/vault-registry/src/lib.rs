@@ -5839,6 +5839,8 @@ impl VaultRegistry {
     /// Requires the settler role. Errors `NotFound` if no lease exists for
     /// the pair and `InvalidLeaseTransition` if it is not `Pending`. Emits
     /// `leasesetl`.
+    /// Also requires the resource to remain `Listed` at settlement time;
+    /// otherwise returns `ResourceNotMutable` without changing the lease.
     pub fn settle_lease(
         env: Env,
         settler: Address,
@@ -5860,6 +5862,12 @@ impl VaultRegistry {
             .ok_or(Error::NotFound)?;
         if lease.state != LeaseState::Pending {
             return Err(Error::InvalidPaymentTransition);
+        }
+        // A resource can be retired after the pending lease was purchased.
+        // Never activate it unless the resource is still available for sale.
+        let resource = Self::load(&env, &resource_id)?;
+        if resource.state != ResourceState::Listed {
+            return Err(Error::ResourceNotMutable);
         }
         lease.state = LeaseState::Active;
         env.storage().persistent().set(&key, &lease);
