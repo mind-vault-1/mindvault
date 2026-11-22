@@ -10,7 +10,7 @@
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IntegrationHarness } from "./integrationHarness.js";
 
 // Isolate state persistence from the developer machine and pin the network
@@ -20,20 +20,17 @@ const harnessHome = mkdtempSync(join(tmpdir(), "mindvault-mcp-batch-"));
 process.env.HOME = harnessHome;
 process.env.USERPROFILE = harnessHome;
 
-const { server } = await import("./index.js");
-const { _clearCatalogCache, recordPreviewSnapshot } = await import("./catalogCache.js");
+const { preview, server } = await import("./index.js");
+const { _clearCatalogCache } = await import("./catalogCache.js");
 const { startIntegrationHarness } = await import("./integrationHarness.js");
 
 function mockResponse(data: unknown, ok = true, status = 200): Response {
   const body = JSON.stringify(data);
-  return {
-    ok,
+  return new Response(body, {
     status,
     statusText: ok ? "OK" : "Error",
-    text: () => Promise.resolve(body),
-    json: () => Promise.resolve(data),
-    headers: new Headers({ "content-type": "application/json" }),
-  } as Response;
+    headers: { "content-type": "application/json" },
+  });
 }
 
 interface BatchItem {
@@ -118,6 +115,12 @@ describe("mindvault_batch_catalog_lookup", () => {
     expect(tool.outputSchema).toBeDefined();
   });
 
+  async function primePreview(id: string, meta: unknown) {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    fetch.mockImplementationOnce(async () => mockResponse(meta));
+    await preview(id);
+  }
+
   describe("happy path", () => {
     beforeEach(() => {
       vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
@@ -171,6 +174,8 @@ describe("mindvault_batch_catalog_lookup", () => {
         const url = String(input);
         const id = url.split("/resources/")[1]?.split("/")[0];
         if (id === "res-001") return Promise.resolve(mockResponse({ ...CATALOG_ITEM, id }));
+        if (id === "stale-id")
+          return Promise.resolve(mockResponse({ error: "unavailable" }, false, 503));
         return Promise.resolve(mockResponse({ error: "not found" }, false, 404));
       });
     });
@@ -189,7 +194,7 @@ describe("mindvault_batch_catalog_lookup", () => {
     });
 
     it("serves an id's last snapshot when its read fails while the API is up", async () => {
-      recordPreviewSnapshot("stale-id", { ...CATALOG_ITEM, id: "stale-id", title: "Cached One" });
+      await primePreview("stale-id", { ...CATALOG_ITEM, id: "stale-id", title: "Cached One" });
       const out = await callBatchStructured(harness, ["res-001", "stale-id"]);
       expect(out.foundCount).toBe(2);
       const cached = out.items.find((i) => i.id === "stale-id");
@@ -241,7 +246,7 @@ describe("mindvault_batch_catalog_lookup", () => {
     });
 
     it("serves labelled cached snapshots when the API is unreachable", async () => {
-      recordPreviewSnapshot("cached-1", cachedItem);
+      await primePreview("cached-1", cachedItem);
       const out = await callBatchStructured(harness, ["cached-1"]);
       expect(out.foundCount).toBe(1);
       expect(out.items[0].title).toBe("Cached Resource");
@@ -249,7 +254,7 @@ describe("mindvault_batch_catalog_lookup", () => {
     });
 
     it("mixes misses with cached hits instead of failing the batch", async () => {
-      recordPreviewSnapshot("cached-1", cachedItem);
+      await primePreview("cached-1", cachedItem);
       const out = await callBatchStructured(harness, ["cached-1", "never-cached-id"]);
       expect(out.foundCount).toBe(1);
       expect(out.missing).toEqual(["never-cached-id"]);
@@ -265,7 +270,7 @@ describe("mindvault_batch_catalog_lookup", () => {
     });
 
     it("refetch: true refuses to serve cache when the API is down", async () => {
-      recordPreviewSnapshot("cached-1", cachedItem);
+      await primePreview("cached-1", cachedItem);
       const result = await harness.callTool("mindvault_batch_catalog_lookup", {
         resourceIds: ["cached-1"],
         refetch: true,

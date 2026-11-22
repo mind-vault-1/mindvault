@@ -4,7 +4,8 @@
 # so `make build` and `make preflight` work from this directory.
 WORKSPACE_DIR := $(realpath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 WASM_FILE := $(WORKSPACE_DIR)/target/wasm32v1-none/release/vault_registry.wasm
-WASM_MAX_SIZE := 159744
+# 172 KiB leaves room for the restored maintenance, memo, and flag-deadline APIs.
+WASM_MAX_SIZE := 176128
 
 default: build
 
@@ -37,22 +38,25 @@ clean:
 footprint:
 	cargo test storage_footprint_report -- --nocapture
 
+check-wasm-size:
+	@set -e; SIZE=$$(stat -c%s "$(WASM_FILE)" 2>/dev/null || stat -f%z "$(WASM_FILE)"); \
+	MAX=$(WASM_MAX_SIZE); \
+	echo "    WASM size: $$SIZE bytes (budget: $$MAX bytes)"; \
+	if [ "$$SIZE" -gt "$$MAX" ]; then \
+	  echo "    ERROR: WASM over budget by $$(( $$SIZE - $$MAX )) bytes."; \
+	  echo "    Optimize the contract or explicitly review the WASM_MAX_SIZE budget."; \
+	  exit 1; \
+	fi; \
+	echo "    OK: within budget."
+
 preflight:
 	@echo "==> [1/3] Running tests..."
 	cargo test
 	@echo "==> [2/3] Building optimized WASM..."
 	stellar contract build --manifest-path $(WORKSPACE_DIR)/Cargo.toml --optimize
-	@SIZE=$$(stat -c%s "$(WASM_FILE)" 2>/dev/null || stat -f%z "$(WASM_FILE)"); \
-	MAX=$(WASM_MAX_SIZE); \
-	echo "    WASM size: $$SIZE bytes (budget: $$MAX bytes)"; \
-	if [ "$$SIZE" -gt "$$MAX" ]; then \
-	  echo "    ERROR: WASM over budget by $$(( $$SIZE - $$MAX )) bytes."; \
-	  echo "    Optimize the contract or raise MAX_SIZE in .github/workflows/contract-ci.yml."; \
-	  exit 1; \
-	fi; \
-	echo "    OK: within budget."
+	$(MAKE) check-wasm-size
 	@echo "==> [3/3] Checking no_std compatibility..."
 	cargo build --release --target wasm32-unknown-unknown --no-default-features
 	@echo "==> preflight passed."
 
-.PHONY: default all test build fmt clean footprint preflight
+.PHONY: default all test build fmt clean footprint check-wasm-size preflight
