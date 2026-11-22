@@ -51,10 +51,7 @@ export const ONCHAIN_MUTATION_TOOLS: ReadonlySet<string> = new Set([
  * Dry runs and read operations (like mindvault_terms with operation="get")
  * are not mutations and are not blocked by the schema guard.
  */
-export function isOnChainMutation(
-  name: string,
-  rawArgs?: Record<string, unknown>,
-): boolean {
+export function isOnChainMutation(name: string, rawArgs?: Record<string, unknown>): boolean {
   if (!ONCHAIN_MUTATION_TOOLS.has(name)) return false;
   if (name === "mindvault_publish" && rawArgs?.dryRun === true) return false;
   if (name === "mindvault_buy_lease" && rawArgs?.dryRun === true) return false;

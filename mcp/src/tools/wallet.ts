@@ -11,7 +11,9 @@ import {
   sorobanRpcFetch,
   SPONSORED_ACCOUNT_URL,
   STATE_FILE,
+  STELLAR_NETWORK,
 } from "../runtime.js";
+import { publishOperationId, publishStatusTarget } from "../publishOperation.js";
 import { getBalanceDetails } from "./registry.js";
 import { mapRegistryError, mappedErrorOf, mcpError, throwHttpError } from "../errorMapping.js";
 import {
@@ -217,18 +219,15 @@ function sleepMs(ms: number): Promise<void> {
 export async function publishStatus(
   args: {
     resourceId?: string;
+    operationId?: unknown;
     wait?: unknown;
     timeoutMs?: unknown;
     intervalMs?: unknown;
   },
   onProgress?: PublishProgressReporter,
 ): Promise<string> {
-  const resourceId = (args.resourceId ?? "").trim();
-  if (!resourceId) {
-    throw new Error(
-      "resourceId is required. Pass the id returned by mindvault_publish (e.g. 'cm7x8y9z').",
-    );
-  }
+  const scope = { network: STELLAR_NETWORK, apiOrigin: new URL(BASE_URL).origin };
+  const resourceId = publishStatusTarget(args, scope);
 
   const wait = normalizeWaitFlag(args.wait);
   const timeoutMs = normalizeTimeoutMs(args.timeoutMs);
@@ -248,6 +247,7 @@ export async function publishStatus(
     polled: wait,
     attempts,
     timedOut,
+    operationId: publishOperationId(resourceId, scope),
   });
   return JSON.stringify(snapshot, null, 2);
 }

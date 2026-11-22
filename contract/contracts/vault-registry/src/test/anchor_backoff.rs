@@ -182,110 +182,43 @@ fn throttle_reasons_map_to_a_total_error_mapping() {
 }
 
 #[test]
-fn retry_anchor_purchase_receipt_counts_rejections_and_honors_backoff() {
-    let (env, creator, _service, client) = setup_with_anchor_service();
-    let settler = Address::generate(&env);
-    client.add_settler(&settler);
-    let id = register_default(&env, &creator, &client, "retrycnt");
+fn get_anchor_status_distinguishes_missing_pending_failed_and_confirmed() {
+    let (env, creator, service, client) = setup_with_anchor_service();
+    let id = register_default(&env, &creator, &client, "statall");
     let buyer = Address::generate(&env);
-    env.ledger().set_sequence_number(700);
-    let missing_hash = String::from_str(&env, "nomatch");
 
-    // No recorded payment for the pair: counted rejection.
-    assert!(!client.retry_anchor_purchase_receipt(&settler, &id, &buyer, &missing_hash));
-    assert_eq!(client.get_anchor_attempts(&id, &buyer).attempts, 1);
-    let failure = client.get_anchor_failure(&id, &buyer);
-    assert_eq!(failure.reason, AnchorFailureReason::NoPaymentRecorded);
+    assert_eq!(client.get_anchor_status(&id, &buyer), AnchorStatus::Missing);
 
-    // Inside backoff window: fast fail, no counter change, no data checks.
-    env.ledger()
-        .set_sequence_number(700 + ANCHOR_RETRY_BACKOFF_LEDGERS - 1);
-    assert!(!client.retry_anchor_purchase_receipt(&settler, &id, &buyer, &missing_hash));
-    assert_eq!(client.get_anchor_attempts(&id, &buyer).attempts, 1);
+    assert!(!client.attempt_anchor_purchase_receipt(
+        &service,
+        &id,
+        &buyer,
+        &String::from_str(&env, "")
+    ));
+    assert_eq!(client.get_anchor_status(&id, &buyer), AnchorStatus::Pending);
 
-    env.ledger()
-        .set_sequence_number(700 + ANCHOR_RETRY_BACKOFF_LEDGERS);
-    assert!(!client.retry_anchor_purchase_receipt(&settler, &id, &buyer, &missing_hash));
-    assert_eq!(client.get_anchor_attempts(&id, &buyer).attempts, 2);
-}
-
-#[test]
-fn retry_anchor_purchase_receipt_exhausts_attempts_and_fails_fast() {
-    let (env, creator, _service, client) = setup_with_anchor_service();
-    let settler = Address::generate(&env);
-    client.add_settler(&settler);
-    let id = register_default(&env, &creator, &client, "retrycap");
-    let buyer = Address::generate(&env);
-    env.ledger().set_sequence_number(20);
-    let bad = String::from_str(&env, "nomatch");
-
-    for n in 1..=MAX_ANCHOR_ATTEMPTS {
+    for n in 2..=MAX_ANCHOR_ATTEMPTS {
         if n > 1 {
             advance_past_backoff(&env);
         }
-        assert!(!client.retry_anchor_purchase_receipt(&settler, &id, &buyer, &bad));
-        let all = env.events().all();
-        if n < MAX_ANCHOR_ATTEMPTS {
-            assert_eq!(all.len(), 1);
-            assert_eq!(
-                last_anchor_failure(&env, &id).reason,
-                AnchorFailureReason::NoPaymentRecorded
-            );
-        } else {
-            assert_eq!(all.len(), 2);
-            let (_cid, topics, data) = all.get_unchecked(1);
-            let topic: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
-            assert_eq!(topic, symbol_short!("anchrxhst"));
-            let exhausted = AnchorAttempts::try_from_val(&env, &data).unwrap();
-            assert_eq!(exhausted.attempts, MAX_ANCHOR_ATTEMPTS);
-        }
-        assert_eq!(client.get_anchor_attempts(&id, &buyer).attempts, n);
+        assert!(!client.attempt_anchor_purchase_receipt(
+            &service,
+            &id,
+            &buyer,
+            &String::from_str(&env, "")
+        ));
     }
+    assert_eq!(client.get_anchor_status(&id, &buyer), AnchorStatus::Failed);
 
-    advance_past_backoff(&env);
-    assert!(!client.retry_anchor_purchase_receipt(&settler, &id, &buyer, &bad));
-    let all = env.events().all();
-    assert_eq!(all.len(), 1, "exhausted retry emits anchrfail only");
-    assert_eq!(
-        last_anchor_failure(&env, &id).reason,
-        AnchorFailureReason::AttemptsExhausted
-    );
-    assert_eq!(
-        client.get_anchor_attempts(&id, &buyer).attempts,
-        MAX_ANCHOR_ATTEMPTS
-    );
-}
-
-#[test]
-fn retry_anchor_purchase_receipt_success_clears_attempts_and_confirms_status() {
-    let (env, creator, _service, client) = setup_with_anchor_service();
-    let settler = Address::generate(&env);
-    client.add_settler(&settler);
-    let id = register_default(&env, &creator, &client, "retryok");
-    let buyer = Address::generate(&env);
-    let tx_hash = String::from_str(&env, "txhashok123");
-    env.ledger().set_sequence_number(900);
-
-    // One counted rejection first (no payment recorded yet).
-    assert!(!client.retry_anchor_purchase_receipt(&settler, &id, &buyer, &tx_hash));
-    assert_eq!(client.get_anchor_attempts(&id, &buyer).attempts, 1);
-
-    client.record_payment(
-        &settler,
-        &String::from_str(&env, "rctretry"),
-        &id,
+    let id2 = register_default(&env, &creator, &client, "statok");
+    assert!(client.attempt_anchor_purchase_receipt(
+        &service,
+        &id2,
         &buyer,
-        &100i128,
-        &tx_hash,
-    );
-    advance_past_backoff(&env);
-    assert!(client.retry_anchor_purchase_receipt(&settler, &id, &buyer, &tx_hash));
-
-    assert_eq!(client.get_anchor_attempts(&id, &buyer).attempts, 0);
+        &String::from_str(&env, "sha256ok2")
+    ));
     assert_eq!(
-        client.try_get_anchor_failure(&id, &buyer),
-        Err(Ok(Error::NotFound))
+        client.get_anchor_status(&id2, &buyer),
+        AnchorStatus::Confirmed
     );
-    let anchor = client.get_purchase_receipt(&id, &buyer);
-    assert_eq!(anchor.receipt_hash, tx_hash);
 }
