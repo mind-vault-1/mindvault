@@ -283,6 +283,54 @@ fn verifier_status_history_is_per_verifier() {
     assert_eq!(v2_page.items.len(), 0u32);
 }
 
+#[test]
+fn verifier_status_history_equal_ledger_updates_never_skip_or_duplicate_across_pages() {
+    let (env, creator, client) = setup();
+    let verifier = add_verifier_helper(&env, &client);
+
+    // Freeze the ledger so every status update has the same `ledger` value.
+    env.ledger().set_sequence_number(500);
+
+    let mut expected_ids = alloc::vec::Vec::new();
+    for i in 0..5u32 {
+        let id = String::from_str(&env, &format!("eqledg{i:02}"));
+        client.register(
+            &creator,
+            &id,
+            &100_000i128,
+            &String::from_str(&env, "ipfs://hist"),
+            &empty_tags(&env),
+        );
+        client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
+        expected_ids.push(id);
+    }
+
+    // Walk the same five updates with two different page sizes. Every entry
+    // must be returned exactly once, in insertion order, regardless of where
+    // the equal-ledger page boundaries fall.
+    for step in [1u32, 2u32] {
+        let mut cursor = Some(0u32);
+        let mut collected = alloc::vec::Vec::new();
+        let mut pages = 0u32;
+        while let Some(current) = cursor {
+            let page = client.get_verifier_status_history(&verifier, &current, &step);
+            pages += 1;
+            for idx in 0..page.items.len() {
+                collected.push(page.items.get(idx).unwrap());
+            }
+            cursor = page.next_cursor;
+        }
+
+        assert_eq!(pages, (5u32 + step - 1) / step);
+        assert_eq!(collected.len(), expected_ids.len());
+        for (idx, entry) in collected.iter().enumerate() {
+            assert_eq!(entry.ledger, 500u32);
+            assert_eq!(entry.seq, idx as u32);
+            assert_eq!(entry.resource_id, expected_ids[idx]);
+        }
+    }
+}
+
 // ── Issue #806: list_by_state ─────────────────────────────────────────────────
 
 #[test]

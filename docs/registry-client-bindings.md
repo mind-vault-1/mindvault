@@ -179,3 +179,4 @@ agents and operators can validate compatibility without leaving the session.
 - [`contract/README.md`](../contract/README.md) — contract interface, error codes, and deployment
 - [`docs/architecture.md`](architecture.md) — how the registry client fits into the system
 - [`docs/deployment-runbook.md`](deployment-runbook.md) — Step 1.6 covers regeneration during deployment
+- [`docs/contract-method-event-reference.md`](contract-method-event-reference.md) — published reference generated from these bindings

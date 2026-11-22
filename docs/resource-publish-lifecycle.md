@@ -115,6 +115,36 @@ This returns the canonical verification view, including:
 - `verification.flags`
 - `verification.checkedAt`
 
+### Resuming MCP status polling after a reconnect
+
+`mindvault_publish` returns an `operationId` with the resource, including in
+its ambiguous-timeout and unfunded-verification messages, and
+`mindvault_publish_status` reports it on every snapshot. A client that loses
+its connection, or an agent that restarts, passes it back to resume polling
+the same publish:
+
+```json
+{ "operationId": "pubop1.Y203eDh5OXo.b31b1f387d53f169", "wait": true }
+```
+
+- **Derived, not stored.** The id is `pubop1.<base64url(resourceId)>.<check>`,
+  where `check` is the first 16 hex characters of a SHA-256 over the network,
+  the API origin and the resource id (`mcp/src/publishOperation.ts`). Nothing is
+  written to `~/.mindvault`, so the id works after a restart, from another MCP
+  server process, or after `mindvault_reset`.
+- **Bound to where it was issued.** An id from testnet is refused on mainnet,
+  and an id from one API host is refused on another, instead of silently
+  polling a different resource that has the same id there. A malformed or
+  altered id is refused too. Neither case calls the API.
+- **Retention.** The id has no local expiry. It resolves for as long as the
+  resource exists on the API it was issued for. Once the resource is gone,
+  polling fails with the same not-found error as a bare `resourceId`.
+- **Not a credential.** Publish status is a read of public resource metadata,
+  so the id grants nothing: the check only catches typos, truncation and ids
+  from another network or API.
+- `resourceId` still works. Passing both is allowed only when they name the
+  same resource.
+
 ## 4. Listing and preview behavior
 
 After verification, two public read paths matter:
@@ -280,7 +310,7 @@ For web contributors:
 For MCP contributors:
 
 - `mindvault_publish` is a convenience wrapper around create -> verify -> best-effort register
-- `mindvault_publish_status` polls `verificationStatus` (`pending` | `verified` | `rejected` | `skipped`) and on-chain sync fields (`onchainStatus`, `onchainTxHash`); pass `wait: true` to poll until verification settles
+- `mindvault_publish_status` polls `verificationStatus` (`pending` | `verified` | `rejected` | `skipped`) and on-chain sync fields (`onchainStatus`, `onchainTxHash`); pass `wait: true` to poll until verification settles, and `operationId` (from `mindvault_publish`) instead of `resourceId` to resume after a reconnect or restart
 - a `wait: true` call streams one MCP `notifications/progress` update per poll when the client supplies a progress token — see [mcp-progress-notifications.md](mcp-progress-notifications.md)
 - `mindvault_register_onchain` retries on-chain registration when the publish-time register step fails
 - if registration fails, contributors should expect a resource that may be verified and listed but still blocked at purchase time by the current paywall behavior

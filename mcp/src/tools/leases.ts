@@ -13,12 +13,8 @@
  * can check its window before re-buying. Both tools honour mock mode.
  */
 
-import {
-  createRegistryClient,
-  Errors as RegistryErrors,
-  LeaseTier,
-  type Lease,
-} from "@mindvault/registry-client";
+import { createLimitedRegistryClient } from "../upstreamStellar.js";
+import { Errors as RegistryErrors, LeaseTier, type Lease } from "@mindvault/registry-client";
 import {
   _isMock,
   NETWORK,
@@ -93,7 +89,7 @@ export function leaseView(lease: Lease): LeaseView {
 }
 
 function registryClient(publicKey?: string) {
-  return createRegistryClient({
+  return createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,

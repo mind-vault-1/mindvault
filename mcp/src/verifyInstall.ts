@@ -52,28 +52,19 @@ export function compareSemver(a: string, b: string): number {
 export function readInstalledSdkVersion(
   resolver: (id: string) => string | null = defaultResolver,
 ): string | null {
-  // First try the root package.json directly via the package name.
-  // `require.resolve` may return a sub-path package.json (e.g. dist/cjs/package.json)
-  // that has no `version` field, so we also try the explicit main entry path
-  // and walk up to find the real root package.json.
-  const candidates = [
-    "@modelcontextprotocol/sdk/package.json",
-    // Explicit fallback: resolve the main entry, then find the root package.json
-  ];
-  for (const candidate of candidates) {
-    const jsonPath = resolver(candidate);
-    if (!jsonPath) continue;
+  const manifest = resolver("@modelcontextprotocol/sdk/package.json");
+  const entry = manifest ?? resolver("@modelcontextprotocol/sdk/server/index.js");
+  if (!entry) return null;
+
+  for (let dir = dirname(entry); dir !== dirname(dir); dir = dirname(dir)) {
     try {
-      const raw = readFileSync(jsonPath, "utf-8");
-      const pkg = JSON.parse(raw) as { version?: unknown };
-      if (typeof pkg.version === "string") return pkg.version;
-      // Sub-path package.json without version — try the parent directory.
-      const parentPkg = join(dirname(jsonPath), "..", "package.json");
-      const parentRaw = readFileSync(parentPkg, "utf-8");
-      const parentParsed = JSON.parse(parentRaw) as { version?: unknown };
-      if (typeof parentParsed.version === "string") return parentParsed.version;
+      const raw = readFileSync(join(dir, "package.json"), "utf-8");
+      const pkg = JSON.parse(raw) as { name?: unknown; version?: unknown };
+      if (pkg.name === "@modelcontextprotocol/sdk") {
+        return typeof pkg.version === "string" ? pkg.version : null;
+      }
     } catch {
-      continue;
+      // The installed SDK may only expose compiled subpaths.
     }
   }
   return null;

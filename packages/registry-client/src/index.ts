@@ -12,7 +12,7 @@
  *   - re-export the generated types under stable names
  */
 
-import { Networks } from "@stellar/stellar-sdk";
+import { Networks, type rpc } from "@stellar/stellar-sdk";
 import { Client as ContractClient } from "@stellar/stellar-sdk/contract";
 import type { AssembledTransaction } from "@stellar/stellar-sdk/contract";
 
@@ -93,6 +93,8 @@ export interface RegistryClientOptions {
    * supplied separately by the caller (see the generated Client docs).
    */
   publicKey?: string;
+  /** Optional configured Soroban server, for callers that coordinate transport. */
+  server?: rpc.Server;
 }
 
 /**
@@ -105,6 +107,7 @@ export function createRegistryClient(opts: RegistryClientOptions): Client {
     rpcUrl: opts.rpcUrl,
     networkPassphrase: opts.networkPassphrase ?? Networks.TESTNET,
     publicKey: opts.publicKey,
+    server: opts.server,
   });
 }
 
