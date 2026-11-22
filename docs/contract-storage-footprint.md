@@ -111,6 +111,11 @@ shared bounded view and is not included in the per-registration aggregate.
 - **`DataKey::DisputeFlag` is never written.** The dispute flag lives on the
   `Resource` struct (see `flag_resource`), so the key exists in the `DataKey`
   enum without a corresponding entry.
+- **`PaymentRecipient` snapshot** is one small persistent entry per payment
+  receipt, written by `record_payment` with the creator address paid at purchase
+  time. It is never rewritten by settlement or ownership transfer, and is only
+  TTL-bumped when the receipt settles. Like `PaymentTxHash`, it is a per-payment
+  secondary entry and is not listed as a separate row in the table above.
 - **Tombstoning** frees the `TagIndex` and `CreatorResources` membership for a
   resource (see the lifecycle section of
   [`contract/README.md`](../contract/README.md)), but deliberately leaves
