@@ -230,6 +230,52 @@ describe("side-effect inventory covers the surface", () => {
   });
 });
 
+describe("side-effect reference documentation", () => {
+  const doc = readFileSync(new URL("../../docs/mcp-tool-annotations.md", import.meta.url), "utf8");
+  const section = doc.split("## Side-effect reference (all tools)")[1]?.split("\n## ")[0] ?? "";
+  const rows = section
+    .split("\n")
+    .map((line) =>
+      line
+        .trim()
+        .match(
+          /^\| `(mindvault_[a-z0-9_]+)` \| `(\w+)` \| `(\w+)` \| `(\w+)` \| (yes|no) \| (yes|no) \| (yes|no) \|$/,
+        ),
+    )
+    .filter((match): match is RegExpMatchArray => match !== null);
+
+  it("documents every advertised tool exactly once", () => {
+    expect(rows.length, "one reference row per advertised tool").toBe(TOOL_DEFINITIONS.length);
+    expect(new Set(rows.map((row) => row[1])).size).toBe(TOOL_DEFINITIONS.length);
+  });
+
+  it("matches the inventory and its derived annotation hints", () => {
+    for (const [, name, local, remote, payment, irreversible, readOnly, destructive] of rows) {
+      const effects = TOOL_SIDE_EFFECTS[name];
+      expect(effects, `${name} is documented but absent from the inventory`).toBeDefined();
+      const hints = expectedAnnotationHints(effects);
+      expect(
+        {
+          local,
+          remote,
+          payment,
+          irreversible: irreversible === "yes",
+          readOnlyHint: readOnly === "yes",
+          destructiveHint: destructive === "yes",
+        },
+        `${name} reference row disagrees with the inventory`,
+      ).toEqual({
+        local: effects.local,
+        remote: effects.remote,
+        payment: effects.payment,
+        irreversible: effects.irreversible === true,
+        readOnlyHint: hints.readOnlyHint,
+        destructiveHint: hints.destructiveHint,
+      });
+    }
+  });
+});
+
 describe("annotations agree with the side-effect inventory", () => {
   it.each(TOOL_DEFINITIONS.map((t) => [t.name, t] as const))("%s", (name, tool) => {
     const effects = TOOL_SIDE_EFFECTS[name];
