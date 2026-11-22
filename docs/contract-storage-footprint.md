@@ -84,7 +84,8 @@ shared bounded view and is not included in the per-registration aggregate.
 - **`Lease (max-size)`** is one time-limited access lease keyed by
   `(resource_id, holder)`. The 128-byte `tx_hash` dominates the value; a
   holder holds at most one lease per resource, and a new purchase overwrites
-  an expired or revoked one rather than adding an entry.
+  an expired or revoked one rather than adding an entry. `extend_lease` updates
+  that same key in place, retaining the original holder and resource binding.
 
 - **`Resource`** dominates the per-registration cost, and `metadata` (up to 512
   bytes) dominates `Resource`. Storing a content pointer rather than content is
