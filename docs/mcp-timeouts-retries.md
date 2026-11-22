@@ -350,10 +350,11 @@ safely (#1060):
   mid-poll.
 - `mindvault_publish_batch` returns its usual summary with
   `onchainStatus: "submitted"`, each approved item's `onchainStatus` set to
-  `"submitted"`, the `txHash`, and the same `statusLookup`. The items were
-  already created and paid for, so they are reported instead of discarded.
-- `mindvault_set_tags` is text-only. Its text names the hash and says to check
-  it with `mindvault_tx_status`.
+  `"submitted"`, the `txHash`, the same `reason` (`confirmation_timeout` or
+  `rpc_unavailable`), and the same `statusLookup`. The items were already
+  created and paid for, so they are reported instead of discarded.
+- `mindvault_set_tags` is text-only. Its text names the hash, the `reason`, and
+  says to check the hash with `mindvault_tx_status`.
 - A confirmed transaction still returns `status: "success"`. A transaction the
   network rejected, or an RPC that was down before submit, still fails as
   before. In those cases nothing was submitted, so retrying is safe.

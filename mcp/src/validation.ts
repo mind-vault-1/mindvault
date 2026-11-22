@@ -206,6 +206,7 @@ const CONFIRM_MAINNET: ArgumentSpec = { kind: "flag" };
 
 /** Confirmation flag for paid operations (see paidOperations.ts). */
 const CONFIRM_PAID: ArgumentSpec = { kind: "flag" };
+const CONFIRM_DESTRUCTIVE: ArgumentSpec = { kind: "flag" };
 
 /** Preview flag: publish/buy report what they would do without paying. */
 const DRY_RUN: ArgumentSpec = { kind: "flag" };
@@ -301,7 +302,11 @@ export const TOOLS_WITHOUT_ARG_VALIDATION: readonly string[] = [
  * which problems are reported, which keeps multi-issue errors deterministic.
  */
 export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
-  mindvault_setup_wallet: { profile: PROFILE_NAME, confirmMainnet: CONFIRM_MAINNET },
+  mindvault_setup_wallet: {
+    profile: PROFILE_NAME,
+    confirmMainnet: CONFIRM_MAINNET,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
+  },
   mindvault_repair_sponsored_account: {
     secretKey: {
       kind: "stellar_secret",
@@ -309,6 +314,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     },
     profile: PROFILE_NAME,
     confirmMainnet: CONFIRM_MAINNET,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
   mindvault_wallet_info: {},
   mindvault_wallet_allowance: {},
@@ -336,7 +342,9 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     },
     walletAddress: STELLAR_ADDRESS,
     confirmMainnet: CONFIRM_MAINNET,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
+  mindvault_verify_publisher: { walletAddress: STELLAR_ADDRESS },
   mindvault_publish: {
     title: { kind: "string", required: true, maxLength: 256 },
     description: { kind: "string", maxLength: 2048 },
@@ -366,6 +374,13 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
       max: MAX_SETTLEMENT_TIMEOUT_MS,
     },
     intervalMs: { kind: "integer", min: MIN_SETTLEMENT_INTERVAL_MS },
+  },
+  mindvault_subscribe_resource: {
+    resourceId: RESOURCE_ID,
+    cursor: { kind: "string", maxLength: 4096 },
+    wait: { kind: "flag" },
+    timeoutMs: { kind: "integer", min: 0, max: 600_000 },
+    intervalMs: { kind: "integer", min: 1_000 },
   },
   mindvault_purchase_history: {
     resourceId: { ...RESOURCE_ID, required: false },
@@ -491,6 +506,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     confirm: { kind: "flag" },
     all: { kind: "flag" },
     confirmMainnet: CONFIRM_MAINNET,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
   mindvault_backup_state: { passphrase: PASSPHRASE, confirm: { kind: "flag" } },
   mindvault_compare_state_backup: {
@@ -502,6 +518,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_restore_state: {
     blob: { kind: "string", required: true, maxLength: 1_048_576 },
     passphrase: PASSPHRASE,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
   mindvault_metrics: {
     reset: { kind: "flag" },
@@ -579,6 +596,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     },
     confirmMainnet: CONFIRM_MAINNET,
     confirmPaid: CONFIRM_PAID,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
   mindvault_fee_config: {},
   mindvault_royalty: {
@@ -621,10 +639,12 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     profile: PROFILE_NAME,
     confirm: { kind: "flag" },
     confirmMainnet: CONFIRM_MAINNET,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
   mindvault_rotate_publisher_key: {
     profile: PROFILE_NAME,
     confirmMainnet: CONFIRM_MAINNET,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
   mindvault_verify_install: {},
   mindvault_recover_catalog_cache: {},

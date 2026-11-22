@@ -90,6 +90,25 @@ export function startMockServer(): Promise<MockServer> {
     if (method === "POST" && pathname === "/publishers") {
       return sendJson(res, 200, { id: "pub-smoke-1", apiKey: "smoke-api-key" });
     }
+    if (method === "GET" && pathname.startsWith("/publishers/wallet/")) {
+      const address = decodeURIComponent(pathname.slice("/publishers/wallet/".length));
+      return sendJson(res, 200, {
+        id: "pub-smoke-1",
+        name: "Smoke Publisher",
+        email: "smoke@example.com",
+        walletAddress: address,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+    }
+    if (method === "GET" && pathname === "/publishers/me") {
+      return sendJson(res, 200, {
+        id: "pub-smoke-1",
+        name: "Smoke Publisher",
+        email: "smoke@example.com",
+        walletAddress: process.env.MOCK_WALLET_ADDRESS ?? "",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+    }
 
     // Vault API — verification agent status (drives the pre-publish funds check).
     if (method === "GET" && pathname === "/agent/status") {
