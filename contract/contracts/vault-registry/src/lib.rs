@@ -525,8 +525,8 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("rmsettlr", "RoleChange { admin, target, granted: false }"),
     ("pause", "(paused: bool, admin: Address)"),
     ("pause_until", "(pause_until: u64, admin: Address)"),
-    ("payment_pause", "(paused: bool, admin: Address)"),
     ("payment_pause_until", "(pause_until: u64, admin: Address)"),
+    ("pay_pause", "(paused: bool, admin: Address)"),
     (
         "mntstat",
         "MaintenanceStatusEvent { kind, reason_code, admin }",
@@ -4213,7 +4213,7 @@ impl VaultRegistry {
     /// admin has been set yet, and `Unauthorized` if `admin` is not the
     /// current admin.
     ///
-    /// Emits a `payment_pause` event with data `(paused: bool, admin: Address)` on
+    /// Emits a `pay_pause` event with data `(paused: bool, admin: Address)` on
     /// every call, including no-op transitions.
     pub fn set_payment_paused(env: Env, admin: Address, paused: bool) -> Result<(), Error> {
         Self::require_current_admin(&env, &admin)?;
@@ -4612,6 +4612,61 @@ impl VaultRegistry {
     /// if `set_fee_config` has never been called.
     pub fn get_fee_config(env: Env) -> Option<FeeConfig> {
         env.storage().instance().get(&DataKey::FeeConfig)
+    }
+
+    /// Preview how `amount` would be split between the platform, any royalty
+    /// recipient, and the resource creator, using the current fee configuration.
+    ///
+    /// **Read-only.** No transaction is recorded, no state is written, and no
+    /// authentication is required. The calculation is identical to the integer
+    /// arithmetic used by `settle_payment` (truncation, `FEE_BPS_DENOM = 10_000`),
+    /// so the preview is exact for any amount that settlement would accept.
+    ///
+    /// Returns `Err(InvalidPrice)` when `amount <= 0` or `amount > MAX_PRICE`.
+    /// When no fee config has been set, all fees are zero and
+    /// `creator_amount == amount`.
+    pub fn preview_fee_split(env: Env, amount: i128) -> Result<FeeSplitPreview, Error> {
+        if amount <= 0 || amount > MAX_PRICE {
+            return Err(Error::InvalidPrice);
+        }
+
+        let fee_config: Option<FeeConfig> = env.storage().instance().get(&DataKey::FeeConfig);
+
+        match fee_config {
+            None => {
+                // No fee config set: creator keeps everything.
+                Ok(FeeSplitPreview {
+                    amount,
+                    platform_fee: 0,
+                    royalty_amount: 0,
+                    creator_amount: amount,
+                    platform_fee_bps: 0,
+                    royalty_bps: 0,
+                })
+            }
+            Some(config) => {
+                let denom = i128::from(FEE_BPS_DENOM);
+                let platform_fee = if config.platform_fee_bps > 0 {
+                    amount * i128::from(config.platform_fee_bps) / denom
+                } else {
+                    0
+                };
+                let royalty_amount = if config.royalty_bps > 0 {
+                    amount * i128::from(config.royalty_bps) / denom
+                } else {
+                    0
+                };
+                let creator_amount = amount - platform_fee - royalty_amount;
+                Ok(FeeSplitPreview {
+                    amount,
+                    platform_fee,
+                    royalty_amount,
+                    creator_amount,
+                    platform_fee_bps: config.platform_fee_bps,
+                    royalty_bps: config.royalty_bps,
+                })
+            }
+        }
     }
 
     /// Update only the fee recipient address without changing fee rates.
