@@ -317,7 +317,7 @@ submit would be a second transaction.
 All of these mutations go through `signAndSendTracked` (in
 [`mcp/src/submittedTransaction.ts`](../mcp/src/submittedTransaction.ts)), which
 captures the transaction hash the moment `sendTransaction` returns via the SDK's
-`onSubmitted` hook. This is the single entry point for all anchor retry paths:
+`onSubmitted` hook. This is the single entry point for all transaction retry paths:
 manual retries (an agent calling the tool again after a failure) and automatic
 retries (the SDK's own internal polling) are both bounded by the same submitted-hash
 invariant. Neither path can bypass it.

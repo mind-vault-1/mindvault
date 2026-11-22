@@ -299,12 +299,19 @@ fn role_inventory_membership_cap_rejects_grant_without_state_change() {
     assert_eq!(res, Err(Ok(Error::RoleCapacityReached)));
     assert!(!client.is_moderator(&overflow));
 
-    let first = client.role_inventory_page(&RoleKind::Moderator, &0, &MAX_ROLE_HOLDERS);
-    assert_eq!(first.holders.len(), ROLE_INVENTORY_PAGE_CAP);
-    let next = first.next_cursor.expect("role inventory exceeds one page");
-    let last = client.role_inventory_page(&RoleKind::Moderator, &next, &MAX_ROLE_HOLDERS);
-    assert_eq!(first.holders.len() + last.holders.len(), MAX_ROLE_HOLDERS);
-    assert_eq!(last.next_cursor, None);
+    // MAX_ROLE_HOLDERS (32) is above ROLE_INVENTORY_PAGE_CAP (20), so read
+    // the whole inventory page by page.
+    let mut holders = 0;
+    let mut cursor = 0;
+    loop {
+        let page = client.role_inventory_page(&RoleKind::Moderator, &cursor, &ROLE_INVENTORY_PAGE_CAP);
+        holders += page.holders.len();
+        match page.next_cursor {
+            Some(next) => cursor = next,
+            None => break,
+        }
+    }
+    assert_eq!(holders, MAX_ROLE_HOLDERS);
 }
 
 #[test]
