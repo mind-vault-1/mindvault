@@ -41,6 +41,8 @@ pub const MAX_REFUND_WINDOW_LEDGERS: u32 = 29 * DAY_IN_LEDGERS;
 const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 const LIFETIME_THRESHOLD: u32 = BUMP_AMOUNT - DAY_IN_LEDGERS;
 /// Max length for metadata pointers (IPFS URI, content hash, compact JSON anchor).
+/// The bound counts UTF-8 bytes, not Unicode scalar values, so multibyte
+/// pointers are rejected before any resource mutation or event emission.
 pub const MAX_METADATA_POINTER_LEN: u32 = 512;
 pub const MAX_TERMS_HASH_LEN: u32 = 64;
 /// Max number of redundant metadata pointers (e.g. IPFS + Arweave + hosted)
@@ -102,6 +104,8 @@ pub const LIST_PAGE_CAP: u32 = 20;
 /// asked for, so migration tooling cannot build a call that exceeds the
 /// ledger's read budget as the catalog grows.
 pub const EXPORT_PAGE_CAP: u32 = 20;
+/// Resumable exports cursor by lifecycle revision so entries updated during a
+/// traversal are revisited on the next page rather than silently skipped.
 /// Maximum number of catalog entries intended for a resumable index-repair page.
 pub const INDEX_REPAIR_PAGE_CAP: u32 = 20;
 /// Version of the [`ResourceExport`] view. Bumped only when a field is added,
@@ -8202,6 +8206,8 @@ impl VaultRegistry {
     /// expired, matching `set_paused_until`'s "at or before now resumes"
     /// rule.
     /// Bumps the instance storage TTL to keep pause entries alive for active monitors.
+    // Every pause/unpause entry point must enforce its scope's administrator
+    // role before mutating state or emitting events; unauthorized calls are no-ops.
     fn pause_is_active(env: &Env) -> bool {
         let paused = env
             .storage()
