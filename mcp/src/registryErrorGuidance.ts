@@ -438,6 +438,50 @@ export const REGISTRY_ERROR_GUIDANCE: Record<string, RegistryErrorGuidance> = {
       "changing any resource state. This deployment cannot accept more updates to that " +
       "resource.",
   },
+  RoleCapacityReached: {
+    category: "admin",
+    retry: "conditional",
+    nextSteps: "Review the current role holders and free a slot before granting another member.",
+  },
+  UnclaimedFees: {
+    category: "payment",
+    retry: "conditional",
+    nextSteps:
+      "Have the registry admin acknowledge the accrued fees with claim_fees before changing their destination.",
+  },
+  LeaseFeeConfigConflict: {
+    category: "payment",
+    retry: "unsafe",
+    nextSteps:
+      "Lower the combined platform fee and royalty to stay below the registry's recorded lease price floor.",
+  },
+  RevocationReasonHashTooLong: {
+    category: "validation",
+    retry: "unsafe",
+    nextSteps: "Use a revocation reason hash no longer than 64 bytes.",
+  },
+  InvalidMaintenanceReason: {
+    category: "admin",
+    retry: "unsafe",
+    nextSteps: "Provide a maintenance reason code between 0 and 255.",
+  },
+  InvalidPaymentMemo: {
+    category: "payment",
+    retry: "unsafe",
+    nextSteps:
+      "Verify that the settlement transaction used the canonical mv:<resource_id> memo before recording it.",
+  },
+  FlagNotOverdue: {
+    category: "moderation",
+    retry: "conditional",
+    nextSteps: "Check the flag deadline and wait until it has passed before forcing resolution.",
+  },
+  InvalidFlagResolutionWindow: {
+    category: "moderation",
+    retry: "unsafe",
+    nextSteps:
+      "Choose a flag resolution window of at most 535680 ledgers. Use zero to disable deadlines on new flags.",
+  },
 };
 
 /** Every code this build knows, with its name. */

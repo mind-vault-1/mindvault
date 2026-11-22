@@ -121,7 +121,9 @@ describe("explainRegistryError", () => {
 
   it("lists the known errors in code order", () => {
     const known = knownRegistryErrors();
-    expect(known[0].code).toBe(1);
-    expect(known[known.length - 1].name).toBe("RevisionOverflow");
+    const sortedCodes = Object.keys(Errors)
+      .map(Number)
+      .sort((left, right) => left - right);
+    expect(known.map((error) => error.code)).toEqual(sortedCodes);
   });
 });

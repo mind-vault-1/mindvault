@@ -36,6 +36,8 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_registry_creator_page",
   "mindvault_registry_tag_search",
   "mindvault_registry_count",
+  "mindvault_batch_catalog_lookup",
+  "mindvault_preview_metadata_hash",
   "mindvault_tx_status",
   "mindvault_reset",
   "mindvault_backup_state",
