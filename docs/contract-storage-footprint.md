@@ -81,6 +81,10 @@ shared bounded view and is not included in the per-registration aggregate.
 - **`AnchorAttempts`** is written only when `attempt_anchor_purchase_receipt`
   rejects an anchor, holds two `u32`s, and is deleted as soon as an anchor is
   written for the pair, so it never outlives a successful settlement.
+- **Anchor hash index** adds one reverse entry per written anchor, keyed by the
+  receipt hash and holding its `(resource_id, buyer)` pair. It is updated in
+  `write_anchor` (including admin overrides), so conflicting retries cannot
+  rebind a hash that already anchors another purchase.
 - **`Lease (max-size)`** is one time-limited access lease keyed by
   `(resource_id, holder)`. The 128-byte `tx_hash` dominates the value; a
   holder holds at most one lease per resource, and a new purchase overwrites

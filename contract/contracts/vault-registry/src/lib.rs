@@ -5269,6 +5269,12 @@ impl VaultRegistry {
             return Err(Error::InvalidTxHash);
         }
 
+        if let Some((bound_res, bound_buyer)) = Self::anchor_hash_binding(&env, &new_receipt_hash) {
+            if bound_res != resource_id || bound_buyer != buyer {
+                return Err(Error::DuplicateReceipt);
+            }
+        }
+
         Self::write_anchor(&env, resource_id, buyer, new_receipt_hash);
         Ok(())
     }
@@ -5403,6 +5409,49 @@ impl VaultRegistry {
         Self::require_not_paused(&env)?;
         Self::validate_resource_id(&resource_id)?;
 
+        if receipt_hash.is_empty() || receipt_hash.len() > MAX_TX_HASH_LEN {
+            return Self::report_anchor_failure(
+                &env,
+                resource_id,
+                buyer,
+                receipt_hash,
+                AnchorFailureReason::InvalidReceiptHash,
+            );
+        }
+
+        let anchor_key = DataKey::PurchaseReceipt(resource_id.clone(), buyer.clone());
+        if let Some(existing) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, PurchaseReceiptAnchor>(&anchor_key)
+        {
+            // Same hash is the desired end state, so a blind retry converges
+            // even if a later payment has advanced PaymentIndex. A different
+            // hash is a real conflict and must never replace the anchor.
+            if existing.receipt_hash == receipt_hash {
+                return Ok(true);
+            }
+            return Self::report_anchor_failure(
+                &env,
+                resource_id,
+                buyer,
+                receipt_hash,
+                AnchorFailureReason::DuplicateReceipt,
+            );
+        }
+
+        if let Some((bound_res, bound_buyer)) = Self::anchor_hash_binding(&env, &receipt_hash) {
+            if bound_res != resource_id || bound_buyer != buyer {
+                return Self::report_anchor_failure(
+                    &env,
+                    resource_id,
+                    buyer,
+                    receipt_hash,
+                    AnchorFailureReason::DuplicateReceipt,
+                );
+            }
+        }
+
         // Resolve the payment this anchor must correspond to.
         let receipt_id: String = match env
             .storage()
@@ -5437,15 +5486,6 @@ impl VaultRegistry {
             }
         };
 
-        if receipt_hash.is_empty() || receipt_hash.len() > MAX_TX_HASH_LEN {
-            return Self::report_anchor_failure(
-                &env,
-                resource_id,
-                buyer,
-                receipt_hash,
-                AnchorFailureReason::InvalidReceiptHash,
-            );
-        }
         if receipt_hash != receipt.tx_hash {
             return Self::report_anchor_failure(
                 &env,
@@ -5453,23 +5493,6 @@ impl VaultRegistry {
                 buyer,
                 receipt_hash,
                 AnchorFailureReason::ReceiptHashMismatch,
-            );
-        }
-
-        let anchor_key = DataKey::PurchaseReceipt(resource_id.clone(), buyer.clone());
-        let existing: Option<PurchaseReceiptAnchor> = env.storage().persistent().get(&anchor_key);
-        if let Some(existing) = existing {
-            // Already anchored. Same hash is the desired end state, so a blind
-            // retry loop converges; a different hash is a real conflict.
-            if existing.receipt_hash == receipt_hash {
-                return Ok(true);
-            }
-            return Self::report_anchor_failure(
-                &env,
-                resource_id,
-                buyer,
-                receipt_hash,
-                AnchorFailureReason::DuplicateReceipt,
             );
         }
 
@@ -7182,11 +7205,26 @@ impl VaultRegistry {
         Ok(())
     }
 
+    /// Reverse index key for a receipt hash. The stored `(resource_id, buyer)`
+    /// pair identifies the purchase the hash already anchors, so a retry or
+    /// alternate hash cannot silently rebind it to a different purchase.
+    fn anchor_hash_key(receipt_hash: &String) -> (Symbol, String) {
+        (symbol_short!("anc_hash"), receipt_hash.clone())
+    }
+
+    /// The purchase currently bound to `receipt_hash`, if any.
+    fn anchor_hash_binding(env: &Env, receipt_hash: &String) -> Option<(String, Address)> {
+        env.storage()
+            .persistent()
+            .get(&Self::anchor_hash_key(receipt_hash))
+    }
+
     /// The reason this `(resource_id, buyer)` anchor cannot be written, or
-    /// `None` when it can. Shared by `anchor_purchase_receipt` (which turns it
-    /// into an `Error`) and `attempt_anchor_purchase_receipt` (which turns it
-    /// into an `anchrfail` event), so the two can never disagree about what
-    /// counts as anchorable.
+    /// `None` when it can. A receipt hash already bound to a different pair is
+    /// the same `DuplicateReceipt` conflict as an anchored pair. Shared by
+    /// `anchor_purchase_receipt` (which turns it into an `Error`) and
+    /// `attempt_anchor_purchase_receipt` (which turns it into an `anchrfail`
+    /// event), so the two can never disagree about what counts as anchorable.
     fn anchor_blocker(
         env: &Env,
         resource_id: &String,
@@ -7209,14 +7247,21 @@ impl VaultRegistry {
         )) {
             return Some(AnchorFailureReason::DuplicateReceipt);
         }
+        if let Some((bound_res, bound_buyer)) = Self::anchor_hash_binding(env, receipt_hash) {
+            if &bound_res != resource_id || &bound_buyer != buyer {
+                return Some(AnchorFailureReason::DuplicateReceipt);
+            }
+        }
         None
     }
 
     /// Persist an [`AnchorFailure`] for `(resource_id, buyer)` and emit
     /// `anchrfail`, returning `Ok(false)` so callers can `return` it directly.
-    /// Overwrites any earlier record: the newest reason describes the current
-    /// attempt, and a pair cannot be both anchored and failing. The record is
-    /// the durable half — the event alone is lost if the caller batches.
+    /// When the pair is already anchored the event is still emitted, but no
+    /// failure record is written: the conflict must not make
+    /// `get_anchor_failure` disagree with `get_purchase_receipt`. Otherwise the
+    /// newest reason replaces any earlier record. The record is the durable
+    /// half — the event alone is lost if the caller batches.
     fn report_anchor_failure(
         env: &Env,
         resource_id: String,
@@ -7224,6 +7269,7 @@ impl VaultRegistry {
         receipt_hash: String,
         reason: AnchorFailureReason,
     ) -> Result<bool, Error> {
+        let anchor_key = DataKey::PurchaseReceipt(resource_id.clone(), buyer.clone());
         let key = DataKey::AnchorFailure(resource_id.clone(), buyer.clone());
         let failure = AnchorFailure {
             resource_id: resource_id.clone(),
@@ -7232,8 +7278,10 @@ impl VaultRegistry {
             reason,
             ledger: env.ledger().sequence(),
         };
-        env.storage().persistent().set(&key, &failure);
-        Self::bump_persistent(env, &key);
+        if !env.storage().persistent().has(&anchor_key) {
+            env.storage().persistent().set(&key, &failure);
+            Self::bump_persistent(env, &key);
+        }
         env.events()
             .publish((symbol_short!("anchrfail"), resource_id), failure);
         Ok(false)
@@ -7351,6 +7399,21 @@ impl VaultRegistry {
             .persistent()
             .remove(&DataKey::AnchorAttempts(resource_id.clone(), buyer.clone()));
         let key = DataKey::PurchaseReceipt(resource_id.clone(), buyer.clone());
+        if let Some(prev) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, PurchaseReceiptAnchor>(&key)
+        {
+            // An admin override changes the pair's hash: release the old hash
+            // so it cannot keep blocking the purchase it no longer anchors.
+            let prev_hash_key = Self::anchor_hash_key(&prev.receipt_hash);
+            env.storage().persistent().remove(&prev_hash_key);
+        }
+        let hash_key = Self::anchor_hash_key(&receipt_hash);
+        env.storage()
+            .persistent()
+            .set(&hash_key, &(resource_id.clone(), buyer.clone()));
+        Self::bump_persistent(env, &hash_key);
         let anchor = PurchaseReceiptAnchor {
             resource_id: resource_id.clone(),
             buyer: buyer.clone(),
