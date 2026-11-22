@@ -5537,28 +5537,13 @@ impl VaultRegistry {
         Self::require_payment_not_paused(&env)?;
         Self::validate_resource_id(&resource_id)?;
 
-        let attempts_key = DataKey::AnchorAttempts(resource_id.clone(), buyer.clone());
-        let mut attempts = Self::anchor_attempts_state(&env, &attempts_key);
-        let now = env.ledger().sequence();
-        let throttled = if attempts.attempts >= MAX_ANCHOR_ATTEMPTS {
-            Some(AnchorFailureReason::AttemptsExhausted)
-        } else if attempts.attempts > 0
-            && now
-                < attempts
-                    .last_attempt_ledger
-                    .saturating_add(ANCHOR_RETRY_BACKOFF_LEDGERS)
-        {
-            Some(AnchorFailureReason::RetryTooSoon)
-        } else {
-            None
-        };
-        if let Some(reason) = throttled {
+        if let Some(reason) = Self::anchor_throttle_reason(&env, &resource_id, &buyer) {
             let failure = AnchorFailure {
                 resource_id: resource_id.clone(),
                 buyer,
                 receipt_hash,
                 reason,
-                ledger: now,
+                ledger: env.ledger().sequence(),
             };
             env.events()
                 .publish((symbol_short!("anchrfail"), resource_id), failure);
@@ -5566,22 +5551,25 @@ impl VaultRegistry {
         }
 
         if let Some(reason) = Self::anchor_blocker(&env, &resource_id, &buyer, &receipt_hash) {
-            attempts.attempts += 1;
-            attempts.last_attempt_ledger = now;
-            env.storage().persistent().set(&attempts_key, &attempts);
-            Self::bump_persistent(&env, &attempts_key);
-
+            let attempts = Self::count_rejected_anchor_attempt(&env, &resource_id, &buyer);
             let failure = AnchorFailure {
                 resource_id: resource_id.clone(),
                 buyer: buyer.clone(),
                 receipt_hash,
                 reason,
-                ledger: now,
+                ledger: env.ledger().sequence(),
             };
+            env.storage().persistent().set(
+                &DataKey::AnchorFailure(resource_id.clone(), buyer.clone()),
+                &failure,
+            );
+            Self::bump_persistent(
+                &env,
+                &DataKey::AnchorFailure(resource_id.clone(), buyer.clone()),
+            );
             env.events()
                 .publish((symbol_short!("anchrfail"), resource_id.clone()), failure);
             if attempts.attempts >= MAX_ANCHOR_ATTEMPTS {
-                // Emitted once per pair, on the attempt that reaches the cap.
                 env.events()
                     .publish((symbol_short!("anchrxhst"), resource_id, buyer), attempts);
             }
@@ -5788,9 +5776,18 @@ impl VaultRegistry {
     ///
     /// Data problems are reported as in
     /// [`attempt_anchor_purchase_receipt`]: `Ok(false)` plus an `anchrfail`
-    /// event and a record, so a settlement loop can call this on every payment
-    /// without reverting. The same hash is an idempotent `Ok(true)`; a different
-    /// hash reports [`AnchorFailureReason::DuplicateReceipt`].
+    /// event and a durable failure record, so a settlement loop can call this on
+    /// every payment without reverting. The same hash is an idempotent
+    /// `Ok(true)`; a different hash reports
+    /// [`AnchorFailureReason::DuplicateReceipt`].
+    ///
+    /// Rejected retry attempts obey the same bounded cap and backoff rules as
+    /// `attempt_anchor_purchase_receipt`: a retry inside the backoff window
+    /// fails fast with `RetryTooSoon`, and once `MAX_ANCHOR_ATTEMPTS`
+    /// rejections have accumulated the pair fails fast with
+    /// `AttemptsExhausted` (fast failures re-run no data checks and write
+    /// nothing). Counted rejections persist attempt state and durable failure
+    /// records; a successful anchor clears them.
     ///
     /// Errors `NotSettler`, `ContractPaused`, or `InvalidResourceId`; every
     /// other problem is reported as `Ok(false)`.
@@ -5859,7 +5856,7 @@ impl VaultRegistry {
         {
             Some(id) => id,
             None => {
-                return Self::report_anchor_failure(
+                return Self::counted_retry_anchor_failure(
                     &env,
                     resource_id,
                     buyer,
@@ -5875,7 +5872,7 @@ impl VaultRegistry {
         {
             Some(receipt) => receipt,
             None => {
-                return Self::report_anchor_failure(
+                return Self::counted_retry_anchor_failure(
                     &env,
                     resource_id,
                     buyer,
@@ -5886,7 +5883,7 @@ impl VaultRegistry {
         };
 
         if receipt_hash != receipt.tx_hash {
-            return Self::report_anchor_failure(
+            return Self::counted_retry_anchor_failure(
                 &env,
                 resource_id,
                 buyer,
@@ -7991,6 +7988,68 @@ impl VaultRegistry {
         env.events()
             .publish((symbol_short!("lease"), resource_id), lease.clone());
         Ok(lease)
+    }
+
+    fn anchor_throttle_reason(
+        env: &Env,
+        resource_id: &String,
+        buyer: &Address,
+    ) -> Option<AnchorFailureReason> {
+        let attempts_key = DataKey::AnchorAttempts(resource_id.clone(), buyer.clone());
+        let attempts = Self::anchor_attempts_state(env, &attempts_key);
+        if attempts.attempts >= MAX_ANCHOR_ATTEMPTS {
+            return Some(AnchorFailureReason::AttemptsExhausted);
+        }
+        if attempts.attempts > 0
+            && env.ledger().sequence()
+                < attempts
+                    .last_attempt_ledger
+                    .saturating_add(ANCHOR_RETRY_BACKOFF_LEDGERS)
+        {
+            return Some(AnchorFailureReason::RetryTooSoon);
+        }
+        None
+    }
+
+    fn count_rejected_anchor_attempt(
+        env: &Env,
+        resource_id: &String,
+        buyer: &Address,
+    ) -> AnchorAttempts {
+        let attempts_key = DataKey::AnchorAttempts(resource_id.clone(), buyer.clone());
+        let mut attempts = Self::anchor_attempts_state(env, &attempts_key);
+        attempts.attempts += 1;
+        attempts.last_attempt_ledger = env.ledger().sequence();
+        env.storage().persistent().set(&attempts_key, &attempts);
+        Self::bump_persistent(env, &attempts_key);
+        attempts
+    }
+
+    fn counted_retry_anchor_failure(
+        env: &Env,
+        resource_id: String,
+        buyer: Address,
+        receipt_hash: String,
+        reason: AnchorFailureReason,
+    ) -> Result<bool, Error> {
+        let attempts = Self::count_rejected_anchor_attempt(env, &resource_id, &buyer);
+        let failure = AnchorFailure {
+            resource_id: resource_id.clone(),
+            buyer: buyer.clone(),
+            receipt_hash,
+            reason,
+            ledger: env.ledger().sequence(),
+        };
+        let failure_key = DataKey::AnchorFailure(resource_id.clone(), buyer.clone());
+        env.storage().persistent().set(&failure_key, &failure);
+        Self::bump_persistent(env, &failure_key);
+        env.events()
+            .publish((symbol_short!("anchrfail"), resource_id.clone()), failure);
+        if attempts.attempts >= MAX_ANCHOR_ATTEMPTS {
+            env.events()
+                .publish((symbol_short!("anchrxhst"), resource_id, buyer), attempts);
+        }
+        Ok(false)
     }
 
     fn anchor_attempts_state(env: &Env, key: &DataKey) -> AnchorAttempts {

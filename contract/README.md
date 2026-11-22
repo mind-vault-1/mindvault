@@ -1174,9 +1174,9 @@ A settlement service anchoring many receipts in one transaction therefore loses
 both the anchors that would have succeeded and any on-chain record of what went
 wrong.
 
-`attempt_anchor_purchase_receipt` is the reporting variant. It performs exactly
-the same checks, but turns the three _data_ failures into an `anchrfail` event
-and a `false` return instead of reverting:
+`attempt_anchor_purchase_receipt` is the reporting variant. It performs the
+same checks, but turns the three _data_ failures into an `anchrfail` event, a
+durable failure record, and a `false` return instead of reverting:
 
 | Rejected because                                        | `AnchorFailureReason` | `anchor_purchase_receipt` returns |
 | ------------------------------------------------------- | --------------------- | --------------------------------- |
@@ -1185,7 +1185,13 @@ and a `false` return instead of reverting:
 | `(resource_id, buyer)` already anchored                 | `DuplicateReceipt`    | `DuplicateReceipt`                |
 | `receipt_hash` already anchors a different `(resource_id, buyer)` | `DuplicateReceipt` | `DuplicateReceipt`                |
 
-Authorization is never downgraded to an event: a caller without the verifier
+`retry_anchor_purchase_receipt` is the settler recovery path for a recorded
+payment. It applies the same bounded attempt cap and ledger backoff as the
+verifier reporting path, and counted rejections emit/persist `anchrfail` (and
+`anchrxhst` at cap) before returning `false`. A retry that supplies the same
+hash as an existing anchor is an idempotent success.
+
+Authorization is never downgraded to an event: a caller without the required
 role, or one supplying a malformed `resource_id`, still reverts, so an address
 that cannot anchor cannot write to the event log either. A rejected attempt
 leaves any existing anchor for the pair untouched, including the original hash
@@ -1200,8 +1206,8 @@ does not acquire an `AnchorFailure` record from the conflict — only the event.
 
 Rejected attempts are counted per `(resource_id, buyer)` in
 `DataKey::AnchorAttempts`, readable through `get_anchor_attempts`, so a
-settlement job that keeps retrying a permanently failing pair is throttled
-instead of re-running the data checks on every ledger:
+settlement/retry job that keeps hitting a permanently failing pair is
+throttled instead of re-running the data checks on every ledger:
 
 | Situation                                                                             | `AnchorFailureReason` | Effect                                                                                                   |
 | ------------------------------------------------------------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -1210,7 +1216,7 @@ instead of re-running the data checks on every ledger:
 | A data rejection that brings the count to `MAX_ANCHOR_ATTEMPTS`                       | (the data reason)     | `anchrfail` plus one `anchrxhst` whose topics name the pair and whose data is the final `AnchorAttempts` |
 | An anchor is written for the pair (either entry point)                                | —                     | The pair's attempt history is deleted                                                                    |
 
-Both throttling reasons exist only on this reporting path;
+Both throttling reasons exist only on the reporting/retry paths;
 `AnchorFailureReason::as_error` maps them to `InvalidPaymentTransition` so the
 mapping stays total. `get_anchor_status` exposes the explicit lifecycle:
 `Missing`, `Pending` (retryable/in-progress), `Failed` (retries exhausted), or
