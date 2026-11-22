@@ -1257,6 +1257,154 @@ fn register_with_hash_immutably_binds_metadata_pointer() {
 }
 
 #[test]
+fn content_and_attestation_hashes_normalize_consistently_across_methods() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+    let expected = String::from_str(&env, "sha256:abcd1234ef56");
+    let metadata = String::from_str(&env, "ipfs://QmNormalize");
+
+    // Every accepted spelling of the same digest must land on one canonical
+    // value, whether it arrives through register_with_hash, register_with_memo,
+    // register_batch, or set_verification_status.
+    let variants = [
+        "  SHA256:AbCd1234Ef56  ",
+        "SHA-256:0xABCD1234EF56",
+        "0xAbCd1234Ef56",
+        "  abcd1234ef56\t\n",
+    ];
+    for (index, raw_hash) in variants.iter().enumerate() {
+        let id = String::from_str(&env, &alloc::format!("normhash{index}"));
+        let input = String::from_str(&env, raw_hash);
+        if index == 1 {
+            client.register_with_memo(
+                &creator,
+                &id,
+                &100i128,
+                &metadata,
+                &empty_tags(&env),
+                &Some(input.clone()),
+                &Some(BytesN::from_array(&env, &[index as u8; 32])),
+            );
+        } else {
+            client.register_with_hash(
+                &creator,
+                &id,
+                &100i128,
+                &metadata,
+                &empty_tags(&env),
+                &Some(input.clone()),
+            );
+        }
+        assert_eq!(client.get(&id).content_hash, Some(expected.clone()));
+
+        client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &Some(input));
+        assert_eq!(client.get_attestation_hash(&id), Some(expected.clone()));
+    }
+
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "normbatch"),
+        price: 100i128,
+        metadata: metadata.clone(),
+        tags: empty_tags(&env),
+        content_hash: Some(String::from_str(&env, "  SHA-256:0xABCD1234EF56\n")),
+    });
+    let result = client.register_batch(&creator, &items);
+    assert_eq!(result.succeeded.len(), 1);
+    assert_eq!(result.failed.len(), 0);
+    assert_eq!(
+        client
+            .get(&String::from_str(&env, "normbatch"))
+            .content_hash,
+        Some(expected.clone())
+    );
+
+    // Malformed encodings are rejected with the field's existing error.
+    let bad_hashes = ["   \t ", "sha256:ab cd", "0x", "sha/256:abcd"];
+    for (index, raw_hash) in bad_hashes.iter().enumerate() {
+        let id = String::from_str(&env, &alloc::format!("normbad{index}"));
+        assert_eq!(
+            client.try_register_with_hash(
+                &creator,
+                &id,
+                &100i128,
+                &metadata,
+                &empty_tags(&env),
+                &Some(String::from_str(&env, raw_hash)),
+            ),
+            Err(Ok(Error::ContentHashTooLong))
+        );
+    }
+
+    // The same malformed inputs cannot change an already-verified resource.
+    let verified_id = String::from_str(&env, "normhash0");
+    for raw_hash in bad_hashes {
+        assert_eq!(
+            client.try_set_verification_status(
+                &verified_id,
+                &verifier,
+                &VerificationStatus::Rejected,
+                &Some(String::from_str(&env, raw_hash)),
+            ),
+            Err(Ok(Error::AttestationHashTooLong))
+        );
+    }
+    assert_eq!(
+        client.get(&verified_id).verified,
+        VerificationStatus::Verified
+    );
+    assert_eq!(client.get_attestation_hash(&verified_id), Some(expected));
+}
+
+#[test]
+fn verify_attestation_hash_accepts_equivalent_and_legacy_encodings() {
+    fn uppercase_variant(env: &Env, canonical: &String) -> String {
+        let mut bytes = alloc::vec![0u8; canonical.len() as usize];
+        canonical.copy_into_slice(&mut bytes);
+        let mut variant: alloc::vec::Vec<u8> = alloc::vec![];
+        variant.extend_from_slice(b"  SHA-256:0x");
+        for &byte in &bytes[b"sha256:".len()..] {
+            variant.push(byte.to_ascii_uppercase());
+        }
+        variant.extend_from_slice(b"\n");
+        String::from_bytes(env, &variant)
+    }
+
+    let (env, creator, _admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "vnorm1");
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+    let document_hash = BytesN::from_array(&env, &[7u8; 32]);
+    let verified_expected =
+        client.compute_attestation_hash(&id, &VerificationStatus::Verified, &document_hash);
+
+    // A legacy mixed-case record written before canonical storage still
+    // verifies, without a storage migration.
+    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
+    let legacy = uppercase_variant(&env, &verified_expected);
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::AttestationHash(id.clone()), &legacy);
+    });
+    assert!(client.verify_attestation_hash(&id, &VerificationStatus::Verified, &document_hash));
+
+    // New writes canonicalize the mixed-case spelling on the way in.
+    let rejected_expected =
+        client.compute_attestation_hash(&id, &VerificationStatus::Rejected, &document_hash);
+    let rejected_variant = uppercase_variant(&env, &rejected_expected);
+    client.set_verification_status(
+        &id,
+        &verifier,
+        &VerificationStatus::Rejected,
+        &Some(rejected_variant),
+    );
+    assert_eq!(client.get_attestation_hash(&id), Some(rejected_expected));
+    assert!(client.verify_attestation_hash(&id, &VerificationStatus::Rejected, &document_hash));
+}
+
+#[test]
 fn register_with_hash_without_content_hash_keeps_metadata_mutable() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "hashoptional");

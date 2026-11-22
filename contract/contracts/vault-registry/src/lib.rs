@@ -372,6 +372,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("get_anchor_attempts", "—"),
     // ── Access leases ─────────────────────────────────────────────────────
     ("buy_lease", "holder"),
+    ("extend_lease", "holder"),
     ("record_lease", "settler + holder"),
     ("settle_lease", "settler"),
     ("revoke_lease", "creator"),
@@ -442,8 +443,8 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (42, "ReceiptAlreadyExists", "A payment or refund receipt is already stored for the supplied id."),
     (43, "InvalidPaymentTransition", "Payment is not settled, its creator refund deadline has expired, or a payment state transition is not allowed."),
     (44, "InvalidReceiptId", "`receipt_id` is empty or exceeds `MAX_RECEIPT_ID_LEN` (64 bytes)."),
-    (45, "ContentHashTooLong", "`content_hash` exceeds `MAX_CONTENT_HASH_LEN` (128 bytes)."),
-    (46, "AttestationHashTooLong", "`attestation_hash` exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes)."),
+    (45, "ContentHashTooLong", "`content_hash` is empty, malformed, or exceeds `MAX_CONTENT_HASH_LEN` (128 bytes) after normalization."),
+    (46, "AttestationHashTooLong", "`attestation_hash` is empty, malformed, or exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes) after normalization."),
     (47, "PaymentAmountMismatch", "Payment amount differs from the resource price or cumulative refunds exceed the original payment."),
     (48, "DuplicateTxHash", "A payment or refund receipt already uses the supplied transaction hash (`tx_hash`)."),
     (49, "FeeConfigNotSet", "`set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`."),
@@ -1692,9 +1693,11 @@ pub enum Error {
     InvalidPaymentTransition = 43,
     /// `receipt_id` is empty or exceeds `MAX_RECEIPT_ID_LEN` (64 bytes).
     InvalidReceiptId = 44,
-    /// `content_hash` exceeds `MAX_CONTENT_HASH_LEN` (128 bytes).
+    /// `content_hash` is empty, malformed, or exceeds `MAX_CONTENT_HASH_LEN`
+    /// (128 bytes) after normalization.
     ContentHashTooLong = 45,
-    /// `attestation_hash` exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes).
+    /// `attestation_hash` is empty, malformed, or exceeds
+    /// `MAX_ATTESTATION_HASH_LEN` (64 bytes) after normalization.
     AttestationHashTooLong = 46,
     /// Payment receipt amount does not match the resource's current price.
     PaymentAmountMismatch = 47,
@@ -1764,8 +1767,10 @@ impl VaultRegistry {
     /// registration: `update_metadata` cannot change it afterward. Passing
     /// `None` preserves the mutable metadata behavior of `register`.
     ///
-    /// Rejects an empty hash or one longer than `MAX_CONTENT_HASH_LEN`
-    /// (`ContentHashTooLong`). All other validation matches `register`.
+    /// The hash is trimmed, lowercased, and prefix-normalized before storage,
+    /// so equivalent spellings of the same digest produce one canonical value.
+    /// Rejects empty, malformed, or over-long hashes (`ContentHashTooLong`).
+    /// All other validation matches `register`.
     pub fn register_with_hash(
         env: Env,
         creator: Address,
@@ -2250,7 +2255,9 @@ impl VaultRegistry {
     /// this. Only `Pending -> Verified`, `Pending -> Rejected`,
     /// `Verified -> Rejected`, and `Rejected -> Verified` are allowed;
     /// self-transitions and reverting to `Pending` error with
-    /// `InvalidVerificationTransition`.
+    /// `InvalidVerificationTransition`. Attestation hashes use the same
+    /// normalization rules as registration content hashes before being stored
+    /// and emitted.
     pub fn set_verification_status(
         env: Env,
         id: String,
@@ -2377,10 +2384,15 @@ impl VaultRegistry {
         if resource.verified != status {
             return false;
         }
-        match Self::get_attestation_hash(env.clone(), id.clone()) {
-            Some(stored) => {
-                stored == Self::compute_attestation_hash(env, id, status, document_hash)
-            }
+        let expected =
+            Self::compute_attestation_hash(env.clone(), id.clone(), status, document_hash);
+        match Self::get_attestation_hash(env.clone(), id) {
+            // Legacy records may predate canonical storage. Normalize the
+            // stored value before comparing so equivalent spellings still
+            // verify without requiring a storage migration.
+            Some(stored) => Self::normalize_attestation_hash(&env, &stored)
+                .map(|normalized| normalized == expected)
+                .unwrap_or(false),
             None => false,
         }
     }
@@ -5487,6 +5499,12 @@ impl VaultRegistry {
             return Err(Error::InvalidTxHash);
         }
 
+        if let Some((bound_res, bound_buyer)) = Self::anchor_hash_binding(&env, &new_receipt_hash) {
+            if bound_res != resource_id || bound_buyer != buyer {
+                return Err(Error::DuplicateReceipt);
+            }
+        }
+
         Self::write_anchor(&env, resource_id, buyer, new_receipt_hash);
         Ok(())
     }
@@ -5621,6 +5639,49 @@ impl VaultRegistry {
         Self::require_not_paused(&env)?;
         Self::validate_resource_id(&resource_id)?;
 
+        if receipt_hash.is_empty() || receipt_hash.len() > MAX_TX_HASH_LEN {
+            return Self::report_anchor_failure(
+                &env,
+                resource_id,
+                buyer,
+                receipt_hash,
+                AnchorFailureReason::InvalidReceiptHash,
+            );
+        }
+
+        let anchor_key = DataKey::PurchaseReceipt(resource_id.clone(), buyer.clone());
+        if let Some(existing) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, PurchaseReceiptAnchor>(&anchor_key)
+        {
+            // Same hash is the desired end state, so a blind retry converges
+            // even if a later payment has advanced PaymentIndex. A different
+            // hash is a real conflict and must never replace the anchor.
+            if existing.receipt_hash == receipt_hash {
+                return Ok(true);
+            }
+            return Self::report_anchor_failure(
+                &env,
+                resource_id,
+                buyer,
+                receipt_hash,
+                AnchorFailureReason::DuplicateReceipt,
+            );
+        }
+
+        if let Some((bound_res, bound_buyer)) = Self::anchor_hash_binding(&env, &receipt_hash) {
+            if bound_res != resource_id || bound_buyer != buyer {
+                return Self::report_anchor_failure(
+                    &env,
+                    resource_id,
+                    buyer,
+                    receipt_hash,
+                    AnchorFailureReason::DuplicateReceipt,
+                );
+            }
+        }
+
         // Resolve the payment this anchor must correspond to.
         let receipt_id: String = match env
             .storage()
@@ -5655,15 +5716,6 @@ impl VaultRegistry {
             }
         };
 
-        if receipt_hash.is_empty() || receipt_hash.len() > MAX_TX_HASH_LEN {
-            return Self::report_anchor_failure(
-                &env,
-                resource_id,
-                buyer,
-                receipt_hash,
-                AnchorFailureReason::InvalidReceiptHash,
-            );
-        }
         if receipt_hash != receipt.tx_hash {
             return Self::report_anchor_failure(
                 &env,
@@ -5671,23 +5723,6 @@ impl VaultRegistry {
                 buyer,
                 receipt_hash,
                 AnchorFailureReason::ReceiptHashMismatch,
-            );
-        }
-
-        let anchor_key = DataKey::PurchaseReceipt(resource_id.clone(), buyer.clone());
-        let existing: Option<PurchaseReceiptAnchor> = env.storage().persistent().get(&anchor_key);
-        if let Some(existing) = existing {
-            // Already anchored. Same hash is the desired end state, so a blind
-            // retry loop converges; a different hash is a real conflict.
-            if existing.receipt_hash == receipt_hash {
-                return Ok(true);
-            }
-            return Self::report_anchor_failure(
-                &env,
-                resource_id,
-                buyer,
-                receipt_hash,
-                AnchorFailureReason::DuplicateReceipt,
             );
         }
 
@@ -6054,10 +6089,80 @@ impl VaultRegistry {
         )
     }
 
+    /// Extend an existing `Active` lease for `(resource_id, holder)` without
+    /// changing the holder or resource it is bound to. The original binding is
+    /// read from storage rather than inferred from the call arguments, so a
+    /// resource ownership transfer cannot move a lease to a new owner and a
+    /// different holder cannot take one over.
+    ///
+    /// Requires the holder's authorization, a `Listed` resource, and the exact
+    /// price of `tier`. `Pending` and `Revoked` leases are rejected with
+    /// `InvalidPaymentTransition`; a mismatched stored binding is rejected
+    /// with `Unauthorized`; reusing the recorded `tx_hash` is rejected with
+    /// `DuplicateTxHash`. The new payment is added to `amount`, the window is
+    /// extended from the later of the current ledger and the old expiry, and
+    /// the original `start_ledger` is retained. Emits `lease`.
+    pub fn extend_lease(
+        env: Env,
+        holder: Address,
+        resource_id: String,
+        tier: LeaseTier,
+        amount: i128,
+        tx_hash: String,
+    ) -> Result<Lease, Error> {
+        holder.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::require_payment_not_paused(&env)?;
+        Self::validate_resource_id(&resource_id)?;
+        Self::validate_payment_amount(amount)?;
+        Self::validate_tx_hash(&tx_hash)?;
+
+        let resource = Self::load(&env, &resource_id)?;
+        if resource.state != ResourceState::Listed {
+            return Err(Error::ResourceNotMutable);
+        }
+        if amount != Self::tier_price(resource.price, tier)? {
+            return Err(Error::PaymentAmountMismatch);
+        }
+
+        let key = DataKey::Lease(resource_id.clone(), holder.clone());
+        let existing: Lease = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::NotFound)?;
+        Self::require_lease_binding(&existing, &resource_id, &holder)?;
+        if existing.state != LeaseState::Active {
+            return Err(Error::InvalidPaymentTransition);
+        }
+        if existing.tx_hash == tx_hash {
+            return Err(Error::DuplicateTxHash);
+        }
+
+        let now = env.ledger().sequence();
+        let base_ledger = existing.expiry_ledger.max(now);
+        let extended = Lease {
+            resource_id: existing.resource_id,
+            holder: existing.holder,
+            tier,
+            start_ledger: existing.start_ledger,
+            expiry_ledger: base_ledger.saturating_add(Self::tier_ledgers(tier)),
+            amount: existing.amount.saturating_add(amount),
+            tx_hash,
+            state: LeaseState::Active,
+            recorded_at: now,
+        };
+        env.storage().persistent().set(&key, &extended);
+        Self::bump_persistent(&env, &key);
+        env.events()
+            .publish((symbol_short!("lease"), resource_id), extended.clone());
+        Ok(extended)
+    }
+
     /// Advance a `Pending` lease to `Active` once its payment is confirmed.
     /// Requires the settler role. Errors `NotFound` if no lease exists for
-    /// the pair and `InvalidLeaseTransition` if it is not `Pending`. Emits
-    /// `leasesetl`.
+    /// the pair, `Unauthorized` if the stored binding does not match the pair,
+    /// and `InvalidPaymentTransition` if it is not `Pending`. Emits `leasesetl`.
     pub fn settle_lease(
         env: Env,
         settler: Address,
@@ -6071,12 +6176,13 @@ impl VaultRegistry {
         Self::require_not_paused(&env)?;
         Self::require_payment_not_paused(&env)?;
         Self::validate_resource_id(&resource_id)?;
-        let key = DataKey::Lease(resource_id.clone(), holder);
+        let key = DataKey::Lease(resource_id.clone(), holder.clone());
         let mut lease: Lease = env
             .storage()
             .persistent()
             .get(&key)
             .ok_or(Error::NotFound)?;
+        Self::require_lease_binding(&lease, &resource_id, &holder)?;
         if lease.state != LeaseState::Pending {
             return Err(Error::InvalidPaymentTransition);
         }
@@ -6716,43 +6822,140 @@ impl VaultRegistry {
         }
     }
 
-    fn normalize_attestation_hash(env: &Env, hash: &String) -> Result<String, Error> {
-        let bytes = Self::string_bytes(hash);
-        let mut separator = None;
-        for (idx, byte) in bytes.iter().enumerate() {
-            if *byte == b':' {
-                separator = Some(idx);
-                break;
-            }
+    /// Split a supplied hash into its canonical algorithm and digest bytes.
+    ///
+    /// Registration content hashes and verification attestation hashes accept
+    /// the same spelling variants: surrounding ASCII whitespace is ignored,
+    /// ASCII case is folded, a `0x` digest prefix is removed, and `:` separates
+    /// an optional algorithm from its digest. Internal whitespace or control
+    /// bytes are never valid in a hash. Callers supply the field-specific error
+    /// because the two fields have different length limits but reject the same
+    /// malformed encodings. `max_len` bounds the trimmed input before any
+    /// canonical prefix is added.
+    fn normalize_hash_parts(
+        hash: &String,
+        malformed: Error,
+        max_len: usize,
+    ) -> Result<(Option<alloc::vec::Vec<u8>>, alloc::vec::Vec<u8>), Error> {
+        let raw = Self::string_bytes(hash);
+        let mut start = 0usize;
+        let mut end = raw.len();
+        while start < end && raw[start].is_ascii_whitespace() {
+            start += 1;
+        }
+        while end > start && raw[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        if start == end || end - start > max_len {
+            return Err(malformed);
         }
 
-        if let Some(separator) = separator {
-            let algorithm = &bytes[..separator];
-            let digest = &bytes[separator + 1..];
-            if algorithm.is_empty()
-                || algorithm.len() > MAX_ATTESTATION_HASH_ALGORITHM_LEN as usize
-                || digest.is_empty()
-                || digest.len() > MAX_ATTESTATION_HASH_LEN as usize
-            {
-                return Err(Error::AttestationHashTooLong);
+        let mut lower = alloc::vec::Vec::with_capacity(end - start);
+        for &byte in &raw[start..end] {
+            if byte.is_ascii_whitespace() || byte.is_ascii_control() {
+                return Err(malformed);
             }
-            for &byte in algorithm {
-                if !matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_') {
-                    return Err(Error::AttestationHashTooLong);
+            lower.push(byte.to_ascii_lowercase());
+        }
+
+        let separator = lower.iter().position(|&byte| byte == b':');
+        let (algorithm, digest) = match separator {
+            Some(separator) => {
+                let algorithm = &lower[..separator];
+                if algorithm.is_empty()
+                    || !algorithm
+                        .iter()
+                        .all(|&byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_'))
+                {
+                    return Err(malformed);
                 }
+                (Some(algorithm.to_vec()), &lower[separator + 1..])
             }
-            return Ok(hash.clone());
+            None => (None, lower.as_slice()),
+        };
+
+        let digest = if digest.len() >= 2 && digest[0] == b'0' && digest[1] == b'x' {
+            &digest[2..]
+        } else {
+            digest
+        };
+        if digest.is_empty() {
+            return Err(malformed);
+        }
+        Ok((algorithm, digest.to_vec()))
+    }
+
+    /// Return the canonical storage form of a registration content hash.
+    ///
+    /// `SHA256:AbCd…`, `SHA-256:0xABCD…`, `0xAbCd…`, and surrounding
+    /// whitespace all normalize to `sha256:abcd…`. Explicit algorithms are
+    /// lowercased and preserved; untagged digests gain the default `sha256:`
+    /// prefix when it fits the 128-byte limit, and keep their legacy bare form
+    /// when it does not.
+    fn normalize_content_hash(env: &Env, hash: &String) -> Result<String, Error> {
+        let (algorithm, digest) = Self::normalize_hash_parts(
+            hash,
+            Error::ContentHashTooLong,
+            MAX_CONTENT_HASH_LEN as usize,
+        )?;
+        if digest.len() > MAX_CONTENT_HASH_LEN as usize {
+            return Err(Error::ContentHashTooLong);
         }
 
-        if bytes.is_empty() || bytes.len() > MAX_ATTESTATION_HASH_LEN as usize {
+        let canonical_algorithm: &[u8] = match algorithm.as_deref() {
+            Some(algorithm) if algorithm == b"sha-256" => {
+                DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes()
+            }
+            Some(algorithm) => algorithm,
+            None => DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes(),
+        };
+
+        let tagged_len = canonical_algorithm.len() + 1 + digest.len();
+        if algorithm.is_some() || tagged_len <= MAX_CONTENT_HASH_LEN as usize {
+            let mut out = alloc::vec::Vec::with_capacity(tagged_len);
+            out.extend_from_slice(canonical_algorithm);
+            out.push(b':');
+            out.extend_from_slice(&digest);
+            if out.len() > MAX_CONTENT_HASH_LEN as usize {
+                return Err(Error::ContentHashTooLong);
+            }
+            return Ok(String::from_bytes(env, &out));
+        }
+
+        Ok(String::from_bytes(env, &digest))
+    }
+
+    /// Return the canonical storage form of a verification attestation hash.
+    /// Uses the same spelling rules as [`Self::normalize_content_hash`], with
+    /// the attestation-specific algorithm and digest length limits.
+    fn normalize_attestation_hash(env: &Env, hash: &String) -> Result<String, Error> {
+        // Algorithm, colon, digest, and an optional `0x` prefix.
+        const MAX_INPUT_LEN: usize =
+            MAX_ATTESTATION_HASH_ALGORITHM_LEN as usize + 1 + MAX_ATTESTATION_HASH_LEN as usize + 2;
+        let (algorithm, digest) =
+            Self::normalize_hash_parts(hash, Error::AttestationHashTooLong, MAX_INPUT_LEN)?;
+        if digest.len() > MAX_ATTESTATION_HASH_LEN as usize {
             return Err(Error::AttestationHashTooLong);
         }
-        let mut tagged = alloc::vec::Vec::with_capacity(
-            DEFAULT_ATTESTATION_HASH_ALGORITHM.len() + 1 + bytes.len(),
-        );
-        tagged.extend_from_slice(DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes());
+
+        let canonical_algorithm: &[u8] = match algorithm.as_deref() {
+            Some(algorithm) if algorithm == b"sha-256" => {
+                DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes()
+            }
+            Some(algorithm) => {
+                if algorithm.len() > MAX_ATTESTATION_HASH_ALGORITHM_LEN as usize {
+                    return Err(Error::AttestationHashTooLong);
+                }
+                algorithm
+            }
+            None => DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes(),
+        };
+
+        let mut tagged =
+            alloc::vec::Vec::with_capacity(canonical_algorithm.len() + 1 + digest.len());
+        tagged.extend_from_slice(canonical_algorithm);
         tagged.push(b':');
-        tagged.extend_from_slice(&bytes);
+        tagged.extend_from_slice(&digest);
         Ok(String::from_bytes(env, &tagged))
     }
 
@@ -7357,11 +7560,26 @@ impl VaultRegistry {
         Ok(())
     }
 
+    /// Reverse index key for a receipt hash. The stored `(resource_id, buyer)`
+    /// pair identifies the purchase the hash already anchors, so a retry or
+    /// alternate hash cannot silently rebind it to a different purchase.
+    fn anchor_hash_key(receipt_hash: &String) -> (Symbol, String) {
+        (symbol_short!("anc_hash"), receipt_hash.clone())
+    }
+
+    /// The purchase currently bound to `receipt_hash`, if any.
+    fn anchor_hash_binding(env: &Env, receipt_hash: &String) -> Option<(String, Address)> {
+        env.storage()
+            .persistent()
+            .get(&Self::anchor_hash_key(receipt_hash))
+    }
+
     /// The reason this `(resource_id, buyer)` anchor cannot be written, or
-    /// `None` when it can. Shared by `anchor_purchase_receipt` (which turns it
-    /// into an `Error`) and `attempt_anchor_purchase_receipt` (which turns it
-    /// into an `anchrfail` event), so the two can never disagree about what
-    /// counts as anchorable.
+    /// `None` when it can. A receipt hash already bound to a different pair is
+    /// the same `DuplicateReceipt` conflict as an anchored pair. Shared by
+    /// `anchor_purchase_receipt` (which turns it into an `Error`) and
+    /// `attempt_anchor_purchase_receipt` (which turns it into an `anchrfail`
+    /// event), so the two can never disagree about what counts as anchorable.
     fn anchor_blocker(
         env: &Env,
         resource_id: &String,
@@ -7384,14 +7602,21 @@ impl VaultRegistry {
         )) {
             return Some(AnchorFailureReason::DuplicateReceipt);
         }
+        if let Some((bound_res, bound_buyer)) = Self::anchor_hash_binding(env, receipt_hash) {
+            if &bound_res != resource_id || &bound_buyer != buyer {
+                return Some(AnchorFailureReason::DuplicateReceipt);
+            }
+        }
         None
     }
 
     /// Persist an [`AnchorFailure`] for `(resource_id, buyer)` and emit
     /// `anchrfail`, returning `Ok(false)` so callers can `return` it directly.
-    /// Overwrites any earlier record: the newest reason describes the current
-    /// attempt, and a pair cannot be both anchored and failing. The record is
-    /// the durable half — the event alone is lost if the caller batches.
+    /// When the pair is already anchored the event is still emitted, but no
+    /// failure record is written: the conflict must not make
+    /// `get_anchor_failure` disagree with `get_purchase_receipt`. Otherwise the
+    /// newest reason replaces any earlier record. The record is the durable
+    /// half — the event alone is lost if the caller batches.
     fn report_anchor_failure(
         env: &Env,
         resource_id: String,
@@ -7399,6 +7624,7 @@ impl VaultRegistry {
         receipt_hash: String,
         reason: AnchorFailureReason,
     ) -> Result<bool, Error> {
+        let anchor_key = DataKey::PurchaseReceipt(resource_id.clone(), buyer.clone());
         let key = DataKey::AnchorFailure(resource_id.clone(), buyer.clone());
         let failure = AnchorFailure {
             resource_id: resource_id.clone(),
@@ -7407,8 +7633,10 @@ impl VaultRegistry {
             reason,
             ledger: env.ledger().sequence(),
         };
-        env.storage().persistent().set(&key, &failure);
-        Self::bump_persistent(env, &key);
+        if !env.storage().persistent().has(&anchor_key) {
+            env.storage().persistent().set(&key, &failure);
+            Self::bump_persistent(env, &key);
+        }
         env.events()
             .publish((symbol_short!("anchrfail"), resource_id), failure);
         Ok(false)
@@ -7437,7 +7665,23 @@ impl VaultRegistry {
         lease.state == LeaseState::Active && env.ledger().sequence() < lease.expiry_ledger
     }
 
+    /// A lease is always addressed by `(resource_id, holder)`. Refuse to write
+    /// through that key when the stored record claims a different binding, so
+    /// renewal cannot silently move a lease to another resource or holder.
+    fn require_lease_binding(
+        lease: &Lease,
+        resource_id: &String,
+        holder: &Address,
+    ) -> Result<(), Error> {
+        if &lease.holder != holder || &lease.resource_id != resource_id {
+            return Err(Error::Unauthorized);
+        }
+        Ok(())
+    }
+
     /// Validation and storage shared by `buy_lease` and `record_lease`.
+    /// A stored record whose binding disagrees with the key is rejected rather
+    /// than overwritten, so replacement leases cannot inherit a stale binding.
     fn write_lease(
         env: &Env,
         holder: Address,
@@ -7463,6 +7707,7 @@ impl VaultRegistry {
 
         let key = DataKey::Lease(resource_id.clone(), holder.clone());
         if let Some(existing) = env.storage().persistent().get::<DataKey, Lease>(&key) {
+            Self::require_lease_binding(&existing, &resource_id, &holder)?;
             let still_open =
                 existing.state == LeaseState::Pending || Self::lease_grants_access(env, &existing);
             if still_open {
@@ -7509,6 +7754,21 @@ impl VaultRegistry {
             .persistent()
             .remove(&DataKey::AnchorAttempts(resource_id.clone(), buyer.clone()));
         let key = DataKey::PurchaseReceipt(resource_id.clone(), buyer.clone());
+        if let Some(prev) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, PurchaseReceiptAnchor>(&key)
+        {
+            // An admin override changes the pair's hash: release the old hash
+            // so it cannot keep blocking the purchase it no longer anchors.
+            let prev_hash_key = Self::anchor_hash_key(&prev.receipt_hash);
+            env.storage().persistent().remove(&prev_hash_key);
+        }
+        let hash_key = Self::anchor_hash_key(&receipt_hash);
+        env.storage()
+            .persistent()
+            .set(&hash_key, &(resource_id.clone(), buyer.clone()));
+        Self::bump_persistent(env, &hash_key);
         let anchor = PurchaseReceiptAnchor {
             resource_id: resource_id.clone(),
             buyer: buyer.clone(),
@@ -7806,12 +8066,10 @@ impl VaultRegistry {
         if Self::is_reserved_id(&id) {
             return Err(Error::ReservedId);
         }
-        if let Some(ref hash) = content_hash {
-            let hash_len = hash.len();
-            if hash_len == 0 || hash_len > MAX_CONTENT_HASH_LEN {
-                return Err(Error::ContentHashTooLong);
-            }
-        }
+        let content_hash = match content_hash {
+            Some(ref hash) => Some(Self::normalize_content_hash(&env, hash)?),
+            None => None,
+        };
         let key = DataKey::Resource(id.clone());
         if env.storage().persistent().has(&key) {
             return Err(Error::AlreadyRegistered);
