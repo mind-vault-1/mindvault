@@ -689,12 +689,54 @@ export const REGISTRY_INFO_OUTPUT_SCHEMA = {
   ],
 } as const;
 
+const NETWORK_PROFILE_SOURCE_SCHEMA = {
+  type: "string",
+  enum: ["env_override", "preset_default"],
+} as const;
+
+const NETWORK_PROFILE_SOURCED_STRING_SCHEMA = {
+  type: "object",
+  properties: {
+    value: { type: "string" },
+    source: NETWORK_PROFILE_SOURCE_SCHEMA,
+  },
+  required: ["value", "source"],
+} as const;
+
+const NETWORK_PROFILE_DIAGNOSTIC_SCHEMA = {
+  type: "object",
+  properties: {
+    variable: { type: "string" },
+    severity: { type: "string", enum: ["error", "warning"] },
+    message: { type: "string" },
+    expected: { type: "string" },
+  },
+  required: ["variable", "severity", "message"],
+} as const;
+
+const NETWORK_PROFILE_PROXY_SCHEMA = {
+  type: "object",
+  properties: {
+    enabled: { type: "boolean" },
+    httpProxy: { type: ["string", "null"] },
+    httpsProxy: { type: ["string", "null"] },
+    noProxy: { type: ["string", "null"] },
+  },
+  required: ["enabled", "httpProxy", "httpsProxy", "noProxy"],
+} as const;
+
 export const NETWORK_PROFILE_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
     schema: { type: "string", const: "mindvault.network-profile/v1" },
-    sections: { type: "array", items: { type: "string" } },
-    stellarNetwork: { type: "string" },
+    sections: {
+      type: "array",
+      items: {
+        type: "string",
+        enum: ["network", "endpoints", "contracts", "policies", "diagnostics"],
+      },
+    },
+    stellarNetwork: { type: "string", enum: ["testnet", "mainnet"] },
     x402Network: { type: "string" },
     sorobanRpcUrl: { type: "string" },
     horizonUrl: { type: "string" },
@@ -703,11 +745,59 @@ export const NETWORK_PROFILE_OUTPUT_SCHEMA = {
     timeouts: {},
     retries: {},
     warnings: { type: "array", items: { type: "string" } },
-    network: { type: "object" },
-    endpoints: { type: "object" },
-    contracts: { type: "object" },
-    policies: { type: "object" },
-    diagnostics: { type: "array", items: { type: "object" } },
+    network: {
+      type: "object",
+      properties: {
+        stellarNetwork: { type: "string", enum: ["testnet", "mainnet"] },
+        x402Network: NETWORK_PROFILE_SOURCED_STRING_SCHEMA,
+        networkPassphrase: { type: "string" },
+      },
+      required: ["stellarNetwork", "x402Network", "networkPassphrase"],
+    },
+    endpoints: {
+      type: "object",
+      properties: {
+        baseUrl: NETWORK_PROFILE_SOURCED_STRING_SCHEMA,
+        sorobanRpc: {
+          type: "object",
+          properties: {
+            value: {
+              type: "object",
+              properties: {
+                url: { type: "string" },
+                failoverUrls: { type: "array", items: { type: "string" } },
+              },
+              required: ["url", "failoverUrls"],
+            },
+            source: NETWORK_PROFILE_SOURCE_SCHEMA,
+          },
+          required: ["value", "source"],
+        },
+        horizonUrl: NETWORK_PROFILE_SOURCED_STRING_SCHEMA,
+        sponsoredAccountUrl: NETWORK_PROFILE_SOURCED_STRING_SCHEMA,
+      },
+      required: ["baseUrl", "sorobanRpc", "horizonUrl", "sponsoredAccountUrl"],
+    },
+    contracts: {
+      type: "object",
+      properties: {
+        registryContractId: NETWORK_PROFILE_SOURCED_STRING_SCHEMA,
+        usdcContractId: NETWORK_PROFILE_SOURCED_STRING_SCHEMA,
+      },
+      required: ["registryContractId", "usdcContractId"],
+    },
+    policies: {
+      type: "object",
+      properties: {
+        readOnly: { type: "boolean", const: true },
+        mainnetMutationConfirmationRequired: { type: "boolean" },
+        timeouts: { type: "string" },
+        retries: { type: "string" },
+      },
+      required: ["readOnly", "mainnetMutationConfirmationRequired", "timeouts", "retries"],
+    },
+    diagnostics: { type: "array", items: NETWORK_PROFILE_DIAGNOSTIC_SCHEMA },
+    proxy: NETWORK_PROFILE_PROXY_SCHEMA,
   },
   required: ["schema", "sections"],
 } as const;

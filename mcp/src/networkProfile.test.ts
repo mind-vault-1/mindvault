@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildNetworkProfile } from "./networkProfile.js";
+import { NETWORK_PROFILE_OUTPUT_SCHEMA } from "./outputSchemas.js";
+import { checkOutput } from "./outputValidation.js";
 
 const baseEnv = {
   STELLAR_NETWORK: "testnet",
@@ -72,5 +74,14 @@ describe("effective network profile", () => {
       expect.objectContaining({ variable: "STELLAR_NETWORK", severity: "warning" }),
       expect.objectContaining({ variable: "MINDVAULT_URL", severity: "error" }),
     ]);
+  });
+
+  it("produces output that conforms to the advertised nested schema", () => {
+    const profile = buildNetworkProfile(baseEnv, {
+      timeouts: "http=12000ms",
+      retries: "attempts=3",
+    });
+
+    expect(checkOutput(NETWORK_PROFILE_OUTPUT_SCHEMA, profile)).toEqual({ valid: true });
   });
 });
