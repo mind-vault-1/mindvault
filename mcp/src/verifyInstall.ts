@@ -123,28 +123,50 @@ function nodeMajor(version: string): number {
 }
 
 /**
- * Validate that a string is an absolute http(s) URL.
+ * Validate that a string is an absolute http(s) URL with no embedded credentials.
  * Returns null when the value is absent/empty (treated as "using default").
+ *
+ * Three failure modes are reported distinctly:
+ *   1. Completely unparseable — "not a valid URL"
+ *   2. Parseable but non-http(s) scheme — names the actual scheme
+ *   3. Valid http(s) URL but with embedded user:pass — flags without echoing creds
  */
 function urlIssue(variable: string, value: string | undefined): InstallCheck | null {
   if (!value || !value.trim()) return null; // unset → default in use, that is fine
+  const trimmed = value.trim();
+  let parsed: URL;
   try {
-    const url = new URL(value.trim());
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return {
-        name: variable,
-        ok: false,
-        detail: `${variable} must be an http(s) URL; got: "${redactSecrets(value)}"`,
-      };
-    }
-    return { name: variable, ok: true, detail: `${variable}: ${value.trim()} (custom)` };
+    parsed = new URL(trimmed);
   } catch {
     return {
       name: variable,
       ok: false,
-      detail: `${variable} is not a valid URL: "${redactSecrets(value)}"`,
+      detail: `${variable} is not a valid URL: "${redactSecrets(trimmed)}"`,
     };
   }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    const scheme = parsed.protocol.replace(/:$/, "");
+    return {
+      name: variable,
+      ok: false,
+      detail: `${variable} must be an http(s) URL; got unsupported scheme "${scheme}://"`,
+    };
+  }
+
+  if (parsed.username !== "" || parsed.password !== "") {
+    // Strip credentials before including the URL in the message.
+    return {
+      name: variable,
+      ok: false,
+      detail:
+        `${variable} must not contain embedded credentials (user:pass@host). ` +
+        `Use environment variables or a secrets manager instead. ` +
+        `Configured URL (credentials removed): ${redactSecrets(trimmed)}`,
+    };
+  }
+
+  return { name: variable, ok: true, detail: `${variable}: ${trimmed} (custom)` };
 }
 
 // ── Core ──────────────────────────────────────────────────────────────────────
