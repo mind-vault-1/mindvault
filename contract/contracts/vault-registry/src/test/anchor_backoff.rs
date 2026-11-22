@@ -180,3 +180,45 @@ fn throttle_reasons_map_to_a_total_error_mapping() {
         Error::InvalidPaymentTransition
     );
 }
+
+#[test]
+fn get_anchor_status_distinguishes_missing_pending_failed_and_confirmed() {
+    let (env, creator, service, client) = setup_with_anchor_service();
+    let id = register_default(&env, &creator, &client, "statall");
+    let buyer = Address::generate(&env);
+
+    assert_eq!(client.get_anchor_status(&id, &buyer), AnchorStatus::Missing);
+
+    assert!(!client.attempt_anchor_purchase_receipt(
+        &service,
+        &id,
+        &buyer,
+        &String::from_str(&env, "")
+    ));
+    assert_eq!(client.get_anchor_status(&id, &buyer), AnchorStatus::Pending);
+
+    for n in 2..=MAX_ANCHOR_ATTEMPTS {
+        if n > 1 {
+            advance_past_backoff(&env);
+        }
+        assert!(!client.attempt_anchor_purchase_receipt(
+            &service,
+            &id,
+            &buyer,
+            &String::from_str(&env, "")
+        ));
+    }
+    assert_eq!(client.get_anchor_status(&id, &buyer), AnchorStatus::Failed);
+
+    let id2 = register_default(&env, &creator, &client, "statok");
+    assert!(client.attempt_anchor_purchase_receipt(
+        &service,
+        &id2,
+        &buyer,
+        &String::from_str(&env, "sha256ok2")
+    ));
+    assert_eq!(
+        client.get_anchor_status(&id2, &buyer),
+        AnchorStatus::Confirmed
+    );
+}

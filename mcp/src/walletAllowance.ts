@@ -21,13 +21,7 @@
 
 import type { PaymentCeilingReading } from "./paymentCeiling.js";
 import { purchaseStatusOf, type PurchaseReceipt } from "./purchaseHistory.js";
-import {
-  USDC_DECIMALS,
-  stroopsToUsdc,
-  sumUsdc,
-  trimUsdc,
-  usdcToStroops,
-} from "./usdcAmount.js";
+import { USDC_DECIMALS, stroopsToUsdc, sumUsdc, trimUsdc, usdcToStroops } from "./usdcAmount.js";
 
 /** Identity of the USDC asset on the active network. */
 export interface UsdcAssetIdentity {

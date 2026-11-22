@@ -11,6 +11,8 @@ on:
       - "packages/**"
       - "mcp/**"
       - "contract/**"
+      - "docs/**"
+      - "scripts/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -33,6 +35,9 @@ jobs:
       - run: pnpm exec eslint "server/src/**/*.{ts,tsx}" "web/src/**/*.{ts,tsx}" "packages/**/*.{ts,tsx}" "mcp/src/**/*.{ts,tsx}"
       - run: pnpm exec prettier --check "server/**/*.{ts,tsx,js,json,md}" "web/**/*.{ts,tsx,js,json,md}" "packages/**/*.{ts,tsx,js,json,md}" "mcp/**/*.{ts,tsx,js,json,md}"
       - run: pnpm run build:registry-client
+      # The contract method/event reference is generated from the checked-in
+      # bindings and EVENT_SCHEMA; a stale page must fail the PR.
+      - run: pnpm contract:reference:check
       - run: pnpm --filter @mindvault/server typecheck
       - run: pnpm --filter @mindvault/server build
       - run: pnpm --filter @mindvault/web build

@@ -81,10 +81,15 @@ shared bounded view and is not included in the per-registration aggregate.
 - **`AnchorAttempts`** is written only when `attempt_anchor_purchase_receipt`
   rejects an anchor, holds two `u32`s, and is deleted as soon as an anchor is
   written for the pair, so it never outlives a successful settlement.
+- **Anchor hash index** adds one reverse entry per written anchor, keyed by the
+  receipt hash and holding its `(resource_id, buyer)` pair. It is updated in
+  `write_anchor` (including admin overrides), so conflicting retries cannot
+  rebind a hash that already anchors another purchase.
 - **`Lease (max-size)`** is one time-limited access lease keyed by
   `(resource_id, holder)`. The 128-byte `tx_hash` dominates the value; a
   holder holds at most one lease per resource, and a new purchase overwrites
-  an expired or revoked one rather than adding an entry.
+  an expired or revoked one rather than adding an entry. `extend_lease` updates
+  that same key in place, retaining the original holder and resource binding.
 
 - **`Resource`** dominates the per-registration cost, and `metadata` (up to 512
   bytes) dominates `Resource`. Storing a content pointer rather than content is
@@ -122,7 +127,9 @@ quietly raising rent. When growth is intended:
 2. Raise the affected budget in `storage_footprint_report`.
 3. Update the tables in this document to match.
 
-Related: [`contract-upgrade-checklist.md`](contract-upgrade-checklist.md) for
+Related: [`contract-ttl-lifecycle.md`](contract-ttl-lifecycle.md) for how
+these entries stay live and how operators extend or restore them;
+[`contract-upgrade-checklist.md`](contract-upgrade-checklist.md) for
 the deployment steps a storage-shape change implies, and the WASM size budget
 in
 [`contract/contracts/vault-registry/Makefile`](../contract/contracts/vault-registry/Makefile),
