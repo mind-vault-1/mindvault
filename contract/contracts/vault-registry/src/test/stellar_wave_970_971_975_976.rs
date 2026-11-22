@@ -56,7 +56,7 @@ fn get_revision_unchanged_on_rejected_and_noop_calls() {
 
     // Rejected: over-long metadata (> MAX_METADATA_POINTER_LEN).
     let mut long_buf = std::vec::Vec::from(*b"ipfs://");
-    long_buf.extend(core::iter::repeat(b'x').take(MAX_METADATA_POINTER_LEN as usize));
+    long_buf.extend(core::iter::repeat_n(b'x', MAX_METADATA_POINTER_LEN as usize));
     let long_meta = String::from_str(&env, core::str::from_utf8(&long_buf).unwrap());
     let _ = client.try_update_metadata(&id, &long_meta);
     assert_eq!(client.get_revision(&id), 0u32);

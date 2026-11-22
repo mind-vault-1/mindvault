@@ -21,10 +21,11 @@
  * changes in code changes the generated reference in the same PR.
  */
 
-import { DEFAULT_MAX_AUTO_PAY_USDC } from "./paymentCeiling.js";
+import { DEFAULT_MAX_AUTO_FEE_STROOPS, DEFAULT_MAX_AUTO_PAY_USDC } from "./paymentCeiling.js";
 import { DEFAULT_PAID_CONFIRMATION_POLICY } from "./paidOperations.js";
 import { DEFAULT_MAINNET_MUTATION_POLICY } from "./mainnetGuardrails.js";
-import { DEFAULT_RETRY_POLICY } from "./retry.js";
+import { DEFAULT_RETRY_POLICY, DEFAULT_TOOL_RETRY_BUDGET, RETRY_BUDGET_ENV } from "./retry.js";
+import { DEFAULT_UPSTREAM_CONCURRENCY, UPSTREAM_CONCURRENCY_ENV } from "./upstreamConcurrency.js";
 import { DEFAULT_TIMEOUTS, DEFAULT_USER_AGENT } from "./httpTimeout.js";
 import { DEFAULT_PREVIEW_MAX_BYTES, DEFAULT_PREVIEW_FIELD_MAX_CHARS } from "./previewLimits.js";
 import { DEFAULT_TOOL_DURATION_BUDGET_MS } from "./metrics.js";
@@ -302,6 +303,58 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
       "Duration budget a tool call should finish within; exceeded calls are counted by the metrics recorder.",
     default: `${DEFAULT_TOOL_DURATION_BUDGET_MS} (ms)`,
     source: "mcp/src/metrics.ts",
+  },
+  {
+    name: "PLATFORM_WALLET_ADDRESS",
+    description: "Optional platform Stellar address included in the wallet balance report.",
+    default: "unset",
+    source: "mcp/src/config.ts",
+  },
+  {
+    name: "MCP_LOG_LEVEL",
+    description: "Minimum severity for MCP diagnostic logs.",
+    default: "info",
+    values: ["debug", "info", "warn", "error"],
+    source: "mcp/src/logger.ts",
+  },
+  {
+    name: "MINDVAULT_MAX_AUTO_FEE_STROOPS",
+    description: "Maximum fee in stroops that an automatic registry submission may pay.",
+    default: DEFAULT_MAX_AUTO_FEE_STROOPS,
+    source: "mcp/src/paymentCeiling.ts",
+  },
+  {
+    name: "MINDVAULT_PURCHASES_EPOCH",
+    description: "Optional receipt history epoch. When set, history is scoped to that epoch.",
+    default: "unset",
+    source: "mcp/src/purchaseHistory.ts",
+  },
+  {
+    name: "MINDVAULT_REGISTRY_SCHEMA_VERSION",
+    description:
+      "Explicit override for the detected registry resource schema version. Leave unset to detect it normally.",
+    default: "unset",
+    source: "mcp/src/registrySchema.ts",
+  },
+  {
+    name: "MINDVAULT_RESOURCE_HISTORY_FILE",
+    description: "Path to the local resource history JSONL file.",
+    default: "~/.mindvault/resource-history.jsonl",
+    source: "mcp/src/resourceHistory.ts",
+  },
+  {
+    name: UPSTREAM_CONCURRENCY_ENV,
+    description:
+      "Process-wide maximum number of simultaneous upstream HTTP requests. Set a positive integer.",
+    default: `${DEFAULT_UPSTREAM_CONCURRENCY}`,
+    source: "mcp/src/upstreamConcurrency.ts",
+  },
+  {
+    name: RETRY_BUDGET_ENV,
+    description:
+      "Maximum extra attempts across all retryable requests in one tool call. Set 0 to disable tool retries.",
+    default: `${DEFAULT_TOOL_RETRY_BUDGET}`,
+    source: "mcp/src/retry.ts",
   },
   {
     name: "MINDVAULT_RETRY_ATTEMPTS",

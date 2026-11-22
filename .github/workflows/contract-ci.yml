@@ -71,34 +71,8 @@ jobs:
         run: stellar contract build --manifest-path Cargo.toml --optimize
 
       - name: Enforce WASM size budget
-        working-directory: contract
-        run: |
-          WASM_FILE="target/wasm32v1-none/release/vault_registry.wasm"
-          # 156 KB. Raised from 148 KB when `list_by_creator_page_filtered`
-          # and `search_by_tag_prefix` landed: the two new exported read
-          # methods add spec entries and XDR conversion code, taking the
-          # optimized WASM from 150,639 to 153,781 bytes.
-          # Each contracttype variant and exported method generates spec and
-          # XDR conversion code, so a handful of new methods is worth a few
-          # kilobytes.
-          # The 148 KB figure was raised from 112 KB when the 12 missing
-          # DataKey variants (PaymentRecipient, RefundReceipt, RefundTxHash,
-          # RefundDeadline, RefundedAmount, RefundWindow, VerifierHistory,
-          # CreatorEarnings, FlagModerator, Lease, AnchorAttempts,
-          # RegistryTerms) were restored to the enum and `state_digest` /
-          # `update_metadata_many` landed: the optimized WASM went from an
-          # uncompilable state to ~143 KB. The 112 KB figure had itself been
-          # raised from 96 KB when leases, anchor backoff, and cursor pages
-          # landed.
-          # The release profile already uses opt-level "z", LTO, one codegen
-          # unit and stripped symbols.
-          MAX_SIZE=159744
-          SIZE=$(stat -c%s "$WASM_FILE")
-          echo "WASM Size: $SIZE bytes"
-          if [ "$SIZE" -gt "$MAX_SIZE" ]; then
-            echo "::error::WASM size ($SIZE bytes) exceeds the maximum allowed budget ($MAX_SIZE bytes). Please optimize or explicitly update the budget if this growth is expected."
-            exit 1
-          fi
+        working-directory: contract/contracts/vault-registry
+        run: make check-wasm-size
 
       # Complements the hard budget check above: that one only catches an
       # absolute overage, so a build that grows 20% but stays under the cap

@@ -117,13 +117,11 @@ function isSecretFieldName(fieldName: string): boolean {
   return secretFields.some((field) => lowerName.includes(field.toLowerCase()));
 }
 
-/**
- * Safe error logging that redacts secrets from error messages.
- *
- * @param error - The error to log
- * @returns A safe error message with secrets redacted
- */
-export function safeErrorMessage(error: unknown): string {
+/** How many nested `cause` links `safeErrorMessage` follows (#1193). */
+const MAX_ERROR_CAUSE_DEPTH = 4;
+
+/** Redact one link of an error chain without duplicating its `cause` payload. */
+function redactErrorSegment(error: unknown): string {
   if (error instanceof Error) {
     return redactSecrets(error.message);
   }
@@ -131,10 +129,58 @@ export function safeErrorMessage(error: unknown): string {
     return redactSecrets(error);
   }
   try {
-    return redactSecrets(JSON.stringify(redactObject(error)));
+    let value: unknown = error;
+    if (error !== null && typeof error === "object") {
+      value = Object.fromEntries(
+        Object.entries(error as Record<string, unknown>).filter(([key]) => key !== "cause"),
+      );
+    }
+    return redactSecrets(JSON.stringify(redactObject(value)) ?? String(error));
   } catch {
     return redactSecrets(String(error));
   }
+}
+
+/**
+ * Safe error logging that redacts secrets from an error and its `cause` chain.
+ *
+ * Errors from fetch/RPC layers often wrap the useful message (and the secret
+ * that came with it) in one or more `cause` links. Every link is redacted
+ * independently, traversal is bounded, and circular chains are reported with a
+ * fixed marker so the result is deterministic (#1193).
+ *
+ * @param error - The error to log
+ * @returns A safe error message with secrets redacted
+ */
+export function safeErrorMessage(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  let depth = 0;
+
+  while (current !== null && current !== undefined) {
+    if (typeof current === "object" || typeof current === "function") {
+      if (seen.has(current)) {
+        parts.push("[REDACTED: circular error cause]");
+        break;
+      }
+      seen.add(current);
+    }
+    parts.push(redactErrorSegment(current));
+
+    const cause = (current as { cause?: unknown }).cause;
+    if (cause === null || cause === undefined) {
+      break;
+    }
+    if (depth + 1 >= MAX_ERROR_CAUSE_DEPTH) {
+      parts.push("[REDACTED: error cause chain truncated]");
+      break;
+    }
+    current = cause;
+    depth += 1;
+  }
+
+  return parts.join(": ");
 }
 
 /**

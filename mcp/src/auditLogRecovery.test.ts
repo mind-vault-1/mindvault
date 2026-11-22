@@ -59,9 +59,9 @@ describe("journal recovery at rotation boundaries", () => {
       it(`recovers phase ${phase} after ${step} renames`, () => {
         const path = setup();
         const config = { path, maxBytes: 1024, maxFiles: 3 };
-        writeFileSync(path, '{"id":"live"}\\n');
-        writeFileSync(rotatedPath(path, 1), '{"id":"one"}\\n');
-        writeFileSync(rotatedPath(path, 2), '{"id":"two"}\\n');
+        writeFileSync(path, '{"id":"live"}\n');
+        writeFileSync(rotatedPath(path, 1), '{"id":"one"}\n');
+        writeFileSync(rotatedPath(path, 2), '{"id":"two"}\n');
         writeFileSync(path + ".rotation-journal", phase);
         const sources = [0, 1, 2].map((n) => (n === 0 ? path : rotatedPath(path, n)));
         const staged = (n: number) => path + ".rotation-stage-" + n;
