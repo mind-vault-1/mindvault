@@ -93,7 +93,13 @@ import {
   mockSetListed,
   mockSetTags,
 } from "./mock.js";
-import { purchaseHistoryTool, recordPurchase, loadPurchaseHistory } from "./purchaseHistory.js";
+import {
+  listPurchases,
+  loadPurchaseHistory,
+  purchaseHistoryTool,
+  purchaseStatusOf,
+  recordPurchase,
+} from "./purchaseHistory.js";
 import { Mutex } from "./mutex.js";
 import { exportReceiptsTool } from "./receipts.js";
 import { debugBundleTool } from "./debugBundle.js";
@@ -153,6 +159,11 @@ import {
   type PublishStatusFetch,
 } from "./publishStatus.js";
 import {
+  publishOperationId,
+  publishStatusTarget,
+  type PublishOperationScope,
+} from "./publishOperation.js";
+import {
   normalizeIntervalMs as normalizeResourceIntervalMs,
   normalizeTimeoutMs as normalizeResourceTimeoutMs,
   normalizeWaitFlag as normalizeResourceWaitFlag,
@@ -173,6 +184,7 @@ import {
 } from "./paymentCeiling.js";
 import {
   USDC_DECIMALS,
+  checkUsdcAmountInput,
   compareUsdc,
   normalizeUsdcBalance,
   stroopsToUsdc,
@@ -1985,82 +1997,6 @@ async function walletBalancesOutcome(): Promise<ToolOutcome> {
   };
 }
 
-// ── Wallet allowance (#1052) ─────────────────────────────────────────────────
-
-/**
- * Summarize USDC balance, estimated pending spend, and payment ceiling for
- * the active wallet and network.
- *
- * Read-only: no signing, no transfer, no state mutation.
- *
- * Pending spend is the sum of local purchase receipts from the past 24 h
- * scoped to the active profile and current network. It is labeled as an
- * estimate because receipts are written on payment submission; on-chain
- * settlement may differ if a transaction is retried or not yet confirmed.
- */
-async function walletAllowanceOutcome(): Promise<ToolOutcome> {
-  const wallet = requireWallet();
-  const profile = activeProfileName;
-  const network = NETWORK; // e.g. "stellar:testnet"
-  const usdcContractId = process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId ?? "";
-  const ceiling = process.env.MINDVAULT_MAX_AUTO_PAY_USDC ?? DEFAULT_MAX_AUTO_PAY_USDC;
-
-  // Fetch live balance — same call as walletInfo.
-  const details = await getBalanceDetails(wallet.publicKey);
-
-  // Estimate pending spend: receipts from the last 24 h for this profile + network.
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const store = loadPurchaseHistory();
-  const recentReceipts = store.purchases.filter((r) => {
-    if (r.network !== network) return false;
-    if (r.profile !== undefined && r.profile !== profile) return false;
-    return new Date(r.timestamp).getTime() >= cutoff;
-  });
-
-  const estimatedPendingSpend = recentReceipts
-    .reduce((acc, r) => {
-      const n = parseFloat(r.amount);
-      return acc + (Number.isFinite(n) ? n : 0);
-    }, 0)
-    .toFixed(7);
-
-  const snapshotAt = new Date().toISOString();
-
-  const lines = [
-    `Profile: ${profile}`,
-    `Address: ${wallet.publicKey}`,
-    `Network: ${network}`,
-    `Asset: USDC (${usdcContractId})`,
-    `USDC Balance: ${details.usdcBalance}`,
-    `Est. Pending Spend (24 h): ${estimatedPendingSpend} USDC (${recentReceipts.length} receipt${recentReceipts.length === 1 ? "" : "s"})`,
-    `Payment Ceiling: ${ceiling} USDC (MINDVAULT_MAX_AUTO_PAY_USDC)`,
-    `Snapshot: ${snapshotAt}`,
-  ];
-
-  if (details.message) lines.push(`Note: ${details.message}`);
-
-  return {
-    text: lines.join("\n"),
-    structured: {
-      profile,
-      address: wallet.publicKey,
-      network,
-      asset: "USDC" as const,
-      assetContractId: usdcContractId,
-      usdcBalance: details.usdcBalance,
-      estimatedPendingSpend,
-      receiptCount: recentReceipts.length,
-      paymentCeiling: ceiling,
-      snapshotAt,
-      note: details.message ?? null,
-    },
-  };
-}
-
-export async function walletAllowance(): Promise<string> {
-  return outcomeText(await walletAllowanceOutcome());
-}
-
 // ── Server endpoints (#890) ──────────────────────────────────────────────────
 
 const HTTP_METHOD_ORDER = ["get", "post", "put", "patch", "delete"];
@@ -2556,21 +2492,27 @@ function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** What a publish operation id is bound to: the active network and API (#1250). */
+function publishOperationScope(): PublishOperationScope {
+  return { network: STELLAR_NETWORK, apiOrigin: new URL(BASE_URL).origin };
+}
+
+/** The operation id `mindvault_publish_status` accepts for this resource. */
+export function publishOperationIdFor(resourceId: string): string {
+  return publishOperationId(resourceId, publishOperationScope());
+}
+
 export async function publishStatus(
   args: {
     resourceId?: string;
+    operationId?: unknown;
     wait?: unknown;
     timeoutMs?: unknown;
     intervalMs?: unknown;
   },
   onProgress?: PublishProgressReporter,
 ): Promise<string> {
-  const resourceId = (args.resourceId ?? "").trim();
-  if (!resourceId) {
-    throw new Error(
-      "resourceId is required. Pass the id returned by mindvault_publish (e.g. 'cm7x8y9z').",
-    );
-  }
+  const resourceId = publishStatusTarget(args, publishOperationScope());
 
   const wait = normalizeWaitFlag(args.wait);
   const timeoutMs = normalizeTimeoutMs(args.timeoutMs);
@@ -2590,6 +2532,7 @@ export async function publishStatus(
     polled: wait,
     attempts,
     timedOut,
+    operationId: publishOperationIdFor(resourceId),
   });
   return JSON.stringify(snapshot, null, 2);
 }
@@ -2715,7 +2658,7 @@ async function publish(args: {
       "pay the content verification fee",
     );
     if (shortMsg) {
-      return `${shortMsg}\n(Resource created with id ${resource.id}; verify it later once funded.)`;
+      return `${shortMsg}\n(Resource created with id ${resource.id}, operationId ${publishOperationIdFor(resource.id)}; verify it later once funded.)`;
     }
   }
 
@@ -2745,7 +2688,7 @@ async function publish(args: {
       } catch {
         return [
           `Resource created (id: ${resource.id}) but verification timed out (ambiguous).`,
-          `Status could not be resolved automatically. Run mindvault_publish_status with resourceId "${resource.id}" before retrying — do not blindly re-publish (it may already be verified/registered).`,
+          `Status could not be resolved automatically. Run mindvault_publish_status with operationId "${publishOperationIdFor(resource.id)}" (or resourceId "${resource.id}") before retrying — do not blindly re-publish (it may already be verified/registered).`,
         ].join("\n");
       }
     }
@@ -2759,7 +2702,7 @@ async function publish(args: {
 
   if (!verifyRes.ok) {
     return (
-      `Resource created (id: ${resource.id}) but verification payment failed.\n` +
+      `Resource created (id: ${resource.id}, operationId: ${publishOperationIdFor(resource.id)}) but verification payment failed.\n` +
       `Status: ${verifyRes.status}\n${JSON.stringify(verifyData)}`
     );
   }
@@ -2798,7 +2741,7 @@ async function publish(args: {
       } catch {
         return [
           `Resource created and verification attempted for "${resource.id}"; on-chain registration timed out (ambiguous).`,
-          `Status could not be resolved automatically. Run mindvault_publish_status with resourceId "${resource.id}" before retrying registration — avoid duplicate registration.`,
+          `Status could not be resolved automatically. Run mindvault_publish_status with operationId "${publishOperationIdFor(resource.id)}" (or resourceId "${resource.id}") before retrying registration — avoid duplicate registration.`,
         ].join("\n");
       }
     }
@@ -2856,6 +2799,8 @@ async function publish(args: {
     changedFields: ["id", "title", "price", "accessUrl", "verificationStatus", "onchainStatus"],
     txHash: onchainTxHash,
     failureGuidance: failureGuidance.length > 0 ? failureGuidance : null,
+    // Resume mindvault_publish_status polling with this after a reconnect (#1250).
+    operationId: publishOperationIdFor(resource.id),
   };
 
   recordResourceHistory({
@@ -4864,6 +4809,12 @@ async function dispatchToolOutcome(
               `mindvault_publish_batch: items[${i}].price must be a non-empty string.`,
             );
           }
+          // Same amount rules as mindvault_publish (#1252): no exponent, no
+          // sign, at most 7 decimal places, above zero.
+          const priceCheck = checkUsdcAmountInput(item.price, { positive: true });
+          if (!priceCheck.ok) {
+            throw new Error(`mindvault_publish_batch: items[${i}].price: ${priceCheck.message}`);
+          }
           if (typeof item.externalUrl !== "string" || item.externalUrl.trim() === "") {
             throw new Error(
               `mindvault_publish_batch: items[${i}].externalUrl must be a non-empty string.`,
@@ -4872,7 +4823,7 @@ async function dispatchToolOutcome(
           return {
             title: item.title,
             description: typeof item.description === "string" ? item.description : undefined,
-            price: item.price,
+            price: item.price.trim(),
             externalUrl: item.externalUrl,
           };
         });
