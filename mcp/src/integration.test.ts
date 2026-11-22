@@ -19,6 +19,7 @@ import {
   startIntegrationHarness,
   type IntegrationHarness,
 } from "./integrationHarness.js";
+import { checkOutput, successSchemaOf } from "./outputValidation.js";
 
 // Activate mock fixtures and isolate state before the server module loads.
 process.env.MINDVAULT_MOCK = "1";
@@ -290,6 +291,40 @@ describe("MCP integration harness", () => {
     const hitData = harnessStructuredContent(hit);
     expect(hitData?.found).toBe(true);
     expect(hitData).toHaveProperty("id");
+  });
+
+  it("serves the network profile through MCP with valid success and error content (#1189)", async () => {
+    const { tools } = await harness.listTools();
+    const profileTool = tools.find((tool) => tool.name === "mindvault_network_profile") as
+      | { outputSchema?: Record<string, unknown> }
+      | undefined;
+    expect(profileTool?.outputSchema).toBeDefined();
+
+    const success = await harness.callTool("mindvault_network_profile", {
+      sections: ["network", "policies"],
+    });
+    expect(harnessIsToolError(success)).toBe(false);
+    const successContent = harnessStructuredContent(success);
+    expect(successContent).toBeDefined();
+    expect(checkOutput(successSchemaOf(profileTool?.outputSchema)!, successContent)).toEqual({
+      valid: true,
+    });
+    expect(successContent).toMatchObject({
+      schema: "mindvault.network-profile/v1",
+      sections: ["network", "policies"],
+    });
+
+    const failure = await harness.callTool("mindvault_network_profile", {
+      sections: ["not-a-network-section"],
+    });
+    expect(harnessIsToolError(failure)).toBe(true);
+    expect(harnessResultText(failure)).toMatch(/^Error:/);
+    const errorContent = harnessStructuredContent(failure);
+    expect(errorContent).toBeDefined();
+    expect(checkOutput(successSchemaOf(profileTool?.outputSchema)!, errorContent)).toEqual({
+      valid: true,
+    });
+    expect(errorContent).toHaveProperty("troubleshooting");
   });
 
   it("keeps browse and wallet text unchanged while attaching a sidecar (#553)", async () => {
