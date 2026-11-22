@@ -5640,8 +5640,15 @@ exports[`tool schema snapshots > mindvault_publish_status > input schema 1`] = `
       ],
       "type": "number",
     },
+    "operationId": {
+      "description": "The operationId returned by mindvault_publish or a previous mindvault_publish_status call. Resolves to the same resource on the network and API it was issued for; refused on any other. Does not expire. Use instead of resourceId to resume polling.",
+      "examples": [
+        "pubop1.Y203eDh5OXo.b31b1f387d53f169",
+      ],
+      "type": "string",
+    },
     "resourceId": {
-      "description": "The resource ID from mindvault_publish (or browse/search). Example: 'cm7x8y9z'",
+      "description": "The resource ID from mindvault_publish (or browse/search). Required unless operationId is given. Example: 'cm7x8y9z'",
       "examples": [
         "cm7x8y9z",
         "res-001",
@@ -5663,9 +5670,7 @@ exports[`tool schema snapshots > mindvault_publish_status > input schema 1`] = `
       "type": "boolean",
     },
   },
-  "required": [
-    "resourceId",
-  ],
+  "required": [],
   "type": "object",
 }
 `;
@@ -5711,6 +5716,12 @@ exports[`tool schema snapshots > mindvault_publish_status > output schema 1`] = 
             "null",
           ],
         },
+        "operationId": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
         "polled": {
           "type": "boolean",
         },
@@ -5741,6 +5752,7 @@ exports[`tool schema snapshots > mindvault_publish_status > output schema 1`] = 
       },
       "required": [
         "resourceId",
+        "operationId",
         "title",
         "verificationStatus",
         "listed",
