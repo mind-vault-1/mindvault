@@ -82,6 +82,99 @@ Under `MINDVAULT_READ_ONLY=1`, `mindvault_backup_state` is now refused and
 `mindvault_recover_catalog_cache` is now available, since read-only mode
 follows `readOnlyHint`.
 
+## Side-effect reference (all tools)
+
+The inventory in [`mcp/src/toolSideEffects.ts`](../mcp/src/toolSideEffects.ts)
+is the source of truth. This table is its rendered form so an agent or reviewer
+can check a tool before calling it without reading the handler. Effects are the
+worst case over every argument combination; the last three columns are the
+annotation values derived from those effects. For example,
+`mindvault_backup_state` is `local: write` because every confirmed call writes
+a new encrypted backup under `~/.mindvault/backups`, so it is not read-only
+despite its name.
+
+Annotations are advisory hints from the
+[MCP specification](https://modelcontextprotocol.io/specification), not a
+security gate: clients must not rely on them to authorize a call. The server's
+read-only mode, paid-operation confirmation, and mainnet gating are separate
+controls described in [`mcp-client-configs.md`](mcp-client-configs.md) and
+[`mcp-tool-reference.md`](mcp-tool-reference.md).
+
+| Tool                                 | local       | remote  | payment | irreversible | readOnlyHint | destructiveHint |
+| ------------------------------------ | ----------- | ------- | ------- | ------------ | ------------ | --------------- |
+| `mindvault_setup_wallet`             | `overwrite` | `api`   | `none`  | no           | no           | yes             |
+| `mindvault_wallet_info`              | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_wallet_allowance`         | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_wallet_balances`          | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_repair_sponsored_account` | `overwrite` | `none`  | `none`  | no           | no           | yes             |
+| `mindvault_use_profile`              | `write`     | `none`  | `none`  | no           | no           | no              |
+| `mindvault_list_profiles`            | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_export_profiles`          | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_import_profiles`          | `write`     | `none`  | `none`  | no           | no           | no              |
+| `mindvault_switch_network_profile`   | `write`     | `none`  | `none`  | no           | no           | no              |
+| `mindvault_import_wallet`            | `overwrite` | `none`  | `none`  | no           | no           | yes             |
+| `mindvault_register`                 | `overwrite` | `api`   | `none`  | no           | no           | yes             |
+| `mindvault_rotate_publisher_key`     | `overwrite` | `api`   | `none`  | no           | no           | yes             |
+| `mindvault_browse`                   | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_search`                   | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_preview`                  | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_prewarm_catalog`          | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_recover_catalog_cache`    | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_publish`                  | `write`     | `chain` | `usdc`  | no           | no           | no              |
+| `mindvault_publish_batch`            | `none`      | `chain` | `usdc`  | no           | no           | no              |
+| `mindvault_publish_status`           | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_buy`                      | `write`     | `chain` | `usdc`  | no           | no           | no              |
+| `mindvault_buy_lease`                | `write`     | `chain` | `usdc`  | no           | no           | no              |
+| `mindvault_lease_status`             | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_purchase_history`         | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_export_receipts`          | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_agent_status`             | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_registry_info`            | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_network_profile`          | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_check_bindings`           | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_onchain_preflight`        | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_verify_deployment`        | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_server_endpoints`         | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_check_consistency`        | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_metadata_diff`            | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_verify_attestation`       | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_registry_lookup`          | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_explain_error_code`       | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_registry_list`            | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_registry_count`           | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_registry_creator_page`    | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_registry_tag_search`      | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_pending_transfer`         | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_fee_config`               | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_tx_status`                | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_resource_provenance`      | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_resource_change_log`      | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_register_onchain`         | `none`      | `chain` | `fee`   | no           | no           | no              |
+| `mindvault_terms`                    | `none`      | `chain` | `fee`   | no           | no           | no              |
+| `mindvault_update_metadata`          | `write`     | `chain` | `fee`   | no           | no           | no              |
+| `mindvault_set_price`                | `write`     | `chain` | `fee`   | no           | no           | no              |
+| `mindvault_set_tags`                 | `none`      | `chain` | `fee`   | no           | no           | no              |
+| `mindvault_transfer_ownership`       | `write`     | `chain` | `fee`   | no           | no           | no              |
+| `mindvault_accept_transfer`          | `none`      | `chain` | `fee`   | no           | no           | no              |
+| `mindvault_cancel_transfer`          | `none`      | `chain` | `fee`   | no           | no           | no              |
+| `mindvault_set_listed`               | `none`      | `chain` | `fee`   | no           | no           | no              |
+| `mindvault_freeze`                   | `none`      | `chain` | `fee`   | yes          | no           | yes             |
+| `mindvault_royalty`                  | `none`      | `chain` | `fee`   | no           | no           | no              |
+| `mindvault_reset`                    | `overwrite` | `none`  | `none`  | no           | no           | yes             |
+| `mindvault_backup_state`             | `write`     | `none`  | `none`  | no           | no           | no              |
+| `mindvault_compare_state_backup`     | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_restore_state`            | `overwrite` | `none`  | `none`  | no           | no           | yes             |
+| `mindvault_check_state_permissions`  | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_migration_preview`        | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_metrics`                  | `memory`    | `none`  | `none`  | no           | no           | no              |
+| `mindvault_registry_health`          | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_rpc_health`               | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_client_config`            | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_mainnet_banner`           | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_verify_install`           | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_debug_bundle`             | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_support_bundle`           | `none`      | `none`  | `none`  | no           | yes          | no              |
+
 ## Tests
 
 - [`mcp/src/toolMetadata.test.ts`](../mcp/src/toolMetadata.test.ts) asserts every

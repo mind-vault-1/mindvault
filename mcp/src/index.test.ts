@@ -1,6 +1,15 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from "vitest";
 
 const getAttestationHashMock = vi.hoisted(() => vi.fn());
+
+vi.mock("os", async (importOriginal) => {
+  const os = await importOriginal<typeof import("os")>();
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const home = mkdtempSync(join(os.tmpdir(), "mindvault-index-test-"));
+  afterAll(() => rmSync(home, { recursive: true, force: true }));
+  return { ...os, homedir: () => home };
+});
 
 vi.mock("@modelcontextprotocol/sdk/server/index.js", () => ({
   Server: class MockServer {
@@ -86,25 +95,16 @@ import {
   _resetProfiles,
   _setMockMode,
 } from "./index.js";
-import {
-  recordCatalogSnapshot,
-  recordPreviewSnapshot,
-  _clearCatalogCache,
-} from "./catalogCache.js";
+import { _clearCatalogCache } from "./catalogCache.js";
 import { Keypair } from "@stellar/stellar-sdk";
 
 function mockResponse(data: unknown, ok = true, status = 200): Response {
   const body = JSON.stringify(data);
-  const bytes = new TextEncoder().encode(body);
-  return {
-    ok,
+  return new Response(body, {
     status,
     statusText: ok ? "OK" : "Error",
-    text: () => Promise.resolve(body),
-    json: () => Promise.resolve(data),
-    arrayBuffer: () => Promise.resolve(bytes.buffer),
-    headers: new Headers({ "content-type": "application/json" }),
-  } as Response;
+    headers: { "content-type": "application/json" },
+  });
 }
 
 const sampleResources = [
@@ -169,7 +169,7 @@ describe("browse", () => {
   it("throws on server error", async () => {
     globalThis.fetch = vi
       .fn()
-      .mockResolvedValue(mockResponse({ error: "Internal server error" }, false, 500));
+      .mockImplementation(async () => mockResponse({ error: "Internal server error" }, false, 500));
     await expect(browse()).rejects.toThrow("Browse failed");
     await expect(browse()).rejects.toThrow("Internal server error");
   });
@@ -480,6 +480,7 @@ describe("preview", () => {
       type: "link",
       verificationStatus: "verified",
       accessUrl: "https://example.com/stellar-intro",
+      cacheStatus: "live",
     });
   });
 
@@ -493,7 +494,7 @@ describe("preview", () => {
     expect(parsed).toHaveProperty("type");
     expect(parsed).toHaveProperty("verificationStatus");
     expect(parsed).toHaveProperty("accessUrl");
-    expect(Object.keys(parsed)).toHaveLength(7);
+    expect(Object.keys(parsed)).toHaveLength(8);
   });
 
   it("formats price with USDC suffix", async () => {
@@ -597,10 +598,8 @@ describe("preview", () => {
       },
     };
 
-    let callCount = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      callCount++;
       if (url.includes("/meta")) {
         return mockResponse(metaWithOwner);
       }
@@ -680,7 +679,7 @@ describe("preview", () => {
     }
   });
 
-  it("sends x-api-key header when api key is configured", async () => {
+  it("keeps the publisher API key out of public preview requests", async () => {
     const wallet = { publicKey: "GOWNER...", secretKey: "SOWNER..." };
     _setAgentWallet(wallet);
     _setAgentApiKey("test-api-key");
@@ -703,10 +702,9 @@ describe("preview", () => {
       },
     };
 
-    let lastInit: RequestInit | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(
       async (input: RequestInfo | URL, init?: RequestInit) => {
-        lastInit = init;
+        expect(new Headers(init?.headers).has("x-api-key")).toBe(false);
         const url =
           typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         if (url.includes("/meta")) return mockResponse(metaWithOwner);
@@ -717,8 +715,7 @@ describe("preview", () => {
 
     try {
       await preview("res-001");
-      // Check that the /verification call also got the x-api-key
-      expect(lastInit?.headers).toEqual(expect.objectContaining({ "x-api-key": "test-api-key" }));
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     } finally {
       _setAgentWallet(null);
       _setAgentApiKey(null);
@@ -804,7 +801,7 @@ describe("publishStatus", () => {
   });
 
   it("throws a deterministic 404 error", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       mockResponse({ error: "Resource not found" }, false, 404),
     );
     await expect(publishStatus({ resourceId: "missing" })).rejects.toThrow(/not found/i);
@@ -1620,6 +1617,7 @@ describe("registerOnchain – happy path", () => {
       },
       Transaction: vi.fn(function () {
         return {
+          fee: "100",
           sign: vi.fn(),
           toXDR: vi.fn().mockReturnValue("AAAAAQAAAAD...signed"),
         };
@@ -1725,6 +1723,7 @@ describe("registerOnchain – error and retry messaging", () => {
       },
       Transaction: vi.fn(function () {
         return {
+          fee: "100",
           sign: vi.fn(),
           toXDR: vi.fn().mockReturnValue("AAAAAQ...signed"),
         };
@@ -1773,6 +1772,7 @@ describe("registerOnchain – error and retry messaging", () => {
       Keypair: { fromSecret: vi.fn().mockReturnValue({ sign: vi.fn() }) },
       Transaction: vi.fn(function () {
         return {
+          fee: "100",
           sign: vi.fn(),
           toXDR: vi.fn().mockReturnValue("AAAAAQ...signed"),
         };
@@ -1801,7 +1801,7 @@ describe("setupWallet – sponsored account failure diagnostics", () => {
   });
 
   it("returns actionable error when service returns 503 (unavailable)", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       mockResponse({ error: "service temporarily unavailable" }, false, 503),
     );
 
@@ -1927,7 +1927,7 @@ describe("setupWallet – sponsored account failure diagnostics", () => {
 
   it("passes the service's Retry-After through to the agent", async () => {
     const res = mockResponse({ error: "too many requests" }, false, 429);
-    res.headers = new Headers({ "retry-after": "20" });
+    res.headers.set("retry-after", "20");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(res);
 
     expect.assertions(2);
@@ -3226,7 +3226,7 @@ describe("state-mutating calls are serialized (#550)", () => {
     // across an `await` boundary (the sponsored-account POST). Serialized under
     // the state mutex, neither may clobber the other's saveState(), so both
     // profiles must survive.
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       mockResponse({ publicKey: SPONSORED_PUBLIC, secretKey: SPONSORED_SECRET }),
     );
 
@@ -3249,7 +3249,7 @@ describe("state-mutating calls are serialized (#550)", () => {
     // Interleave a quick synchronous mutating call with a slow async one. Both
     // go through the same lock, so the slow wallet setup cannot run its
     // read-modify-write while use_profile is mid-flight and drop its profile.
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       mockResponse({ publicKey: SPONSORED_PUBLIC, secretKey: SPONSORED_SECRET }),
     );
 
@@ -3289,8 +3289,22 @@ describe("offline catalog cache fallback (#556)", () => {
     accessUrl: "https://example.com/c1",
   };
 
+  async function primeCatalog(...queries: string[]) {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => mockResponse([catalogItem]));
+    if (queries.length === 0) {
+      await browse();
+    } else {
+      for (const query of queries) await search(query);
+    }
+  }
+
+  async function primePreview(meta: unknown) {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => mockResponse(meta));
+    await preview("res-9");
+  }
+
   it("browse serves the cached snapshot with an age label when the API is unreachable", async () => {
-    recordCatalogSnapshot([catalogItem]);
+    await primeCatalog();
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED: Connection refused"));
 
     const out = await browse();
@@ -3300,7 +3314,7 @@ describe("offline catalog cache fallback (#556)", () => {
   });
 
   it("search applies filters to the cached snapshot and labels it when offline", async () => {
-    recordCatalogSnapshot([catalogItem]);
+    await primeCatalog("Cached", "no-match-whatsoever");
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
 
     const out = await search("Cached");
@@ -3312,7 +3326,7 @@ describe("offline catalog cache fallback (#556)", () => {
   });
 
   it("preview serves the cached meta with an age label when unreachable", async () => {
-    recordPreviewSnapshot("res-9", {
+    await primePreview({
       id: "res-9",
       title: "Cached Preview",
       price: "4",
@@ -3332,7 +3346,7 @@ describe("offline catalog cache fallback (#556)", () => {
     // 502/503/504 mean the catalog could not answer — exactly what the offline
     // snapshot is for. The label names the status rather than claiming the API
     // was unreachable (#837).
-    recordCatalogSnapshot([catalogItem]);
+    await primeCatalog();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       mockResponse({ error: "bad gateway" }, false, 502),
     );
@@ -3345,7 +3359,7 @@ describe("offline catalog cache fallback (#556)", () => {
   });
 
   it("serves the snapshot when the catalog is rate limited", async () => {
-    recordCatalogSnapshot([catalogItem]);
+    await primeCatalog();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       mockResponse({ error: "slow down" }, false, 429),
     );
@@ -3359,7 +3373,7 @@ describe("offline catalog cache fallback (#556)", () => {
     // A 400 is the catalog answering about this request. Serving a snapshot
     // would tell the agent the API is unreachable and leave it repeating an
     // invalid call against data that can never reflect it (#837).
-    recordCatalogSnapshot([catalogItem]);
+    await primeCatalog();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       mockResponse({ error: "minPrice must be numeric" }, false, 400),
     );
@@ -3368,7 +3382,7 @@ describe("offline catalog cache fallback (#556)", () => {
   });
 
   it("surfaces an auth error rather than serving the cache", async () => {
-    recordCatalogSnapshot([catalogItem]);
+    await primeCatalog();
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       mockResponse({ error: "forbidden" }, false, 403),
     );
@@ -3377,7 +3391,7 @@ describe("offline catalog cache fallback (#556)", () => {
   });
 
   it("surfaces a 404 on preview instead of returning another resource's snapshot", async () => {
-    recordPreviewSnapshot("res-9", { id: "res-9", title: "Cached Preview", price: "4" });
+    await primePreview({ id: "res-9", title: "Cached Preview", price: "4" });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       mockResponse({ error: "not found" }, false, 404),
     );
@@ -3386,7 +3400,7 @@ describe("offline catalog cache fallback (#556)", () => {
   });
 
   it("serves the cached preview when the catalog answers 503", async () => {
-    recordPreviewSnapshot("res-9", {
+    await primePreview({
       id: "res-9",
       title: "Cached Preview",
       price: "4",
@@ -3412,7 +3426,7 @@ describe("offline catalog cache fallback (#556)", () => {
 
   it("a mutating tool never falls back to the cached catalog", async () => {
     // Prime the cache as if a successful read had happened earlier.
-    recordCatalogSnapshot([catalogItem]);
+    await primeCatalog();
     _setAgentWallet(testWallet);
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
 

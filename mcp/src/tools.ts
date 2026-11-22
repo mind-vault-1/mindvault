@@ -51,6 +51,7 @@ import {
   PROFILE_EXPORT_OUTPUT_SCHEMA,
   PROFILE_IMPORT_OUTPUT_SCHEMA,
   PURCHASE_HISTORY_OUTPUT_SCHEMA,
+  RECEIPT_VERIFICATION_OUTPUT_SCHEMA,
   BUY_OUTPUT_SCHEMA,
   RECOVER_CACHE_OUTPUT_SCHEMA,
   REGISTER_ONCHAIN_OUTPUT_SCHEMA,
@@ -70,7 +71,6 @@ import {
   WALLET_BALANCES_OUTPUT_SCHEMA,
   WALLET_INFO_OUTPUT_SCHEMA,
   WALLET_SETUP_OUTPUT_SCHEMA,
-  WALLET_ALLOWANCE_OUTPUT_SCHEMA,
 } from "./outputSchemas.js";
 import {
   RECEIPT_EXPORT_MAX_LIMIT,
@@ -377,6 +377,11 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "The unique resource identifier from mindvault_browse or mindvault_search. Example: 'cm7x8y9z'",
           examples: ["cm7x8y9z", "res-001", "ckx9j2h3f"],
+        },
+        bypassCache: {
+          type: "boolean",
+          description:
+            "Fetch fresh metadata for this call and report cacheStatus=bypassed without changing shared cache policy.",
         },
       },
       required: ["resourceId"],
@@ -710,6 +715,47 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_verify_receipt",
+    description:
+      "Verify a payment receipt and return a machine-readable typed validation result for amount, currency, transaction hash, network, and resource identity. Reports valid, invalid, or indeterminate outcomes, handling partial and malformed receipts deterministically without network calls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        receipt: {
+          type: "object",
+          description:
+            "Payment receipt object to verify (expected fields: amount, currency, txHash, network, resourceId).",
+        },
+        expected: {
+          type: "object",
+          description:
+            "Optional expected field values to match against (amount, currency, txHash, network, resourceId).",
+          properties: {
+            amount: { type: "string", description: "Expected positive decimal USDC amount." },
+            currency: { type: "string", description: "Expected currency code (e.g. USDC)." },
+            txHash: {
+              type: "string",
+              description: "Expected 64-character hexadecimal transaction hash.",
+            },
+            network: {
+              type: "string",
+              description: "Expected network identifier (e.g. stellar:testnet or stellar:pubnet).",
+            },
+            resourceId: { type: "string", description: "Expected resource identifier." },
+          },
+        },
+      },
+      required: ["receipt"],
+    },
+    outputSchema: RECEIPT_VERIFICATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Verify Payment Receipt",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_register_onchain",
     description:
       "Register an already-published, verified resource on the vault registry contract. Use this to retry on-chain registration after mindvault_publish reports the on-chain step failed. Prepares the unsigned transaction, signs it with the agent wallet (which must be the resource creator), submits it, and returns the registry status and on-chain tx hash.",
@@ -721,11 +767,6 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "The resource ID to register on-chain (from mindvault_publish output). Must be verified and not already registered. Example: 'cm7x8y9z'",
           examples: ["cm7x8y9z", "res-001", "ckx9j2h3f"],
-        },
-        bypassCache: {
-          type: "boolean",
-          description:
-            "Fetch fresh metadata for this call and report cacheStatus=bypassed without changing shared cache policy.",
         },
         confirmMainnet: {
           type: "boolean",
@@ -760,7 +801,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_registry_info",
     description:
-      "Return the on-chain vault-registry contract ID, network passphrase, RPC URL, and the resource fields available for direct Soroban queries. Use this to verify ownership, price, and listing state directly from Stellar without trusting the MindVault API.",
+      "Return the on-chain vault-registry contract ID, network passphrase, RPC URL, resource fields, and schema version negotiation status. The schemaVersion field reports which resource schema versions this client supports, the current version it targets, and the version detected on the deployed contract (or null when the contract is unreachable). Use this to verify ownership, price, and listing state directly from Stellar, and to check schema compatibility before calling mutation tools.",
     inputSchema: { type: "object", properties: {}, required: [] },
     outputSchema: REGISTRY_INFO_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
@@ -1089,6 +1130,68 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: REGISTRY_COUNT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Registry Count",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    // Batch lookup over the API catalog (#608). Reads go through the same
+    // snapshot fallback as browse/preview, so one unreachable API degrades to
+    // labelled cached answers instead of failing the whole batch.
+    name: "mindvault_batch_catalog_lookup",
+    description:
+      "Look up several catalog resources in one call. Accepts up to 25 resource ids and returns per-id results — title, price, verification status, type, and access URL — plus a missing list for ids the API does not know. A miss is a result, not an error, so one bad id cannot sink the batch. Serves the last cached snapshot (labelled) when the catalog API is unreachable, unless refetch is true. For on-chain registry data use mindvault_registry_lookup instead; for a single fresh id use mindvault_preview.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceIds: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: 25,
+          description:
+            "1–25 resource ids, from mindvault_browse or mindvault_search. A comma-separated string is also accepted. Duplicates are looked up once each.",
+          examples: [["cm7x8y9z", "res-001"]],
+        },
+        refetch: {
+          type: "boolean",
+          description:
+            "When true, skip the offline cache fallback and fail if the catalog API is unreachable. Default false (serve a labelled cached snapshot when offline).",
+        },
+      },
+      required: ["resourceIds"],
+    },
+    outputSchema: BATCH_CATALOG_LOOKUP_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Batch Catalog Lookup",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    // Metadata digest preview (#604): reads the same on-chain pointer as
+    // check_consistency but reports the digest without requiring the resource
+    // to exist in the API catalog.
+    name: "mindvault_preview_metadata_hash",
+    description:
+      "Preview the content digest anchored in a resource's on-chain metadata pointer without buying the resource. Returns the algorithm and canonical digest when present, or a deterministic reason when the pointer is absent, not digest-anchored (a bare URI/CID), or malformed — so an agent can compare expected hashes before purchasing. Pair with mindvault_check_consistency, which compares the same pointer against the API catalog. Accepts the fixed metadata hash format; see docs/mcp-metadata-hash.md.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description:
+            "The on-chain resource id to read (from mindvault_browse, mindvault_registry_list, or mindvault_publish). Letters, digits, dot, dash, or underscore.",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: METADATA_HASH_PREVIEW_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Preview Metadata Hash",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -1909,15 +2012,21 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     // defined here, so the generated tool reference never listed it (#596).
     name: "mindvault_publish_status",
     description:
-      "Poll a published resource's verification and on-chain sync status. Returns verificationStatus (pending, verified, rejected, skipped), listed, onchainStatus, onchainTxHash, and optional verification details. Pass wait: true to poll until verification settles or timeoutMs elapses. Deterministic errors for missing resourceId and 404s.",
+      "Poll a published resource's verification and on-chain sync status. Returns verificationStatus (pending, verified, rejected, skipped), listed, onchainStatus, onchainTxHash, and optional verification details, plus the publish's operationId. Pass resourceId, or the operationId from mindvault_publish to resume polling after a reconnect or restart. Pass wait: true to poll until verification settles or timeoutMs elapses. Deterministic errors for a missing or unknown id and 404s.",
     inputSchema: {
       type: "object",
       properties: {
         resourceId: {
           type: "string",
           description:
-            "The resource ID from mindvault_publish (or browse/search). Example: 'cm7x8y9z'",
+            "The resource ID from mindvault_publish (or browse/search). Required unless operationId is given. Example: 'cm7x8y9z'",
           examples: ["cm7x8y9z", "res-001", "swcn98besxpp6t1u8e77fqz3"],
+        },
+        operationId: {
+          type: "string",
+          description:
+            "The operationId returned by mindvault_publish or a previous mindvault_publish_status call. Resolves to the same resource on the network and API it was issued for; refused on any other. Does not expire. Use instead of resourceId to resume polling.",
+          examples: ["pubop1.Y203eDh5OXo.b31b1f387d53f169"],
         },
         wait: {
           type: "boolean",
@@ -1937,7 +2046,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           examples: [1000, 2000, 5000],
         },
       },
-      required: ["resourceId"],
+      required: [],
     },
     outputSchema: PUBLISH_STATUS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {

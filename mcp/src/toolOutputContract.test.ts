@@ -155,6 +155,35 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
   mindvault_metrics: () => json(createMetricsRecorder(true, 1000).snapshot()),
   mindvault_debug_bundle: () => debugBundleTool({}, new Date(0)),
   mindvault_onchain_preflight: () => onchainPreflightTool({}),
+  mindvault_explain_error_code: () =>
+    json({
+      code: 999,
+      name: null,
+      known: false,
+      description: null,
+      category: null,
+      retry: null,
+      nextSteps: "Check the deployed registry version.",
+      knownCodes: [],
+    }),
+  mindvault_rpc_health: () =>
+    json({
+      profile: "testnet",
+      horizonUrl: "https://horizon-testnet.stellar.org",
+      sorobanRpcUrl: "https://soroban-testnet.stellar.org",
+      allOk: true,
+      endpoints: [
+        {
+          name: "horizon",
+          url: "https://horizon-testnet.stellar.org",
+          ok: true,
+          latencyMs: 10,
+          networkId: null,
+          message: "Healthy",
+        },
+      ],
+      summary: "RPC endpoints are healthy.",
+    }),
   mindvault_verify_deployment: () => {
     const manifest = DEFAULT_DEPLOYMENT_MANIFESTS.testnet!;
     const passphrase = "Test SDF Network ; September 2015";
@@ -356,9 +385,37 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
         },
       ],
       notice: null,
+      cacheStatus: "live",
+      nextCursor: null,
       truncated: false,
     }),
-  mindvault_search: () => json({ items: [], notice: null, truncated: false }),
+  mindvault_search: () =>
+    json({ items: [], notice: null, cacheStatus: "live", nextCursor: null, truncated: false }),
+  mindvault_batch_catalog_lookup: () =>
+    json({
+      items: [
+        {
+          id: "mock-1",
+          found: true,
+          title: "Intro",
+          price: "1.5",
+          verificationStatus: "verified",
+          resourceType: "link",
+          accessUrl: null,
+        },
+      ],
+      requested: 1,
+      foundCount: 1,
+      missing: [],
+      notice: null,
+      truncated: false,
+    }),
+  mindvault_preview_metadata_hash: () =>
+    json({
+      resourceId: "mock-1",
+      pointer: { source: null, present: false },
+      report: { present: false, valid: false, canonical: null, algorithm: null, reason: "missing" },
+    }),
   mindvault_preview: () =>
     json({
       id: "mock-1",
@@ -368,6 +425,7 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
       type: "link",
       verificationStatus: "verified",
       accessUrl: null,
+      cacheStatus: "live",
     }),
   mindvault_agent_status: () => json({ status: "ok" }),
   mindvault_registry_info: () =>
@@ -379,6 +437,12 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
       x402Network: NETWORK,
       resourceFields: ["id", "creator", "price", "metadata", "listed"],
       mainnetDiagnostics: "not on mainnet",
+      schemaVersion: {
+        detected: 7,
+        supported: [6, 7],
+        current: 7,
+        status: "supported",
+      },
     }),
   mindvault_network_profile: () =>
     json({
