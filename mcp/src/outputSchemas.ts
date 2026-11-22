@@ -492,6 +492,7 @@ export const PUBLISH_STATUS_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
     resourceId: { type: "string" },
+    operationId: { type: ["string", "null"] },
     title: { type: ["string", "null"] },
     verificationStatus: { type: "string" },
     listed: { type: ["boolean", "null"] },
@@ -508,6 +509,7 @@ export const PUBLISH_STATUS_OUTPUT_SCHEMA = {
   },
   required: [
     "resourceId",
+    "operationId",
     "title",
     "verificationStatus",
     "listed",
