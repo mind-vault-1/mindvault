@@ -954,6 +954,18 @@ export const TEXT_ONLY_TOOLS = [
   "mindvault_resource_change_log",
 ] as const;
 
+/** Output schema for mindvault_prepare_ownership_transfer (#1187). */
+export const PREPARE_OWNERSHIP_TRANSFER_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    resourceId: { type: "string" },
+    newCreator: { type: "string" },
+    unsignedXdr: { type: "string" },
+    networkPassphrase: { type: "string" },
+  },
+  required: ["resourceId", "newCreator", "unsignedXdr", "networkPassphrase"],
+} as const;
+
 /** Output schema for mindvault_pending_transfer. */
 export const PENDING_TRANSFER_OUTPUT_SCHEMA = {
   type: "object",

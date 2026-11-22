@@ -43,6 +43,7 @@ import {
   LEASE_BUY_OUTPUT_SCHEMA,
   LEASE_STATUS_OUTPUT_SCHEMA,
   PENDING_TRANSFER_OUTPUT_SCHEMA,
+  PREPARE_OWNERSHIP_TRANSFER_OUTPUT_SCHEMA,
   PREVIEW_OUTPUT_SCHEMA,
   PUBLISH_BUY_OUTPUT_SCHEMA,
   PUBLISH_BATCH_OUTPUT_SCHEMA,
@@ -1525,6 +1526,34 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Set Price",
       readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_prepare_ownership_transfer",
+    description:
+      "Build an unsigned ownership transfer transaction for a resource without signing or submitting it on-chain. Returns the unsigned transaction XDR and network passphrase.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description: "The resource ID to transfer ownership of. Example: 'cm7x8y9z'",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+        newCreator: {
+          type: "string",
+          description: "The Stellar public key (G… , 56 chars) of the proposed new resource owner.",
+          examples: ["GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH"],
+        },
+      },
+      required: ["resourceId", "newCreator"],
+    },
+    outputSchema: PREPARE_OWNERSHIP_TRANSFER_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Prepare Ownership Transfer",
+      readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
     },

@@ -296,12 +296,15 @@ import {
   getPreviewSnapshot,
   recordCatalogSnapshot,
   recordPreviewSnapshot,
+  clearCatalogCache,
   type CatalogCacheContext,
 } from "./catalogCache.js";
+import { resetRegistrySchemaCache } from "./registrySchema.js";
 import { createCatalogCursor, resolveCatalogCursor } from "./catalogCursor.js";
 import {
   acceptTransfer,
   cancelTransfer,
+  prepareOwnershipTransfer,
   publishBatch,
   type BatchPublishItem,
 } from "./tools/publish.js";
@@ -310,6 +313,7 @@ import {
   _setAgentWallet as _setAgentWalletRuntime,
   _setAgentApiKey as _setAgentApiKeyRuntime,
   _resetProfiles as _resetProfilesRuntime,
+  setActiveProfileName as setActiveProfileNameRuntime,
 } from "./runtime.js";
 
 export { acceptTransfer, cancelTransfer };
@@ -483,12 +487,21 @@ export function _setAgentApiKey(k: string | null): void {
 export function _resetProfiles(): void {
   profiles = {};
   activeProfileName = DEFAULT_PROFILE;
+  setActiveProfileNameRuntime(DEFAULT_PROFILE);
+  clearCatalogCache();
+  resetRegistrySchemaCache();
   _resetProfilesRuntime();
 }
 
 function applyRestoredState(state: ProfileState): void {
   profiles = state.profiles;
   activeProfileName = state.activeProfile;
+  setActiveProfileNameRuntime(state.activeProfile);
+  clearCatalogCache();
+  resetRegistrySchemaCache();
+  setActiveProfileNameRuntime(activeProfileName);
+  clearCatalogCache();
+  resetRegistrySchemaCache();
   saveState();
 }
 
@@ -562,6 +575,9 @@ function loadState(): void {
 
   profiles = state.profiles;
   activeProfileName = state.activeProfile;
+  setActiveProfileNameRuntime(state.activeProfile);
+  clearCatalogCache();
+  resetRegistrySchemaCache();
   if (migrated) {
     try {
       preserveLegacyState(legacy);
@@ -640,6 +656,9 @@ export function resetState(all: boolean, confirm: unknown = false): string {
   if (all) {
     profiles = {};
     activeProfileName = DEFAULT_PROFILE;
+    setActiveProfileNameRuntime(DEFAULT_PROFILE);
+    clearCatalogCache();
+    resetRegistrySchemaCache();
     try {
       if (existsSync(STATE_FILE)) unlinkSync(STATE_FILE);
     } catch (err) {
@@ -650,6 +669,8 @@ export function resetState(all: boolean, confirm: unknown = false): string {
 
   const name = activeProfileName;
   delete profiles[name];
+  clearCatalogCache();
+  resetRegistrySchemaCache();
   saveState();
   return [
     `Profile "${name}" cleared (wallet and publisher API key removed).`,
@@ -1028,6 +1049,9 @@ async function importWallet(args: {
   }
 
   activeProfileName = target;
+  setActiveProfileNameRuntime(target);
+  clearCatalogCache();
+  resetRegistrySchemaCache();
   activeProfile().wallet = { publicKey, secretKey };
   bindActiveProfileToNetwork();
   saveState();
@@ -1077,6 +1101,9 @@ async function rotatePublisherKey(profileArg?: string): Promise<string> {
     // already active
   } else {
     activeProfileName = target;
+    setActiveProfileNameRuntime(target);
+    clearCatalogCache();
+    resetRegistrySchemaCache();
   }
   saveState();
 
@@ -1693,6 +1720,9 @@ async function setupWallet(profileArg?: string): Promise<ToolOutcome> {
   }
 
   activeProfileName = target;
+  setActiveProfileNameRuntime(target);
+  clearCatalogCache();
+  resetRegistrySchemaCache();
   activeProfile().wallet = { publicKey: integrity.publicKey, secretKey: integrity.secretKey };
   const persisted = saveState();
   const text = [
@@ -1728,6 +1758,9 @@ async function repairSponsoredAccount(secretKey: string, profileArg?: string): P
   }
 
   activeProfileName = target;
+  setActiveProfileNameRuntime(target);
+  clearCatalogCache();
+  resetRegistrySchemaCache();
   activeProfile().wallet = { publicKey, secretKey };
   bindActiveProfileToNetwork();
   saveState();
@@ -2123,6 +2156,9 @@ function useProfileOutcome(nameArg: string): ToolOutcome {
     );
   }
   activeProfileName = nameArg;
+  setActiveProfileNameRuntime(nameArg);
+  clearCatalogCache();
+  resetRegistrySchemaCache();
   const profile = activeProfile();
   saveState();
   if (profile.wallet) {
@@ -2152,6 +2188,9 @@ export function useProfile(nameArg: string): string {
 export function switchNetworkProfile(name: string, network: "testnet" | "mainnet"): string {
   if (!isValidProfileName(name)) throw new Error("Invalid profile name.");
   activeProfileName = name;
+  setActiveProfileNameRuntime(name);
+  clearCatalogCache();
+  resetRegistrySchemaCache();
   activeProfile().network = network;
   applyNetworkConfig(network);
   saveState();
@@ -2220,6 +2259,9 @@ export function importProfilesOutcome(data: string): ToolOutcome {
   );
   profiles = result.state.profiles;
   activeProfileName = result.state.activeProfile;
+  setActiveProfileNameRuntime(activeProfileName);
+  clearCatalogCache();
+  resetRegistrySchemaCache();
   saveState();
   return {
     text: `Imported ${result.imported.length} profile setup(s) without changing credentials.`,
@@ -5205,6 +5247,11 @@ async function executeTool(
         return setPrice(requiredString(args, "resourceId"), requiredString(args, "price"));
       case "mindvault_transfer_ownership":
         return transferOwnership(
+          requiredString(args, "resourceId"),
+          requiredString(args, "newCreator"),
+        );
+      case "mindvault_prepare_ownership_transfer":
+        return prepareOwnershipTransfer(
           requiredString(args, "resourceId"),
           requiredString(args, "newCreator"),
         );

@@ -21,6 +21,7 @@ import { signMutatingHeaders } from "./requestSignature.js";
 import { readBoundedResponse, resolveMaxResponseBytes } from "./responseSize.js";
 import { parseUpstreamErrorBody } from "./malformedResponse.js";
 import { type ResetScope } from "./resetGuard.js";
+import { type CatalogCacheContext } from "./catalogCache.js";
 import {
   DEFAULT_PROFILE,
   isValidProfileName,
@@ -345,6 +346,15 @@ function makePaidFetch(wallet: AgentWallet) {
   return wrapFetchWithPayment(withTimeout(httpFetch, "payment", TIMEOUTS.payment), client);
 }
 
+function catalogCacheContext(): CatalogCacheContext {
+  return {
+    profile: activeProfileName,
+    network: STELLAR_NETWORK,
+    contractId: REGISTRY_CONTRACT_ID,
+    apiOrigin: new URL(BASE_URL).origin,
+  };
+}
+
 export {
   STELLAR_NETWORK,
   networkPreset,
@@ -389,4 +399,5 @@ export {
   publisherCredential,
   makePaidFetch,
   _isMock,
+  catalogCacheContext,
 };

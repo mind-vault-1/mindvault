@@ -128,6 +128,7 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_registry_creator_page: READ,
   mindvault_registry_tag_search: READ,
   mindvault_pending_transfer: READ,
+  mindvault_prepare_ownership_transfer: READ,
   mindvault_fee_config: READ,
   mindvault_tx_status: READ,
   mindvault_resource_provenance: READ,
