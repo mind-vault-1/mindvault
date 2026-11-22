@@ -410,7 +410,7 @@ See [`docs/adr-fee-config.md`](../docs/adr-fee-config.md) for the full design ra
 | `simulate_record_payment(settler, receipt_id, resource_id, payer, amount, tx_hash)` | `settler` + `payer` | Same arguments as `record_payment` | `Result<PaymentReceipt, Error>` | Run payment validation without storing a receipt. A successful simulation emits `simvalid`. |
 | `record_payment_with_memo(settler, receipt_id, resource_id, payer, amount, tx_hash, memo)` | `settler` + `payer` | Same as `record_payment`, plus `memo: String` — the settlement tx `MEMO_TEXT`, must be `mv:<resource_id>` | `Result<(), Error>` | Record a payment receipt whose settlement memo proves which resource was paid for. Errors `InvalidPaymentMemo` on a non-canonical memo. Emits `payment`. |
 | `get_payment_memo(receipt_id)` | — | `receipt_id: String` | `Option<String>` | Canonical memo stored for a receipt by `record_payment_with_memo`, or `None`. |
-| `settle_payment(settler, receipt_id)`                                        | `settler`                                                | `settler: Address`; `receipt_id: String`                                                                                                                                                                                                             | `Result<(), Error>`                    | Advance a receipt from `Escrowed` to `Settled`. Errors `InvalidPaymentTransition` if it is not escrowed. Emits `settle`.                                                                                                                                                                                 |
+| `settle_payment(settler, receipt_id)`                                        | `settler`                                                | `settler: Address`; `receipt_id: String`                                                                                                                                                                                                             | `Result<(), Error>`                    | Advance a receipt from `Escrowed` to `Settled`. Errors `InvalidPaymentTransition` if it is not escrowed and `Unauthorized` if the resource is no longer bound to the creator recorded when the payment was made. Emits `settle`.                                                                                 |
 | `get_payment(receipt_id)`                                                    | —                                                        | `receipt_id: String`                                                                                                                                                                                                                                 | `Result<PaymentReceipt, Error>`        | Fetch a receipt by id. Errors `NotFound` if absent. Bumps the entry's TTL.                                                                                                                                                                                                                               |
 | `get_payment_receipt(resource_id, payer)`                                    | —                                                        | `resource_id: String`; `payer: Address`                                                                                                                                                                                                              | `Result<PaymentReceipt, Error>`        | Fetch the most recent receipt recorded for the pair, via the `PaymentIndex` secondary index. Errors `NotFound` if absent.                                                                                                                                                                                |
 | `set_refund_window(admin, window_ledgers)`                                   | current `admin`                                          | `admin: Address`; `window_ledgers: u32` — 1 to `MAX_REFUND_WINDOW_LEDGERS`                                                                                                                                                                            | `Result<(), Error>`                    | Set the creator refund window for payments settled after this call. Existing deadlines are unchanged. Emits `refwin`.                                                                                                                                                                                     |
@@ -465,12 +465,15 @@ applies only to future settlements.
 
 After sending USDC back to the buyer outside this non-custodial registry, the
 creator who received that payment records the transfer with
-`record_creator_refund`, even if the resource has since changed owners. The
-recipient must equal the original payment payer, and partial refunds are allowed
-as long as their cumulative amount does not exceed the settled payment.
-`record_admin_refund` lets the current admin record an override after the
-deadline or without creator authorization, but cannot change the recipient or
-exceed the original amount.
+`record_creator_refund`. `record_payment` pins that creator to the receipt, so a
+later ownership transfer does not move refund authority: the new owner cannot
+authorize the refund, and settlement or refund of the receipt is rejected while
+the resource is bound to a different creator. The recipient must equal the
+original payment payer, and partial refunds are allowed as long as their
+cumulative amount does not exceed the settled payment. `record_admin_refund`
+lets the current admin record an override after the deadline or without creator
+authorization, but cannot change the recipient, exceed the original amount, or
+bypass the receipt binding check.
 
 **Snapshot semantics.** A payment receipt records the resource identity
 (`resource_id`) and the creator address that received the payment

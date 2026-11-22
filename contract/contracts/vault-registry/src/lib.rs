@@ -5441,6 +5441,8 @@ impl VaultRegistry {
     /// - `NotFound` — no receipt exists for `receipt_id`.
     /// - `InvalidPaymentTransition` — receipt is not in `Escrowed` state
     ///   (e.g. already `Settled`).
+    /// - `Unauthorized` — the resource is no longer bound to the creator who
+    ///   owned it when the receipt was recorded.
     ///
     /// Emits a `settle` event whose data is the updated [`PaymentReceipt`]
     /// (with `state: Settled`) so off-chain indexers can confirm settlement
@@ -5465,6 +5467,11 @@ impl VaultRegistry {
         if receipt.state != PaymentState::Escrowed {
             return Err(Error::InvalidPaymentTransition);
         }
+
+        // A receipt belongs to the creator who owned the resource when it was
+        // recorded. Reject a replay after an ownership change before writing
+        // anything so every failure here is atomic.
+        Self::payment_creator_binding(&env, &receipt)?;
 
         receipt.state = PaymentState::Settled;
         env.storage().persistent().set(&receipt_key, &receipt);
@@ -7315,6 +7322,27 @@ impl VaultRegistry {
         Self::validate_tx_hash(tx_hash)
     }
 
+    /// Return the creator identity bound to a receipt when it was recorded,
+    /// rejecting the call when the resource it points at is now owned by
+    /// somebody else. `None` means the receipt predates the binding key;
+    /// those legacy receipts keep their previous behaviour.
+    fn payment_creator_binding(
+        env: &Env,
+        receipt: &PaymentReceipt,
+    ) -> Result<Option<Address>, Error> {
+        let key = DataKey::PaymentRecipient(receipt.receipt_id.clone());
+        let bound: Option<Address> = env.storage().persistent().get(&key);
+        if let Some(bound) = &bound {
+            Self::bump_persistent(env, &key);
+            if let Ok(resource) = Self::load(env, &receipt.resource_id) {
+                if resource.creator != *bound {
+                    return Err(Error::Unauthorized);
+                }
+            }
+        }
+        Ok(bound)
+    }
+
     /// Store a new `Escrowed` receipt with its secondary indexes and emit the
     /// `payment` event. Callers run `check_payment_args` first.
     fn write_payment(
@@ -7378,6 +7406,13 @@ impl VaultRegistry {
         let index_key = DataKey::PaymentIndex(resource_id, payer);
         env.storage().persistent().set(&index_key, &receipt_id);
         Self::bump_persistent(env, &index_key);
+
+        // Pin the creator who owned the resource at record time. Settlement
+        // and refunds are rejected if ownership later moves elsewhere, so a
+        // receipt can never be replayed against a different resource binding.
+        let recipient_key = DataKey::PaymentRecipient(receipt_id.clone());
+        env.storage().persistent().set(&recipient_key, &resource.creator);
+        Self::bump_persistent(env, &recipient_key);
 
         env.storage().persistent().set(&tx_hash_key, &receipt_id);
         Self::bump_persistent(env, &tx_hash_key);

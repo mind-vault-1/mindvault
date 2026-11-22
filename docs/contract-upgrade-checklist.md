@@ -409,6 +409,7 @@ pnpm --filter @mindvault/server reconcile
 - [Contract Method & Event Reference](./contract-method-event-reference.md) — current method signatures and event topics
 - [Deployment Runbook](./deployment-runbook.md) — full stack deploy (contract + server + frontend + MCP)
 - [Mainnet Deployment Checklist](./mainnet-deployment-checklist.md) — additional mainnet-specific steps
+- [Contract Storage Migration](./contract-storage-migration.md) — safe schema evolution, defaults, TTL renewal, and migration tests
 - [Registry Client Bindings](./registry-client-bindings.md) — how bindings are generated and kept fresh
 - [Regenerating Bindings](./regenerating-bindings.md) — step-by-step process for running, reviewing, and verifying bindings after a contract change
 - [Index Repair](./index-repair.md) — `repair_index` admin operation

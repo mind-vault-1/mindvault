@@ -75,6 +75,11 @@ import {
 import { assertToolAllowedInReadOnlyMode, readOnlyModeEnabled } from "./readOnlyMode.js";
 import { assertToolAllowedInAllowlist } from "./toolAllowlist.js";
 import {
+  LOCAL_VALIDATION_OUTPUT_SCHEMA,
+  localValidationEnabled,
+  localValidationOutcome,
+} from "./localValidation.js";
+import {
   createMetricsRecorder,
   measureTool,
   metricsEnabledFromEnv,
@@ -384,7 +389,11 @@ function applyNetworkConfig(network: "testnet" | "mainnet"): void {
 // the validation result rather than exiting; the fail-fast decision stays here.
 // Warnings are printed but non-fatal; any error stops the server. Skipped under
 // tests and in mock mode so unit runs and offline local development never exit.
-if (!process.env.VITEST && !mockEnabledFromEnv(process.env)) {
+if (
+  !process.env.VITEST &&
+  !localValidationEnabled(process.env) &&
+  !mockEnabledFromEnv(process.env)
+) {
   const startup = resolveConfig(process.env);
   if (startup.report) console.error(startup.report);
   if (!startup.ok) process.exit(1);
@@ -5644,6 +5653,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
           return scopeProgressToRequest(throttled.emit, { flush: throttled.flush });
         })()
       : undefined;
+  // Local-only mode replaces the tool's own schema with the validation report
+  // schema, so enforceOutputContract validates what is actually returned.
+  const localValidation = localValidationEnabled(process.env);
+  const activeOutputSchema = localValidation
+    ? LOCAL_VALIDATION_OUTPUT_SCHEMA
+    : outputSchemaFor(name);
   try {
     const result = await measureTool(metrics, name, () =>
       dispatchToolOutcome(name, args, progress?.emit),
@@ -5658,7 +5673,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     return enforceOutputContract(
       name,
       normalizeToolResult(name, result, hasOutputSchema),
-      outputSchemaFor(name),
+      activeOutputSchema,
     );
   } catch (err: any) {
     const mapped = mappedErrorOf(err);
@@ -5669,7 +5684,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         isError: true,
         ...(mapped ? { structuredContent: { troubleshooting: troubleshootingHint(mapped) } } : {}),
       },
-      outputSchemaFor(name),
+      activeOutputSchema,
     );
   } finally {
     await progress?.settle();
@@ -5750,18 +5765,20 @@ if (!process.env.VITEST) {
   // failed pre-warm just means the first mindvault_browse pays the normal
   // cold-cache cost, which is the status quo this is improving on, not a
   // regression.
-  prewarmCatalogCache().catch(() => {});
+  if (!localValidationEnabled(process.env)) {
+    prewarmCatalogCache().catch(() => {});
 
-  // Best-effort retention pass (#1044): prune expired state backups, rotated
-  // audit generations, and stale receipt records once per boot, under the
-  // documented MINDVAULT_* retention settings and their safe defaults. Never
-  // throws and never deletes the active state file or the live audit log;
-  // failures are logged and the server starts anyway.
-  const retentionReport = applyRetentionPolicies(process.env);
-  if (retentionReport.errors.length > 0) {
-    logger.warn(
-      `MindVault MCP: retention pass completed with errors: ${retentionReport.errors.join("; ")}`,
-    );
+    // Best-effort retention pass (#1044): prune expired state backups, rotated
+    // audit generations, and stale receipt records once per boot, under the
+    // documented MINDVAULT_* retention settings and their safe defaults. Never
+    // throws and never deletes the active state file or the live audit log;
+    // failures are logged and the server starts anyway.
+    const retentionReport = applyRetentionPolicies(process.env);
+    if (retentionReport.errors.length > 0) {
+      logger.warn(
+        `MindVault MCP: retention pass completed with errors: ${retentionReport.errors.join("; ")}`,
+      );
+    }
   }
 
   await server.connect(transport);
