@@ -129,22 +129,28 @@ fn read_scoped(env: &Env, contract: &Address, key: &DataKey) -> ScopedValue {
 }
 
 /// Snapshot every entry the pause-scoped methods can write.
-fn snapshot_scoped(env: &Env, contract: &Address, keys: &[DataKey]) -> alloc::vec::Vec<ScopedValue> {
-    keys.iter().map(|key| read_scoped(env, contract, key)).collect()
+fn snapshot_scoped(
+    env: &Env,
+    contract: &Address,
+    keys: &[DataKey],
+) -> alloc::vec::Vec<ScopedValue> {
+    keys.iter()
+        .map(|key| read_scoped(env, contract, key))
+        .collect()
 }
 
 /// The contract error a `try_*` call produced, or `None` when it succeeded.
 ///
 /// A call that could not be delivered at all (host error or invoke error) is
 /// a test failure, not a contract error, so it panics.
-fn contract_error<T>(
-    result: Result<Result<T, Error>, Result<Error, InvokeError>>,
+fn contract_error<T, ConversionError: core::fmt::Debug>(
+    result: Result<Result<T, ConversionError>, Result<Error, InvokeError>>,
 ) -> Option<Error> {
     match result {
         Ok(Ok(_)) => None,
-        Ok(Err(error)) => Some(error),
+        Ok(Err(error)) => panic!("could not decode the return value: {error:?}"),
+        Err(Ok(error)) => Some(error),
         Err(Err(error)) => panic!("the call reverted at the host level: {error:?}"),
-        Err(Ok(error)) => panic!("the call could not be invoked: {error:?}"),
     }
 }
 
@@ -152,7 +158,7 @@ fn contract_error<T>(
 /// registry is paused, and the refusal leaves the registry untouched.
 #[test]
 fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
-    let (env, creator, client) = setup();
+    let (env, creator, admin, client) = setup_with_admin();
     let settler = Address::generate(&env);
     let verifier = Address::generate(&env);
     let payer = Address::generate(&env);
@@ -264,7 +270,7 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
 
     // Refunds.
     assert_eq!(
-        contract_error(client.try_set_refund_window(&creator, &100u32)),
+        contract_error(client.try_set_refund_window(&admin, &100u32)),
         None,
         "set_refund_window must succeed on a live registry"
     );
@@ -282,7 +288,7 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
     );
     assert_eq!(
         contract_error(client.try_record_admin_refund(
-            &creator,
+            &admin,
             &admin_refund_id,
             &settle_receipt_id,
             &payer,
@@ -381,7 +387,7 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
     );
     assert_eq!(
         contract_error(client.try_override_purchase_receipt_anchor(
-            &creator,
+            &admin,
             &anchor_resource_id,
             &buyer_three,
             &anchor_hash_four,
@@ -464,7 +470,7 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
 
     let before = snapshot_scoped(&env, &client.address, &keys);
 
-    client.set_paused(&creator, &true);
+    client.set_paused(&admin, &true);
     assert!(client.is_paused(), "the registry must be paused");
 
     // Payments.
@@ -505,7 +511,7 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
 
     // Refunds.
     assert_eq!(
-        contract_error(client.try_set_refund_window(&creator, &500u32)),
+        contract_error(client.try_set_refund_window(&admin, &500u32)),
         Some(Error::ContractPaused),
         "set_refund_window must be refused while paused"
     );
@@ -523,7 +529,7 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
     );
     assert_eq!(
         contract_error(client.try_record_admin_refund(
-            &creator,
+            &admin,
             &admin_refund_id,
             &settle_receipt_id,
             &payer,
@@ -602,7 +608,7 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
     );
     assert_eq!(
         contract_error(client.try_override_purchase_receipt_anchor(
-            &creator,
+            &admin,
             &anchor_resource_id,
             &buyer_three,
             &anchor_hash_four,
@@ -639,16 +645,16 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
     // The pause is still in force afterwards, and the registry resumes
     // normally once it is lifted.
     assert!(client.is_paused());
-    client.set_paused(&creator, &false);
+    client.set_paused(&admin, &false);
     assert!(!client.is_paused());
     assert_eq!(
         contract_error(client.try_record_payment(
             &settler,
-            &receipt_id,
+            &String::from_str(&env, "pmt-resumed"),
             &resource_id,
             &payer,
             &price,
-            &payment_tx,
+            &String::from_str(&env, "tx-resumed"),
         )),
         None,
         "the registry must accept payments again once the pause is lifted"
@@ -659,7 +665,7 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
 /// the registry is paused, so a monitor can still see what it is protecting.
 #[test]
 fn pause_scope_matrix_leaves_the_read_surface_open() {
-    let (env, creator, client) = setup();
+    let (env, creator, admin, client) = setup_with_admin();
     let settler = Address::generate(&env);
     let payer = Address::generate(&env);
 
@@ -677,22 +683,26 @@ fn pause_scope_matrix_leaves_the_read_surface_open() {
         &String::from_str(&env, "ipfs://pausemat"),
         &empty_tags(&env),
     );
-    client.record_payment(&settler, &receipt_id, &resource_id, &payer, &price, &tx_hash);
+    client.record_payment(
+        &settler,
+        &receipt_id,
+        &resource_id,
+        &payer,
+        &price,
+        &tx_hash,
+    );
 
-    client.set_paused(&creator, &true);
+    client.set_paused(&admin, &true);
 
     assert!(client.is_paused(), "the registry must be paused");
     assert_eq!(
         client.get_resource_state(&resource_id),
-        Ok(ResourceState::Listed),
+        ResourceState::Listed,
         "reads must keep working while the registry is paused"
     );
     assert!(client.exists(&resource_id));
     assert_eq!(client.count(), 1);
-    assert_eq!(
-        client.get_payment(&receipt_id).map(|receipt| receipt.receipt_id),
-        Ok(receipt_id.clone())
-    );
+    assert_eq!(client.get_payment(&receipt_id).receipt_id, receipt_id);
 }
 
 /// The published matrix in `contract/README.md` must document exactly the

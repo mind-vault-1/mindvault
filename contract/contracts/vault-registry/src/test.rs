@@ -5022,8 +5022,8 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.set_verification_status(&r2, &verifier, &VerificationStatus::Verified, &None); // -> "verify"
     record(&env, &client, &mut observed);
     client.set_fee_config(&FeeConfig {
-        platform_fee_bps: 100,
-        royalty_bps: 100,
+        platform_fee_bps: 60,
+        royalty_bps: 30,
         fee_recipient: Some(admin2.clone()),
     }); // -> "setfee"
     record(&env, &client, &mut observed);
@@ -5104,6 +5104,15 @@ fn full_workflow_emits_exactly_the_documented_events() {
     // Payments require a listed resource; r0 was delisted above.
     client.set_listed(&r0, &true); // -> "setlisted"
     record(&env, &client, &mut observed);
+    client.simulate_record_payment(
+        &settler,
+        &workflow_receipt,
+        &r0,
+        &payer,
+        &200i128,
+        &String::from_str(&env, "txhash123"),
+    ); // -> "simvalid"
+    record(&env, &client, &mut observed);
     client.record_payment(
         &settler,
         &workflow_receipt,
@@ -5181,11 +5190,26 @@ fn full_workflow_emits_exactly_the_documented_events() {
     let moderator = Address::generate(&env);
     client.add_moderator(&moderator); // -> "addmod"
     record(&env, &client, &mut observed);
+    client.set_flag_resolution_window(&10); // -> "flagwin"
+    record(&env, &client, &mut observed);
     client.flag_resource(&r0, &moderator, &FlagReason::Spam); // -> "flag"
     record(&env, &client, &mut observed);
     client.set_flag_reason_hash(&r0, &moderator, &String::from_str(&env, "reasonhash")); // -> "flagrsn"
     record(&env, &client, &mut observed);
     client.unflag_resource(&r0, &moderator); // -> "unflag"
+    record(&env, &client, &mut observed);
+    assert_eq!(client.get_flag_deadline(&r0), None);
+    client.flag_resource(&r0, &moderator, &FlagReason::Spam);
+    let deadline = client.get_flag_deadline(&r0).expect("flag has a deadline");
+    env.ledger().set_sequence_number(deadline);
+    assert!(!client.is_flag_overdue(&r0));
+    assert_eq!(
+        client.try_force_resolve_flag(&r0, &admin2),
+        Err(Ok(Error::FlagNotOverdue)),
+    );
+    env.ledger().set_sequence_number(deadline + 1);
+    assert!(client.is_flag_overdue(&r0));
+    client.force_resolve_flag(&r0, &admin2); // -> "flagfrc", "unflag"
     record(&env, &client, &mut observed);
     client.remove_moderator(&moderator); // -> "rmmod"
     record(&env, &client, &mut observed);
@@ -10357,7 +10381,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 59] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -10438,6 +10462,20 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 49] {
         (DataKey::MetadataPointers(id.clone()), "MetadataPointers", 2),
         (DataKey::RecoveryAdmin, "RecoveryAdmin", 1),
         (DataKey::Revision(id.clone()), "Revision", 2),
+        (DataKey::MaintenanceStatus, "MaintenanceStatus", 1),
+        (
+            DataKey::RevocationReasonHash(id.clone()),
+            "RevocationReasonHash",
+            2,
+        ),
+        (DataKey::AccruedFees, "AccruedFees", 1),
+        (DataKey::PaymentMemo(id.clone()), "PaymentMemo", 2),
+        (DataKey::FlagResolutionWindow, "FlagResolutionWindow", 1),
+        (DataKey::FlagDeadline(id.clone()), "FlagDeadline", 2),
+        (DataKey::ActiveLeasePriceFloor, "ActiveLeasePriceFloor", 1),
+        (DataKey::RoleHolders(RoleKind::Verifier), "RoleHolders", 2),
+        (DataKey::PaymentPaused, "PaymentPaused", 1),
+        (DataKey::PaymentPauseUntil, "PaymentPauseUntil", 1),
     ]
 }
 
@@ -10462,7 +10500,7 @@ fn storage_key_arity_is_stable() {
     for (key, name, arity) in storage_key_wire_contract(&env).iter() {
         let parts = storage_key_parts(&env, key);
         assert_eq!(
-            parts.len() as u32,
+            parts.len(),
             *arity,
             "DataKey::{name} encodes with arity {arity}. Changing the arity of a \
              storage key variant changes its on-chain address and strands every \
@@ -10477,7 +10515,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        49,
+        59,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -10532,6 +10570,16 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::MetadataPointers(_) => "MetadataPointers",
             DataKey::RecoveryAdmin => "RecoveryAdmin",
             DataKey::Revision(_) => "Revision",
+            DataKey::MaintenanceStatus => "MaintenanceStatus",
+            DataKey::RevocationReasonHash(_) => "RevocationReasonHash",
+            DataKey::AccruedFees => "AccruedFees",
+            DataKey::PaymentMemo(_) => "PaymentMemo",
+            DataKey::FlagResolutionWindow => "FlagResolutionWindow",
+            DataKey::FlagDeadline(_) => "FlagDeadline",
+            DataKey::ActiveLeasePriceFloor => "ActiveLeasePriceFloor",
+            DataKey::RoleHolders(_) => "RoleHolders",
+            DataKey::PaymentPaused => "PaymentPaused",
+            DataKey::PaymentPauseUntil => "PaymentPauseUntil",
         };
         assert_eq!(
             matched, *name,

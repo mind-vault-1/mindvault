@@ -21,7 +21,7 @@ fn setup_dual_admin<'a>() -> (Env, Address, Address, VaultRegistryClient<'a>) {
 
 #[test]
 fn recover_admin_rejects_current_admin_target() {
-    let (env, admin, recovery, client) = setup_dual_admin();
+    let (_env, admin, recovery, client) = setup_dual_admin();
 
     let res = client.try_recover_admin(&admin);
     assert_eq!(res, Err(Ok(Error::SameAdmin)));
@@ -51,7 +51,7 @@ fn recover_admin_rejects_pending_admin_target() {
 
 #[test]
 fn recover_admin_rejects_recovery_admin_target() {
-    let (env, admin, recovery, client) = setup_dual_admin();
+    let (_env, admin, recovery, client) = setup_dual_admin();
 
     let res = client.try_recover_admin(&recovery);
     assert_eq!(res, Err(Ok(Error::SameAdmin)));

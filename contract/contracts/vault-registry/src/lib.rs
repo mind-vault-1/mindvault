@@ -396,6 +396,11 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("list_by_state", "—"),
     // ── Ownership transfer with terms handoff (#808) ──────────────────────
     ("transfer_ownership_with_terms", "creator"),
+    ("maintenance_status", "none"),
+    ("set_maintenance_status", "admin"),
+    ("get_anchor_failure", "none"),
+    ("record_anchor_failure", "settler"),
+    ("retry_anchor_purchase_receipt", "verifier"),
 ];
 
 /// Canonical list of every error code this contract can return, paired with
@@ -479,6 +484,8 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
 pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("register", "Resource"),
     ("regmemo", "memo_hash: BytesN<32>"),
+    ("flagwin", "window_ledgers: u32"),
+    ("flagfrc", "(admin: Address, deadline: u32)"),
     ("nomemo", "(receipt_id: String, tx_hash: String)"),
     ("setregt", "terms_hash: String"),
     (
@@ -1157,7 +1164,7 @@ pub struct TransferWithTermsEvent {
     pub attestation_reset: bool,
 }
 
-#[contracttype]
+#[contracttype(export = false)]
 #[derive(Clone)]
 pub enum DataKey {
     Resource(String),
@@ -1201,8 +1208,6 @@ pub enum DataKey {
     RefundWindow,
     /// Aggregated settled-payment earnings for a creator wallet address.
     CreatorEarnings(Address),
-    /// Moderator who last set a resource's dispute flag or reason hash.
-    FlagModerator(String),
     /// Active lease held by `holder` on a resource.
     Lease(String, Address),
     /// Ordered resource ids leased by a holder, used by `list_holder_leases`
@@ -1924,7 +1929,7 @@ impl VaultRegistry {
         Self::require_not_paused(&env)?;
 
         // Reject both empty batches (concealed no-ops) and oversized ones.
-        if items.len() == 0 || items.len() > MAX_BATCH_REGISTER {
+        if items.is_empty() || items.len() > MAX_BATCH_REGISTER {
             return Err(Error::BatchTooLarge);
         }
 
@@ -2052,7 +2057,7 @@ impl VaultRegistry {
     ) -> Result<(), Error> {
         creator.require_auth();
         Self::require_not_paused(&env)?;
-        if updates.len() == 0 || updates.len() > MAX_BATCH_PRICE_UPDATES {
+        if updates.is_empty() || updates.len() > MAX_BATCH_PRICE_UPDATES {
             return Err(Error::BatchTooLarge);
         }
 
@@ -2124,7 +2129,7 @@ impl VaultRegistry {
     ) -> Result<(), Error> {
         creator.require_auth();
         Self::require_not_paused(&env)?;
-        if updates.len() == 0 || updates.len() > MAX_BATCH_METADATA_UPDATES {
+        if updates.is_empty() || updates.len() > MAX_BATCH_METADATA_UPDATES {
             return Err(Error::BatchTooLarge);
         }
 
@@ -4667,6 +4672,7 @@ impl VaultRegistry {
         }
         let destination = Self::load_fee_destination(&env);
         Self::validate_fee_destination_for_fee_config(&config, &destination)?;
+        Self::validate_fee_config_for_leases(&env, &config)?;
 
         // Prevent fee config changes that would invalidate active lease
         // pricing (#991).
@@ -5010,6 +5016,28 @@ impl VaultRegistry {
         }
     }
 
+    fn update_lease_price_floor(env: &Env, resource_price: i128) {
+        match env
+            .storage()
+            .instance()
+            .get::<DataKey, i128>(&DataKey::ActiveLeasePriceFloor)
+        {
+            Some(existing) if resource_price < existing => {
+                env.storage()
+                    .instance()
+                    .set(&DataKey::ActiveLeasePriceFloor, &resource_price);
+                Self::bump_instance(env);
+            }
+            None => {
+                env.storage()
+                    .instance()
+                    .set(&DataKey::ActiveLeasePriceFloor, &resource_price);
+                Self::bump_instance(env);
+            }
+            _ => {}
+        }
+    }
+
     /// Store a hash of creator marketplace terms.
     pub fn set_terms_hash(env: Env, creator: Address, terms_hash: String) -> Result<(), Error> {
         creator.require_auth();
@@ -5068,7 +5096,7 @@ impl VaultRegistry {
         env.events().publish(
             (symbol_short!("addsettlr"), settler.clone()),
             RoleChange {
-                admin: admin,
+                admin,
                 target: settler,
                 granted: true,
             },
@@ -5088,7 +5116,7 @@ impl VaultRegistry {
         env.events().publish(
             (symbol_short!("rmsettlr"), settler.clone()),
             RoleChange {
-                admin: admin,
+                admin,
                 target: settler,
                 granted: false,
             },
@@ -5248,6 +5276,68 @@ impl VaultRegistry {
         env.events()
             .publish((symbol_short!("nomemo"),), (receipt_id, tx_hash));
         Ok(())
+    }
+
+    /// Same as `record_payment`, but additionally requires the settlement
+    /// transaction's `MEMO_TEXT` (`memo`) to be the canonical provenance memo
+    /// `mv:<resource_id>` for the paid resource; anything else errors
+    /// `InvalidPaymentMemo`. The memo is stored with the receipt and readable
+    /// via `get_payment_memo`. The settler is responsible for passing the memo
+    /// exactly as it appears on the Stellar transaction identified by `tx_hash`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_payment_with_memo(
+        env: Env,
+        settler: Address,
+        receipt_id: String,
+        resource_id: String,
+        payer: Address,
+        amount: i128,
+        tx_hash: String,
+        memo: String,
+    ) -> Result<(), Error> {
+        Self::validate_resource_id(&resource_id)?;
+        if !Self::is_canonical_payment_memo(&memo, &resource_id) {
+            return Err(Error::InvalidPaymentMemo);
+        }
+        Self::check_payment_args(
+            &env,
+            &settler,
+            &receipt_id,
+            &resource_id,
+            &payer,
+            amount,
+            &tx_hash,
+        )?;
+        Self::write_payment(
+            &env,
+            receipt_id.clone(),
+            resource_id,
+            payer,
+            amount,
+            tx_hash,
+        )?;
+        let key = DataKey::PaymentMemo(receipt_id);
+        env.storage().persistent().set(&key, &memo);
+        Self::bump_persistent(&env, &key);
+        Ok(())
+    }
+
+    /// Canonical settlement memo stored for `receipt_id` by
+    /// `record_payment_with_memo`, or `None` if the receipt was recorded
+    /// without one (via `record_payment`) or does not exist.
+    pub fn get_payment_memo(env: Env, receipt_id: String) -> Option<String> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PaymentMemo(receipt_id))
+    }
+
+    fn is_canonical_payment_memo(memo: &String, resource_id: &String) -> bool {
+        let memo = Self::string_bytes(memo);
+        let id = Self::string_bytes(resource_id);
+        let prefix = PAYMENT_MEMO_PREFIX.as_bytes();
+        memo.len() == prefix.len() + id.len()
+            && memo.starts_with(prefix)
+            && memo[prefix.len()..] == id[..]
     }
 
     /// Retry-safe `record_payment`: same auth, validation, and pause rules,
@@ -5971,7 +6061,7 @@ impl VaultRegistry {
         env.events().publish(
             (symbol_short!("addmod"), moderator.clone()),
             RoleChange {
-                admin: admin,
+                admin,
                 target: moderator,
                 granted: true,
             },
@@ -5991,7 +6081,7 @@ impl VaultRegistry {
         env.events().publish(
             (symbol_short!("rmmod"), moderator.clone()),
             RoleChange {
-                admin: admin,
+                admin,
                 target: moderator,
                 granted: false,
             },
@@ -6108,6 +6198,19 @@ impl VaultRegistry {
 
         resource.dispute_flag = DisputeFlag::Flagged(reason);
         Self::save(&env, &mut resource);
+        // Start the resolution clock on a fresh flag; re-flagging keeps the
+        // original deadline so a moderator cannot extend it indefinitely.
+        if !was_flagged {
+            let window = Self::flag_resolution_window(env.clone());
+            let key = DataKey::FlagDeadline(id.clone());
+            if window > 0 {
+                let deadline = env.ledger().sequence().saturating_add(window);
+                env.storage().persistent().set(&key, &deadline);
+                Self::bump_persistent(&env, &key);
+            } else {
+                env.storage().persistent().remove(&key);
+            }
+        }
         Self::record_flag_moderator(&env, &id, &moderator);
         env.events().publish(
             (symbol_short!("flag"), id.clone()),
@@ -6150,6 +6253,86 @@ impl VaultRegistry {
         resource.dispute_flag = DisputeFlag::NoFlag;
         Self::save(&env, &mut resource);
         Self::record_flag_moderator(&env, &id, &moderator);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::FlagDeadline(id.clone()));
+        env.events()
+            .publish((symbol_short!("unflag"), id.clone()), id);
+        Ok(())
+    }
+
+    /// Set how many ledgers a moderator has to resolve a flag before it
+    /// becomes overdue. Applies to flags raised after the change; `0` disables
+    /// deadlines. Admin only. Errors `InvalidFlagResolutionWindow` above
+    /// `MAX_FLAG_RESOLUTION_WINDOW`. Emits `flagwin`.
+    pub fn set_flag_resolution_window(env: Env, window_ledgers: u32) -> Result<(), Error> {
+        let admin = Self::require_admin(&env)?;
+        admin.require_auth();
+        Self::require_not_paused(&env)?;
+        if window_ledgers > MAX_FLAG_RESOLUTION_WINDOW {
+            return Err(Error::InvalidFlagResolutionWindow);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::FlagResolutionWindow, &window_ledgers);
+        Self::bump_instance(&env);
+        env.events()
+            .publish((symbol_short!("flagwin"),), window_ledgers);
+        Ok(())
+    }
+
+    /// Configured flag resolution window in ledgers (`0` = no deadline).
+    pub fn flag_resolution_window(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::FlagResolutionWindow)
+            .unwrap_or(0)
+    }
+
+    /// Ledger sequence after which the active flag on `id` is overdue, or
+    /// `None` if the resource is not flagged or was flagged with no window.
+    pub fn get_flag_deadline(env: Env, id: String) -> Option<u32> {
+        env.storage().persistent().get(&DataKey::FlagDeadline(id))
+    }
+
+    /// Whether the active flag on `id` has passed its resolution deadline.
+    /// Off-chain indexers and moderation dashboards should escalate overdue
+    /// flags to the admin, who may then call `force_resolve_flag`.
+    pub fn is_flag_overdue(env: Env, id: String) -> bool {
+        match Self::get_flag_deadline(env.clone(), id) {
+            Some(deadline) => env.ledger().sequence() > deadline,
+            None => false,
+        }
+    }
+
+    /// Admin escape hatch for a flag a moderator never resolved: clears the
+    /// dispute flag once its resolution deadline has passed. Errors
+    /// `NotFlagged` if the resource is not flagged and `FlagNotOverdue` if the
+    /// deadline has not passed (or none was set). Emits `flagfrc` and `unflag`.
+    pub fn force_resolve_flag(env: Env, id: String, admin: Address) -> Result<(), Error> {
+        let current = Self::require_admin(&env)?;
+        if admin != current {
+            return Err(Error::Unauthorized);
+        }
+        admin.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&id)?;
+        let mut resource = Self::load(&env, &id)?;
+        if !resource.dispute_flag.is_flagged() {
+            return Err(Error::NotFlagged);
+        }
+        let deadline =
+            Self::get_flag_deadline(env.clone(), id.clone()).ok_or(Error::FlagNotOverdue)?;
+        if env.ledger().sequence() <= deadline {
+            return Err(Error::FlagNotOverdue);
+        }
+        resource.dispute_flag = DisputeFlag::NoFlag;
+        Self::save(&env, &mut resource);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::FlagDeadline(id.clone()));
+        env.events()
+            .publish((symbol_short!("flagfrc"), id.clone()), (admin, deadline));
         env.events()
             .publish((symbol_short!("unflag"), id.clone()), id);
         Ok(())
@@ -6771,6 +6954,7 @@ impl VaultRegistry {
 }
 
 impl VaultRegistry {
+    #[allow(clippy::too_many_arguments)]
     fn record_refund(
         env: &Env,
         initiator: Address,

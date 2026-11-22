@@ -51,6 +51,7 @@ vi.mock("@stellar/stellar-sdk", () => {
     }
   }
   class Server {
+    httpClient = { post: vi.fn() };
     constructor(url: string, opts: unknown) {
       sdk.serverCtor(url, opts);
     }

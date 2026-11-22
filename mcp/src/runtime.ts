@@ -1,3 +1,4 @@
+import { limitPaymentPayload, limitUpstreamFetch } from "./upstreamConcurrency.js";
 import {
   networks as registryNetworks,
   normalizeX402Network,
@@ -91,9 +92,11 @@ function resolveAgentSecret(provided?: string): string | undefined {
   return provided ?? process.env.MINDVAULT_AGENT_SECRET;
 }
 
-const httpFetch: typeof fetch = MOCK
-  ? createMockFetch(() => currentWallet()?.publicKey)
-  : (input, init) => fetch(input as RequestInfo | URL, init);
+const httpFetch = limitUpstreamFetch(
+  MOCK
+    ? createMockFetch(() => currentWallet()?.publicKey)
+    : (input, init) => fetch(input as RequestInfo | URL, init),
+);
 
 const TIMEOUTS = resolveTimeouts(process.env);
 const RETRY_POLICY = retryPolicyFromEnv(process.env);
@@ -162,7 +165,7 @@ function resolveProfileName(name: unknown): string {
 export function _setAgentWallet(w: AgentWallet | null): void {
   if (w) {
     activeProfile().wallet = w;
-    activeProfile().network ??= NETWORK as "testnet" | "mainnet";
+    activeProfile().network ??= NETWORK;
   } else delete activeProfile().wallet;
 }
 export function _setAgentApiKey(k: string | null): void {
@@ -337,7 +340,7 @@ function requireApiKey(): string {
 
 function makePaidFetch(wallet: AgentWallet) {
   const signer = createEd25519Signer(wallet.secretKey, NETWORK);
-  const scheme = new ExactStellarScheme(signer);
+  const scheme = limitPaymentPayload(new ExactStellarScheme(signer));
   const client = new x402Client().register(NETWORK, scheme);
   return wrapFetchWithPayment(withTimeout(httpFetch, "payment", TIMEOUTS.payment), client);
 }
