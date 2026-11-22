@@ -253,6 +253,15 @@ destination_amount = floor(platform_amount * fee_destination_bps / 10_000)
 fee_recipient_amount = platform_amount - destination_amount
 ```
 
+`platform_amount` is computed by a shared integer helper used by both
+`settle_payment` and the focused fee tests. A client quote built from
+`get_fee_config` / `get_fee_destination` must use the same floor division in
+USDC base units; rounding to a decimal USDC value before computing the split
+can differ by one base unit at small prices. The destination share is floored
+from the already-computed `platform_amount`, and the recipient receives the
+remainder, so the two legs always sum to the persisted fee. Sub-base-unit dust
+is not tracked, and `PaymentReceipt.amount` remains the gross payment amount.
+
 `set_fee_destination` is admin-only and emits `setdest` with the old policy,
 new policy, and ledger sequence. This event proves the authorized routing
 configuration; because the registry is non-custodial, it does not itself move,

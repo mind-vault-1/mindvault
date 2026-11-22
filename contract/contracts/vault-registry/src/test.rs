@@ -5216,8 +5216,14 @@ fn full_workflow_emits_exactly_the_documented_events() {
 
 // ── Fee configuration and basis-point calculation ───────────────────────────
 
+/// Preview helper under test. Tests deliberately call the same private
+/// helpers that `settle_payment` uses so a rounding change cannot drift.
 fn fee_amount(amount: i128, fee_bps: u32) -> i128 {
-    amount * i128::from(fee_bps) / i128::from(FEE_BPS_DENOM)
+    VaultRegistry::fee_amount_from_bps(amount, fee_bps)
+}
+
+fn fee_destination_amount(platform_amount: i128, destination_bps: u32) -> i128 {
+    VaultRegistry::fee_destination_amount(platform_amount, destination_bps)
 }
 
 #[test]
@@ -5237,6 +5243,51 @@ fn fee_amount_calculation_truncates_fractional_stroops() {
 fn fee_amount_calculation_handles_maximum_rate_and_large_amount() {
     assert_eq!(fee_amount(1_000_000, MAX_FEE_BPS), 500_000);
     assert_eq!(fee_amount(MAX_PRICE, MAX_FEE_BPS), 500_000_000_000_000_000);
+}
+
+#[test]
+fn fee_preview_floor_matches_accrued_fee_at_truncation_boundaries() {
+    let (env, creator, admin, settler, client) = setup_with_settler();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 100,
+        royalty_bps: 0,
+        fee_recipient: Some(admin.clone()),
+    });
+    let destination = FeeDestinationConfig {
+        bps: 5_000,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&destination);
+
+    // 1 base unit of fee sits exactly on the floor boundary; 99 units are
+    // rounded away. Both must agree with the persisted accrued fee.
+    for (index, (price, expected_fee)) in [(101i128, 1i128), (99i128, 0i128)]
+        .into_iter()
+        .enumerate()
+    {
+        let id = if index == 0 { "feebnd01" } else { "feebnd02" };
+        let id = register_priced(&env, &creator, &client, id, price);
+        let receipt_id = String::from_str(&env, if index == 0 { "feebndr1" } else { "feebndr2" });
+        let payer = Address::generate(&env);
+        let preview = fee_amount(price, 100);
+        assert_eq!(preview, expected_fee);
+        let destination_share = fee_destination_amount(preview, destination.bps);
+        assert_eq!(destination_share + (preview - destination_share), preview);
+
+        client.record_payment(
+            &settler,
+            &receipt_id,
+            &id,
+            &payer,
+            &price,
+            &String::from_str(&env, if index == 0 { "feebndx1" } else { "feebndx2" }),
+        );
+        client.settle_payment(&settler, &receipt_id);
+
+        assert_eq!(client.get_payment(&receipt_id).amount, price);
+        assert_eq!(client.get_accrued_fees(), preview);
+        client.claim_fees();
+    }
 }
 
 proptest! {
@@ -5285,6 +5336,63 @@ proptest! {
         );
         prop_assert!(client.get_refunded_amount(&payment_id) <= payment_amount);
         prop_assert_eq!(client.get_refunded_amount(&payment_id), first_refund);
+    }
+
+    /// A quote produced from fee basis points must equal the fee persisted by
+    /// settlement for every fee/price boundary, including tiny amounts where
+    /// integer division drops the whole fee.
+    #[test]
+    fn fee_preview_matches_persisted_receipt_across_fee_and_price_boundaries(
+        price in 1i128..=20_000i128,
+        platform_fee_bps in 0u32..=MAX_FEE_BPS,
+        royalty_bps in 0u32..=MAX_FEE_BPS,
+        destination_bps in 1u32..=FEE_BPS_DENOM,
+    ) {
+        let combined_bps = platform_fee_bps + royalty_bps;
+        prop_assume!(combined_bps <= MAX_FEE_BPS);
+        prop_assume!(price > i128::from(combined_bps));
+
+        let (env, creator, admin, settler, client) = setup_with_settler();
+        client.set_fee_config(&FeeConfig {
+            platform_fee_bps,
+            royalty_bps,
+            fee_recipient: Some(admin),
+        });
+        let destination = if platform_fee_bps == 0 {
+            FeeDestinationConfig {
+                bps: 0,
+                destination: FeeDestination::None,
+            }
+        } else {
+            let config = FeeDestinationConfig {
+                bps: destination_bps,
+                destination: FeeDestination::Burn,
+            };
+            client.set_fee_destination(&config);
+            config
+        };
+
+        let id = register_priced(&env, &creator, &client, "feeprop1", price);
+        let receipt_id = String::from_str(&env, "feeprop01");
+        let payer = Address::generate(&env);
+        let preview = fee_amount(price, platform_fee_bps);
+        let destination_share = fee_destination_amount(preview, destination.bps);
+
+        prop_assert_eq!(destination_share + (preview - destination_share), preview);
+        prop_assert!(preview <= price);
+
+        client.record_payment(
+            &settler,
+            &receipt_id,
+            &id,
+            &payer,
+            &price,
+            &String::from_str(&env, "feeproptx01"),
+        );
+        client.settle_payment(&settler, &receipt_id);
+
+        prop_assert_eq!(client.get_payment(&receipt_id).amount, price);
+        prop_assert_eq!(client.get_accrued_fees(), preview);
     }
 }
 

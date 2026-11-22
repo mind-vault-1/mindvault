@@ -4872,6 +4872,22 @@ impl VaultRegistry {
         Self::load_accrued_fees(&env)
     }
 
+    /// Convert a basis-point rate to an amount with the same integer-floor
+    /// rounding used by `settle_payment`. Previews and persisted fee accruals
+    /// must call this helper so a quoted split cannot disagree with the
+    /// recorded receipt at small amounts.
+    fn fee_amount_from_bps(amount: i128, fee_bps: u32) -> i128 {
+        amount * i128::from(fee_bps) / i128::from(FEE_BPS_DENOM)
+    }
+
+    /// Split an already-computed platform fee between the destination policy
+    /// and the fee recipient. The destination share is floored independently
+    /// and the recipient receives the remainder, so the two legs always add up
+    /// to the persisted platform fee even for sub-base-unit amounts.
+    fn fee_destination_amount(platform_amount: i128, destination_bps: u32) -> i128 {
+        platform_amount * i128::from(destination_bps) / i128::from(FEE_BPS_DENOM)
+    }
+
     fn default_fee_destination() -> FeeDestinationConfig {
         FeeDestinationConfig {
             bps: 0,
@@ -5346,8 +5362,8 @@ impl VaultRegistry {
             .get::<DataKey, FeeConfig>(&DataKey::FeeConfig)
         {
             if fee_config.platform_fee_bps > 0 && fee_config.fee_recipient.is_some() {
-                let fee_amount = receipt.amount * i128::from(fee_config.platform_fee_bps)
-                    / i128::from(FEE_BPS_DENOM);
+                let fee_amount =
+                    Self::fee_amount_from_bps(receipt.amount, fee_config.platform_fee_bps);
                 Self::accrue_fees(&env, fee_amount);
             }
         }
