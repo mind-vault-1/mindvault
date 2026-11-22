@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { type Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { ServerNotification } from "@modelcontextprotocol/sdk/types.js";
+import { isAuditLogEnabled, logProgressNotification } from "./auditLog.js";
 
 export type SendNotification = (notification: ServerNotification) => Promise<void>;
 
@@ -265,6 +266,10 @@ export interface ProgressEventMeta {
 export function sequenceProgressNotifications<N extends { method: string; params?: unknown }>(
   send: (notification: N) => Promise<void> | void,
   streamId: string = randomUUID(),
+  options?: {
+    toolName?: string;
+    logAudit?: boolean;
+  },
 ): (notification: N) => Promise<void> {
   let sequence = 0;
   let lastProgress = Number.NEGATIVE_INFINITY;
@@ -276,12 +281,27 @@ export function sequenceProgressNotifications<N extends { method: string; params
     }
     const params = (notification.params ?? {}) as {
       progress: number;
+      total?: number;
+      message?: string;
+      progressToken?: string | number;
       _meta?: Record<string, unknown>;
     };
     if (!(params.progress > lastProgress)) return;
     lastProgress = params.progress;
     sequence += 1;
     const event: ProgressEventMeta = { streamId, sequence, eventId: `${streamId}:${sequence}` };
+    if ((options?.logAudit ?? true) && isAuditLogEnabled()) {
+      logProgressNotification({
+        toolName: options?.toolName,
+        progressToken: params.progressToken,
+        progress: params.progress,
+        total: params.total,
+        message: params.message,
+        eventId: event.eventId,
+        sequence: event.sequence,
+        streamId: event.streamId,
+      });
+    }
     await send({
       ...notification,
       params: { ...params, _meta: { ...(params._meta ?? {}), [PROGRESS_EVENT_META_KEY]: event } },

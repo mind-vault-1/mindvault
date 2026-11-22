@@ -283,6 +283,30 @@ describe("pollPublishStatus progress streaming", () => {
       }),
     ).rejects.toThrow(/not found/);
   });
+
+  it("stops polling immediately when signal is aborted during wait", async () => {
+    const controller = new AbortController();
+    let fetchCount = 0;
+
+    await expect(
+      pollPublishStatus({
+        resourceId: "res-pending",
+        wait: true,
+        timeoutMs: 10_000,
+        intervalMs: 1_000,
+        fetchStatus: async () => {
+          fetchCount++;
+          return { meta: { verificationStatus: "pending" }, verification: null };
+        },
+        sleep: async () => {
+          controller.abort(new Error("operation cancelled by user"));
+        },
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("operation cancelled by user");
+
+    expect(fetchCount).toBe(1);
+  });
 });
 
 describe("progress helpers", () => {

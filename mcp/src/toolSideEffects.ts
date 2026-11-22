@@ -71,7 +71,6 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_wallet_info: READ,
   mindvault_wallet_balances: READ,
   mindvault_wallet_allowance: READ,
-  mindvault_wallet_balances: READ,
   // Replaces the target profile's wallet secret after a Horizon read.
   mindvault_repair_sponsored_account: { local: "overwrite", remote: "none", payment: "none" },
   mindvault_use_profile: { local: "write", remote: "none", payment: "none" },
@@ -165,11 +164,8 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_client_config: READ,
   mindvault_mainnet_banner: READ,
   mindvault_verify_install: READ,
-  mindvault_server_endpoints: READ,
-  mindvault_migration_preview: READ,
   mindvault_support_bundle: READ,
   mindvault_debug_bundle: READ,
-  mindvault_support_bundle: READ,
 };
 
 /** The annotation hints a side-effect row implies. */

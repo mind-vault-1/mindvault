@@ -107,10 +107,11 @@ const logRetry = process.env.VITEST
   ? undefined
   : (info: RetryAttemptInfo) => console.error(`MindVault MCP: ${formatRetryLog(info)}`);
 
-function httpRetryOptions(label: string) {
+function httpRetryOptions(label: string, signal?: AbortSignal) {
   return {
     policy: RETRY_POLICY,
     label,
+    signal,
     shouldRetryResult: (res: Response) => isRetryableStatus(res.status),
     describeResult: (res: Response) => `HTTP ${res.status}`,
     delayFromResult: (res: Response) =>
@@ -126,7 +127,7 @@ function sorobanRpcFetch(init: RequestInit, label: string): Promise<Response> {
   };
   return withRetry(
     () => fetchWithTimeout(httpFetch, SOROBAN_RPC_URL, initWithUA, "soroban", TIMEOUTS.soroban),
-    httpRetryOptions(label),
+    httpRetryOptions(label, init.signal as AbortSignal | undefined),
   );
 }
 
@@ -285,7 +286,13 @@ async function jsonFetch(
         TIMEOUTS[service],
       );
     res = isIdempotentMethod(method)
-      ? await withRetry(call, httpRetryOptions(`${method} ${new URL(url).pathname}`))
+      ? await withRetry(
+          call,
+          httpRetryOptions(
+            `${method} ${new URL(url).pathname}`,
+            init?.signal as AbortSignal | undefined,
+          ),
+        )
       : await call();
   } catch (err) {
     const source = sourceForUrl(url);

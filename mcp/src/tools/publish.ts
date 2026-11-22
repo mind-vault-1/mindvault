@@ -1238,7 +1238,7 @@ export async function prepareOwnershipTransfer(
     const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/ownership/prepare`, {
       method: "POST",
       headers: { "x-api-key": apiKey },
-      body: { newCreator },
+      body: JSON.stringify({ newCreator }),
     });
     if (!res.ok) {
       throwHttpError({

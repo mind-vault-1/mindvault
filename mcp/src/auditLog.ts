@@ -19,7 +19,7 @@ export interface AuditLogEntry {
    */
   correlationId?: string;
   toolName: string;
-  status: "start" | "success" | "error";
+  status: "start" | "success" | "error" | "progress";
   duration?: number;
   resourceId?: string;
   network?: string;
@@ -28,6 +28,12 @@ export interface AuditLogEntry {
   errorCategory?: string;
   message?: string;
   details?: Record<string, unknown>;
+  progress?: number;
+  total?: number;
+  progressToken?: string | number;
+  eventId?: string;
+  sequence?: number;
+  streamId?: string;
 }
 
 export interface NetworkAuditLog {
@@ -117,6 +123,16 @@ function withCorrelation<T extends AuditLogEntry | NetworkAuditLog>(entry: T): T
   return correlationId ? { ...entry, correlationId } : entry;
 }
 
+const seenProgressEventIds = new Set<string>();
+
+export function resetAuditDeduplicator(): void {
+  seenProgressEventIds.clear();
+}
+
+export function isProgressAuditDuplicate(eventId: string): boolean {
+  return seenProgressEventIds.has(eventId);
+}
+
 /**
  * Single exit point for every audit entry, so correlation is never skipped and
  * every configured sink sees the same entry.
@@ -126,9 +142,57 @@ function withCorrelation<T extends AuditLogEntry | NetworkAuditLog>(entry: T): T
  * is what makes the file greppable and shippable.
  */
 function emit(entry: AuditLogEntry | NetworkAuditLog): void {
+  if ("eventId" in entry && entry.eventId) {
+    if (seenProgressEventIds.has(entry.eventId)) {
+      // Replay after reconnect: suppress duplicate audit entry (#1214)
+      return;
+    }
+    seenProgressEventIds.add(entry.eventId);
+    if (seenProgressEventIds.size > 10_000) {
+      const first = seenProgressEventIds.values().next().value;
+      if (first) seenProgressEventIds.delete(first);
+    }
+  }
+
   const correlated = withCorrelation(entry);
   console.error(JSON.stringify(correlated, null, 2));
   auditFileWriter?.write(correlated);
+}
+
+/**
+ * Log a progress notification (#1214).
+ * Deduplicated automatically by eventId so progress reconnects do not produce
+ * duplicate audit log entries.
+ */
+export function logProgressNotification(input: {
+  toolName?: string;
+  progress: number;
+  total?: number;
+  message?: string;
+  progressToken?: string | number;
+  eventId?: string;
+  sequence?: number;
+  streamId?: string;
+  details?: Record<string, unknown>;
+}): void {
+  if (!auditLogEnabled) return;
+
+  const entry: AuditLogEntry = {
+    timestamp: formatTimestamp(),
+    toolName: input.toolName ?? "progress",
+    status: "progress",
+    progress: input.progress,
+  };
+
+  if (input.total !== undefined) entry.total = input.total;
+  if (input.message) entry.message = redactSecrets(input.message);
+  if (input.progressToken !== undefined) entry.progressToken = input.progressToken;
+  if (input.eventId) entry.eventId = input.eventId;
+  if (input.sequence !== undefined) entry.sequence = input.sequence;
+  if (input.streamId) entry.streamId = input.streamId;
+  if (input.details) entry.details = redactObject(input.details);
+
+  emit(entry);
 }
 
 /**
