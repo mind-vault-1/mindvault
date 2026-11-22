@@ -437,6 +437,12 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
       x402Network: NETWORK,
       resourceFields: ["id", "creator", "price", "metadata", "listed"],
       mainnetDiagnostics: "not on mainnet",
+      schemaVersion: {
+        detected: 7,
+        supported: [6, 7],
+        current: 7,
+        status: "supported",
+      },
     }),
   mindvault_network_profile: () =>
     json({

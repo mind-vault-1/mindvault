@@ -163,6 +163,7 @@ describe("representative payloads match advertised required keys", () => {
       x402Network: "stellar:testnet",
       resourceFields: ["id"],
       mainnetDiagnostics: "",
+      schemaVersion: { detected: 7, supported: [6, 7], current: 7, status: "supported" },
     });
     assertKeys(RECOVER_CACHE_OUTPUT_SCHEMA, {
       source: "mcp",
