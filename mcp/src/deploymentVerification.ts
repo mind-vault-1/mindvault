@@ -27,10 +27,11 @@
  *     "no manifest" error instead of a false clean bill of health.
  */
 
+import { createLimitedRegistryClient } from "./upstreamStellar.js";
 import { createHash } from "node:crypto";
+import { limitRpcServer } from "./upstreamConcurrency.js";
 import { rpc } from "@stellar/stellar-sdk";
 import {
-  createRegistryClient,
   networks as registryNetworks,
   parseStellarNetwork,
   type StellarDeploymentNetwork,
@@ -781,19 +782,22 @@ export function buildDeploymentVerificationReport(
 export async function fetchDeploymentSnapshot(
   query: DeploymentFetchQuery,
 ): Promise<DeploymentSnapshot> {
-  const server = new rpc.Server(query.rpcUrl, {
-    allowHttp: query.rpcUrl.startsWith("http://"),
-  });
+  const server = limitRpcServer(
+    new rpc.Server(query.rpcUrl, {
+      allowHttp: query.rpcUrl.startsWith("http://"),
+    }),
+  );
 
   const [network, wasm] = await Promise.all([
     server.getNetwork(),
     server.getContractWasmByContractId(query.contractId),
   ]);
 
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: query.contractId,
     rpcUrl: query.rpcUrl,
     networkPassphrase: query.networkPassphrase,
+    server,
   });
 
   const [infoTransaction, versionTransaction] = await Promise.all([

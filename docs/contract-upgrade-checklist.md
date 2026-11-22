@@ -24,12 +24,12 @@ Legend:
   Zero failures required. If any test fails, stop here.
 
 - [ ] **Snapshot files are current**  
-      `cargo test` regenerates `test_snapshots/` automatically when `soroban-sdk`
+       `cargo test` regenerates `test_snapshots/` automatically when `soroban-sdk`
       testutils detect a mismatch. Commit any changed snapshot files before
       proceeding — a stale snapshot is a sign the test ran against the wrong state.
 
 - [ ] **No unintended public API changes**  
-      Review the diff of `contract/contracts/vault-registry/src/lib.rs` for any
+       Review the diff of `contract/contracts/vault-registry/src/lib.rs` for any
       signature changes to exported functions (arguments, return types, error
       variants). Compared against the acceptance criteria:
   - Added or removed methods → update contract `README.md` function table
@@ -42,12 +42,12 @@ Legend:
     `full_workflow_emits_exactly_the_documented_events` enforce parity)
 
 - [ ] **`EVENT_SCHEMA` is in sync with `README.md`**  
-      These two tests must pass after any event change:
+       These two tests must pass after any event change:
   - `event_schema_matches_documented_readme_table`
   - `full_workflow_emits_exactly_the_documented_events`
 
 - [ ] **Error handling is deterministic**  
-      Every new error path must map to an explicit `Error` variant (not a panic or
+       Every new error path must map to an explicit `Error` variant (not a panic or
       an opaque `Err`). Verify the error code table in `README.md` covers every
       variant returned by the modified functions.
 
@@ -94,7 +94,7 @@ Legend:
 ## Phase 3 — Network and identity checks
 
 - [ ] **Target network confirmed**  
-      Decide which network this WASM targets. Set `NETWORK` for the commands below:
+       Decide which network this WASM targets. Set `NETWORK` for the commands below:
 
   ```bash
   # testnet
@@ -119,7 +119,7 @@ Legend:
   exchange. 🔒
 
 - [ ] **Existing contract ID noted**  
-      Record the current `VAULT_REGISTRY_CONTRACT_ID` from `server/.env` (or
+       Record the current `VAULT_REGISTRY_CONTRACT_ID` from `server/.env` (or
       `server/.env.example`). This is the contract the server and MCP currently
       point to — needed for the rollback plan and for binding verification.
 
@@ -184,7 +184,7 @@ Legend:
   ```
 
 - [ ] **Deployment details recorded**  
-      Update `contract/README.md`'s "Testnet Deployment" (or Mainnet) table with:
+       Update `contract/README.md`'s "Testnet Deployment" (or Mainnet) table with:
   - Contract ID
   - WASM Hash
   - Deployer Address
@@ -227,7 +227,7 @@ embedded contract ID in the generated client.
   skipped or targeted the wrong WASM.
 
 - [ ] **`VAULT_REGISTRY_CONTRACT_ID` updated everywhere**  
-      Search for the old contract ID and replace with `$NEW_CONTRACT_ID`:
+       Search for the old contract ID and replace with `$NEW_CONTRACT_ID`:
   - `server/.env` (and any staging/production secrets)
   - `mcp/.env` (and MCP client configs in `docs/mcp-client-configs.md`)
   - `contract/README.md` deployment table (done in Phase 4)
@@ -260,7 +260,7 @@ embedded contract ID in the generated client.
   ```
 
 - [ ] **MCP binding check tool reports a match**  
-      In an MCP session connected to the updated server:
+       In an MCP session connected to the updated server:
 
   ```
   mindvault_registry_info
@@ -348,13 +348,13 @@ contract), the admin role must be bootstrapped before the server can call
 ## Phase 8 — Post-deploy
 
 - [ ] **CI passes on the updated branch / PR**  
-      Push the changes (updated bindings, `README.md`, env defaults). The
+       Push the changes (updated bindings, `README.md`, env defaults). The
       `Contract CI` workflow must pass — it enforces WASM size budget, runs
       `cargo test`, and the `no_std` check. The `PR` workflow enforces binding
       freshness via `pnpm contract:bindings` diff.
 
 - [ ] **Rollback plan documented**  
-      If the new deployment has a critical bug, the rollback is: set
+       If the new deployment has a critical bug, the rollback is: set
       `VAULT_REGISTRY_CONTRACT_ID` back to the previous contract ID and redeploy
       the server. The old contract remains live on-chain. Any resources registered
       against the new contract ID will not appear in the rolled-back state — note
@@ -405,9 +405,12 @@ pnpm --filter @mindvault/server reconcile
 
 ## Related docs
 
+- [Testnet Upgrade Rehearsal](./contract-upgrade-rehearsal-testnet.md) — end-to-end dry run of the WASM deploy before cutover
+- [Contract Method & Event Reference](./contract-method-event-reference.md) — current method signatures and event topics
 - [Deployment Runbook](./deployment-runbook.md) — full stack deploy (contract + server + frontend + MCP)
 - [Mainnet Deployment Checklist](./mainnet-deployment-checklist.md) — additional mainnet-specific steps
 - [Registry Client Bindings](./registry-client-bindings.md) — how bindings are generated and kept fresh
+- [Regenerating Bindings](./regenerating-bindings.md) — step-by-step process for running, reviewing, and verifying bindings after a contract change
 - [Index Repair](./index-repair.md) — `repair_index` admin operation
 - [Reconciliation](./reconciliation.md) — drift detection between DB and on-chain registry
 - [Contract Registry Pause Decision](./contract-registry-pause-decision.md) — pause/unpause ADR

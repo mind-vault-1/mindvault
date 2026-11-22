@@ -126,8 +126,8 @@ fn storage_footprint_report() {
         &String::from_str(&env, &"t".repeat(MAX_TERMS_HASH_LEN as usize)),
     );
     client.set_fee_config(&FeeConfig {
-        platform_fee_bps: 100,
-        royalty_bps: 250,
+        platform_fee_bps: 60,
+        royalty_bps: 30,
         fee_recipient: Some(admin.clone()),
     });
     client.set_fee_destination(&FeeDestinationConfig {

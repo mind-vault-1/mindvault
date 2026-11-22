@@ -40,7 +40,7 @@
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { MAINNET_GATED_TOOLS } from "./mainnetGuardrails.js";
 import { paidOperationToolNames } from "./paidOperations.js";
@@ -59,6 +59,14 @@ process.env.STELLAR_NETWORK = "testnet";
 const home = mkdtempSync(join(tmpdir(), "mindvault-mcp-contract-"));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+
+// Reachability depends on hitting the handler, even when an upstream is unavailable.
+vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Offline contract probe")));
+vi.mock("./upstreamStellar.js", () => ({
+  createLimitedRegistryClient: () => {
+    throw new Error("Offline contract probe");
+  },
+}));
 
 const { server, dispatchTool } = await import("./index.js");
 
@@ -88,6 +96,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await harness?.close();
+  vi.unstubAllGlobals();
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -167,13 +176,20 @@ function sampleValue(spec: ArgumentSpec): unknown {
       return ["sample"];
     case "string_array":
       return ["contract-probe"];
+    case "object":
+      return {};
+    case "stellar_address":
+      return "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH";
+    case "stellar_secret":
+      return SAMPLE_WALLET_SEED;
+    case "url":
+      return "https://example.com/probe";
     case "string":
-      // `contract-probe` satisfies every string pattern in use (resource ids,
-      // profile names, metadata pointers are all covered by the looser ones);
-      // the few with a stricter pattern are listed in SAMPLE_OVERRIDES.
-      return "contract-probe";
+      return "contractprobe";
   }
 }
+
+const SAMPLE_WALLET_SEED = "SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY";
 
 /** Specs whose pattern the generic string sample cannot satisfy. */
 const SAMPLE_OVERRIDES: Record<string, Record<string, unknown>> = {
@@ -188,9 +204,8 @@ const SAMPLE_OVERRIDES: Record<string, Record<string, unknown>> = {
   mindvault_royalty: {
     royaltyRecipient: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
   },
-  mindvault_import_wallet: {
-    secretKey: "SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY",
-  },
+  mindvault_import_wallet: { secretKey: SAMPLE_WALLET_SEED },
+  mindvault_explain_error_code: { code: 1 },
   mindvault_publish_batch: {
     items: [{ title: "Probe Resource", price: "1.00", externalUrl: "https://example.com/probe" }],
   },

@@ -107,6 +107,8 @@ codex mcp add mindvault -- node /path/to/mindvault/mcp/dist/index.js
 
 Copy-ready configs for Claude Code, Claude Desktop, Codex, Cursor, VS Code, and Windsurf — plus the state file path, network profiles, and security notes — are in **[docs/mcp-client-configs.md](docs/mcp-client-configs.md)**.
 
+Which MCP features each client needs, and what still works when a client lacks one, is in **[docs/mcp-client-compatibility.md](docs/mcp-client-compatibility.md)**.
+
 All env vars are optional — the defaults point to the hosted testnet backend:
 
 | Variable                     | Default                                                | Description                                                           |
@@ -120,6 +122,8 @@ All env vars are optional — the defaults point to the hosted testnet backend:
 | `MCP_LOG_LEVEL`              | `info`                                                 | Logging priority level threshold: `debug`, `info`, `warn`, or `error` |
 
 Every tool validates its arguments against an explicit schema before doing any work: unknown or malformed arguments are rejected with a deterministic error instead of reaching the API as a failed request. See **[docs/mcp-tool-arguments.md](docs/mcp-tool-arguments.md)** for the per-tool contract and error shape.
+
+Adding a tool? **[docs/mcp-adding-a-tool.md](docs/mcp-adding-a-tool.md)** lists every file a new tool must be declared in, the tests that guard each one, and the commands to validate it before opening a PR.
 
 An agent can set up a wallet, register as a publisher, publish a resource (paying for verification), and then another agent can discover and buy that resource. The full agent-to-agent economy runs through x402.
 
@@ -135,7 +139,7 @@ For fast Vitest coverage of the MCP request surface itself (`listTools` / `callT
 
 Tool failures from the API, x402, Horizon, and the vault-registry are normalized into a single structured form — a summary, a machine-readable `Source · Category · HTTP` line, and one actionable next step. See **[docs/mcp-error-reference.md](docs/mcp-error-reference.md)**.
 
-Tools with structured results (catalog, wallet, preview, buy, registry, receipts, …) return a stable JSON object as MCP `structuredContent` next to the existing text block. See **[docs/mcp-structured-output.md](docs/mcp-structured-output.md)**. Receipts from `mindvault_buy` can be exported as a schema-versioned JSON or CSV document with an explicit currency and total. See **[docs/mcp-receipt-export.md](docs/mcp-receipt-export.md)**.
+Tools with structured results (catalog, wallet, preview, buy, registry, receipts, …) return a stable JSON object as MCP `structuredContent` next to the existing text block. See **[docs/mcp-structured-output.md](docs/mcp-structured-output.md)**. Receipts from `mindvault_buy` can be exported as a schema-versioned JSON or CSV document with an explicit currency and total. See **[docs/mcp-receipt-export.md](docs/mcp-receipt-export.md)**. For what a receipt does and does not prove, how confirmation changes status, and recovery after an ambiguous or delayed payment, see **[docs/mcp-receipt-consistency.md](docs/mcp-receipt-consistency.md)**.
 
 Long-running tools stream MCP `notifications/progress` updates when the client supplies a progress token — `mindvault_publish_status` with `wait: true` reports every poll while verification settles, so an agent sees movement instead of a hung call. See **[docs/mcp-progress-notifications.md](docs/mcp-progress-notifications.md)**.
 
@@ -173,6 +177,7 @@ Set `VITE_API_URL=http://localhost:4021` when running the web app separately (e.
 | `make dev-web`    | Frontend only on `:5173`                                            |
 | `make seed`       | Seed the catalog with sample resources for local dev                |
 | `make test`       | Run unit tests                                                      |
+| `make bindings`   | Regenerate TypeScript bindings from the deployed testnet contract   |
 
 ### Local services
 
@@ -190,16 +195,19 @@ Wallet helpers live in `server/scripts/generate-wallet.ts` (run via `make wallet
 - **[docs/architecture.md](docs/architecture.md)** — how x402 + USDC handles payment and how the vault-registry contract is the on-chain source of truth for ownership, price, and content integrity. Includes a full system diagram.
 - **[docs/faq.md](docs/faq.md)** — common creator and AI-agent questions about fees, payouts, wallets, verification, and buying resources.
 - **[docs/x402-browser-payment-walkthrough.md](docs/x402-browser-payment-walkthrough.md)** — browser buyer path from catalog through wallet signing, settlement, and resource delivery.
+- **[docs/stellar-transaction-troubleshooting.md](docs/stellar-transaction-troubleshooting.md)** — decision tree for Stellar transaction failures and uncertain ledger outcomes.
 - **[docs/x402-payment-troubleshooting.md](docs/x402-payment-troubleshooting.md)** — common x402 payment/sign failures and how to fix them (browser vs MCP, Explorer inspection).
 - **[docs/request-signature.md](docs/request-signature.md)** — optional HMAC-SHA256 request signatures for publisher mutations (off by default).
 
 ## Operations
 
+- **Local testnet reset**: see [docs/local-testnet-reset.md](docs/local-testnet-reset.md) — partial (DB + storage) and full (new wallets) reset flows, MCP state file cleanup, and reseed; run `make reset` for a quick command reference.
 - **Reconciliation**: see [docs/reconciliation.md](docs/reconciliation.md) — detects and reports drift between the DB and the on-chain [vault registry](docs/GLOSSARY.md#vault-registry); run with `pnpm reconcile` from `server/`.
+- **Registry/API incidents**: see [docs/registry-api-divergence-runbook.md](docs/registry-api-divergence-runbook.md) — scope divergence, verify the deployment, collect evidence, and recover database/registry state safely.
 - **Deployment runbook**: see [docs/deployment-runbook.md](docs/deployment-runbook.md) — step-by-step guide to deploy the full stack (contract + server + frontend + MCP) to a new Stellar network.
 - **Contract upgrade checklist**: see [docs/contract-upgrade-checklist.md](docs/contract-upgrade-checklist.md) — preflight checks before deploying a new vault-registry WASM (build, optimize, test, network, contract ID, binding regeneration).
+- **Contract roles and authorization**: see [docs/contract-roles-authorization.md](docs/contract-roles-authorization.md) — role capabilities, per-method authorization groups, multisigner calls, and governance implications.
 - **Contract storage footprint**: see [docs/contract-storage-footprint.md](docs/contract-storage-footprint.md) — what each vault-registry ledger entry costs in XDR bytes, and the budgets that keep it from growing silently; regenerate with `make footprint`.
-- **Reconciliation**: see [docs/reconciliation.md](docs/reconciliation.md) — detects and reports drift between the DB and the on-chain vault registry; run with `pnpm reconcile` from `server/`.
 
 ## Testing the 402 Flow
 

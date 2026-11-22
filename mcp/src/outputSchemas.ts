@@ -492,6 +492,7 @@ export const PUBLISH_STATUS_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
     resourceId: { type: "string" },
+    operationId: { type: ["string", "null"] },
     title: { type: ["string", "null"] },
     verificationStatus: { type: "string" },
     listed: { type: ["boolean", "null"] },
@@ -508,6 +509,7 @@ export const PUBLISH_STATUS_OUTPUT_SCHEMA = {
   },
   required: [
     "resourceId",
+    "operationId",
     "title",
     "verificationStatus",
     "listed",
@@ -661,6 +663,19 @@ export const REGISTRY_INFO_OUTPUT_SCHEMA = {
     x402Network: { type: "string" },
     resourceFields: { type: "array", items: { type: "string" } },
     mainnetDiagnostics: { type: "string" },
+    schemaVersion: {
+      type: "object",
+      properties: {
+        detected: { type: ["number", "null"] },
+        supported: { type: "array", items: { type: "number" } },
+        current: { type: "number" },
+        status: {
+          type: "string",
+          enum: ["supported", "unsupported", "error", "unchecked"],
+        },
+      },
+      required: ["detected", "supported", "current", "status"],
+    },
   },
   required: [
     "contractId",
@@ -670,6 +685,7 @@ export const REGISTRY_INFO_OUTPUT_SCHEMA = {
     "x402Network",
     "resourceFields",
     "mainnetDiagnostics",
+    "schemaVersion",
   ],
 } as const;
 
@@ -950,29 +966,71 @@ export const PENDING_TRANSFER_OUTPUT_SCHEMA = {
   required: ["resourceId", "found", "message"],
 } as const;
 
-/** Output schema for mindvault_batch_catalog_lookup. */
+/**
+ * One entry of a batch catalog lookup result (#608).
+ *
+ * `found` is false with `null` metadata for a resource the API does not know —
+ * a miss is a result, not a failure, so one bad id cannot sink a batch.
+ */
+const BATCH_CATALOG_ITEM_SCHEMA = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    found: { type: "boolean" },
+    title: { type: ["string", "null"] },
+    price: { type: ["string", "number", "null"] },
+    verificationStatus: { type: ["string", "null"] },
+    resourceType: { type: ["string", "null"] },
+    accessUrl: { type: ["string", "null"] },
+  },
+  required: ["id", "found", "title", "price", "verificationStatus", "resourceType", "accessUrl"],
+} as const;
+
 export const BATCH_CATALOG_LOOKUP_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
+    items: { type: "array", items: BATCH_CATALOG_ITEM_SCHEMA },
     requested: { type: "integer" },
-    found: { type: "integer" },
-    missing: { type: "integer" },
-    items: { type: "array" },
-    message: { type: "string" },
+    foundCount: { type: "integer" },
+    missing: { type: "array", items: { type: "string" } },
+    notice: { type: ["string", "null"] },
+    truncated: { type: "boolean" },
   },
-  required: ["requested", "found", "missing", "items"],
+  required: ["items", "requested", "foundCount", "missing", "notice", "truncated"],
 } as const;
 
-/** Output schema for mindvault_preview_metadata_hash. */
+/**
+ * Structured result for the metadata-hash preview tool (#604).
+ *
+ * `pointer` reports where the metadata pointer was read from, and `report`
+ * mirrors `MetadataHashReport` (see metadataHash.ts): the canonical digest
+ * when the pointer anchors one, or a deterministic reason when it does not.
+ */
 export const METADATA_HASH_PREVIEW_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
     resourceId: { type: "string" },
-    pointer: { type: ["string", "null"] },
-    report: { type: "object" },
-    message: { type: "string" },
+    pointer: {
+      type: "object",
+      properties: {
+        source: { type: ["string", "null"] },
+        present: { type: "boolean" },
+      },
+      required: ["source", "present"],
+    },
+    report: {
+      type: "object",
+      properties: {
+        present: { type: "boolean" },
+        valid: { type: "boolean" },
+        canonical: { type: ["string", "null"] },
+        algorithm: { type: ["string", "null"] },
+        reason: { type: ["string", "null"] },
+      },
+      required: ["present", "valid", "canonical", "algorithm", "reason"],
+    },
   },
-  required: ["resourceId"],
+  required: ["resourceId", "pointer", "report"],
 } as const;
 
 /** Output schema for mindvault_publish_template. */
@@ -1153,4 +1211,87 @@ export const REGISTRY_ERROR_EXPLANATION_OUTPUT_SCHEMA = {
     },
   },
   required: ["code", "name", "known", "description", "category", "retry", "nextSteps"],
+} as const;
+
+const RECEIPT_FIELD_VERIFICATION_SCHEMA = {
+  type: "object",
+  properties: {
+    field: {
+      type: "string",
+      enum: ["amount", "currency", "txHash", "network", "resourceId"],
+    },
+    outcome: { type: "string", enum: ["valid", "invalid", "indeterminate"] },
+    value: { type: ["string", "null"] },
+    expected: { type: ["string", "null"] },
+    code: {
+      type: "string",
+      enum: [
+        "ok",
+        "missing",
+        "malformed",
+        "malformed_receipt",
+        "non_positive",
+        "unsupported_currency",
+        "unknown_network",
+        "mismatch",
+      ],
+    },
+    message: { type: "string" },
+  },
+  required: ["field", "outcome", "value", "expected", "code", "message"],
+} as const;
+
+/**
+ * Output schema for `mindvault_verify_receipt`.
+ *
+ * Returns a typed, machine-readable verification result for receipt amount,
+ * currency, transaction hash, network, and resource identity.
+ */
+export const RECEIPT_VERIFICATION_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    schema: { type: "string", const: "mindvault.receipt-verification/v1" },
+    outcome: { type: "string", enum: ["valid", "invalid", "indeterminate"] },
+    valid: { type: "boolean" },
+    fields: {
+      type: "object",
+      properties: {
+        amount: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+        currency: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+        txHash: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+        network: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+        resourceId: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+      },
+      required: ["amount", "currency", "txHash", "network", "resourceId"],
+    },
+    issues: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          field: {
+            type: "string",
+            enum: ["amount", "currency", "txHash", "network", "resourceId"],
+          },
+          outcome: { type: "string", enum: ["invalid", "indeterminate"] },
+          code: {
+            type: "string",
+            enum: [
+              "missing",
+              "malformed",
+              "malformed_receipt",
+              "non_positive",
+              "unsupported_currency",
+              "unknown_network",
+              "mismatch",
+            ],
+          },
+          message: { type: "string" },
+        },
+        required: ["field", "outcome", "code", "message"],
+      },
+    },
+    summary: { type: "string" },
+  },
+  required: ["schema", "outcome", "valid", "fields", "issues", "summary"],
 } as const;

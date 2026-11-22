@@ -168,6 +168,7 @@ All other variables are either public addresses or non-sensitive configuration. 
 | `STELLAR_NETWORK`                   | no       | `testnet` | MCP deployment target (`testnet` or `mainnet` / `pubnet` / `public`).                                                                                                                                                                                                                                    |
 | `MINDVAULT_ALLOW_MAINNET`           | no       | unset     | Set to `1` / `true` / `yes` to allow gated MCP mutations and buys on mainnet without per-call `confirmMainnet`. Parsed fail-safe: anything else — `0` / `false` / `no` / `off`, or an unrecognized value — keeps per-call confirmation, and a set-but-ineffective value raises a startup warning (#606). |
 | `MINDVAULT_READ_ONLY`               | no       | unset     | Set to `1` / `true` / `yes` / `on` to restrict the MCP server to catalog browsing. Only read-only tools are advertised and all others are refused.                                                                                                                                                       |
+| `MINDVAULT_TOOL_ALLOWLIST`          | no       | unset     | Comma-separated tool names to advertise and dispatch. Unset keeps the full surface; unknown names are refused and no tool argument can widen the list. Intersects with `MINDVAULT_READ_ONLY`.                                                                                                            |
 | `MINDVAULT_CONFIRM_PAID_OPERATIONS` | no       | `off`     | `off`, `usdc`, or `all`. Requires `confirmPaid: true` on tools that spend, independently of network. An unrecognized value is an error, not a fallback.                                                                                                                                                  |
 | `MINDVAULT_HTTP_TIMEOUT_MS`         | no       | `15000`   | Request deadline for the MindVault API and sponsored-account service. `0` disables.                                                                                                                                                                                                                      |
 | `MINDVAULT_HORIZON_TIMEOUT_MS`      | no       | `15000`   | Request deadline for Horizon balance/account reads. `0` disables.                                                                                                                                                                                                                                        |
@@ -196,6 +197,18 @@ MINDVAULT_READ_ONLY=1
 ```
 
 Browsing, search, preview, registry lookups, wallet info, purchase history, and the diagnostic tools stay available. Everything that mutates state, spends funds, or changes stored credentials is refused — including dry runs, which are exempt from the paid-operation policy below but not from this one: read-only mode is about what the server is for, not about what a call costs.
+
+### MCP tool allowlist
+
+`MINDVAULT_TOOL_ALLOWLIST` is the narrower, opt-in alternative to read-only mode: an explicit list of tool names the deployment is allowed to expose. It is set on the server process and, like `MINDVAULT_READ_ONLY`, cannot be widened by a tool argument.
+
+```
+MINDVAULT_TOOL_ALLOWLIST=mindvault_browse,mindvault_catalog_search,mindvault_purchase_history
+```
+
+Names are matched exactly. `tools/list` advertises only the listed tools that are actually implemented, and the dispatcher refuses everything else — including a tool held by a client with a cached list or one that simply guesses a name. An unset or blank value leaves the full surface unchanged, so existing deployments are unaffected.
+
+The allowlist intersects with read-only mode: a mutating tool is still refused when `MINDVAULT_READ_ONLY=1`, even if it appears in the allowlist. Changing the list requires restarting the server. For the full machine-readable inventory, see [`mcp-env-variables.md`](./mcp-env-variables.md).
 
 ### MCP paid-operation confirmation
 
