@@ -20,30 +20,6 @@ export const NETWORK_PROFILE_SECTIONS = [
 
 export type NetworkProfileSection = (typeof NETWORK_PROFILE_SECTIONS)[number];
 
-export const NETWORK_PROFILE_OUTPUT_SCHEMA = {
-  type: "object",
-  properties: {
-    schema: { type: "string", const: "mindvault.network-profile/v1" },
-    sections: { type: "array", items: { type: "string", enum: [...NETWORK_PROFILE_SECTIONS] } },
-    stellarNetwork: { type: "string" },
-    x402Network: { type: "string" },
-    sorobanRpcUrl: { type: "string" },
-    horizonUrl: { type: "string" },
-    registryContractId: { type: "string" },
-    usdcContractId: { type: "string" },
-    timeouts: { type: "string" },
-    retries: { type: "string" },
-    warnings: { type: "array", items: { type: "string" } },
-    network: { type: "object" },
-    endpoints: { type: "object" },
-    contracts: { type: "object" },
-    policies: { type: "object" },
-    diagnostics: { type: "array", items: { type: "object" } },
-  },
-  required: ["schema", "sections"],
-  additionalProperties: false,
-} as const;
-
 type Env = NodeJS.ProcessEnv;
 
 interface SourcedValue<T> {

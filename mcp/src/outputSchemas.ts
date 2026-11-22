@@ -730,9 +730,9 @@ export const NETWORK_PROFILE_OUTPUT_SCHEMA = {
     sorobanRpcUrl: { type: "string" },
     horizonUrl: { type: "string" },
     registryContractId: { type: "string" },
-    usdcContractId: {},
-    timeouts: {},
-    retries: {},
+    usdcContractId: { type: "string" },
+    timeouts: { type: "string" },
+    retries: { type: "string" },
     warnings: { type: "array", items: { type: "string" } },
     network: {
       type: "object",
