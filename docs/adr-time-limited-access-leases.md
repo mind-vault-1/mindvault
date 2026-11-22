@@ -246,18 +246,19 @@ The on-chain half of Option C now exists in `vault-registry` (see
 [`contract/README.md`](../contract/README.md#time-limited-access-leases)): a
 `Lease` record per `(resource_id, holder)` with `start_ledger`,
 `expiry_ledger`, `tier` and `state`, written by `buy_lease` (holder, `Pending`)
-or `record_lease` (settler, `Active`), promoted by `settle_lease`, revoked by
-the creator with `revoke_lease`, and read with `get_lease`, `lease_is_active`
-and `lease_price`. Tier durations and price multipliers are platform defaults
-(`LEASE_*_LEDGERS`, `LEASE_*_MULTIPLIER`); creator-configurable tiers remain a
-follow-up. Holders can enumerate their currently active leases without knowing
-resource ids through `list_holder_leases`, a bounded read backed by a
-duplicate-free holder index that skips pending, revoked, and expired records
-with the same predicate as `lease_is_active`. The MCP server buys and inspects leases with `mindvault_buy_lease`
-and `mindvault_lease_status`: the agent pays the creator in USDC directly, then
-records the lease on-chain with the payment hash. The off-chain lease table,
-the paywall short-circuit and the expiry sweeper (follow-ups 1 to 3) are still
-open.
+or `record_lease` (settler, `Active`), promoted by `settle_lease`, renewed by
+the holder with `extend_lease`, revoked by the creator with `revoke_lease`, and
+read with `get_lease`, `lease_is_active` and `lease_price`. Renewal writes verify
+the stored binding before touching the record, so extensions keep the original
+holder and resource even after an ownership transfer. Tier durations and price
+multipliers are platform defaults (`LEASE_*_LEDGERS`, `LEASE_*_MULTIPLIER`);
+creator-configurable tiers remain a follow-up. The MCP server buys and inspects
+leases with `mindvault_buy_lease` and `mindvault_lease_status`: the agent pays
+the creator in USDC directly, then records the lease on-chain with the payment
+hash. `mindvault_lease_status` continues to read the original
+`(resource_id, holder)` key, so it reflects extensions without a client change.
+The off-chain lease table, the paywall short-circuit and the expiry sweeper
+(follow-ups 1 to 3) are still open.
 
 **Fee-config freeze (#991).** When a lease is created, the resource's current
 price is locked into `Lease.amount`. A subsequent `set_fee_config` that raises
