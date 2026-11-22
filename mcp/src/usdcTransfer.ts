@@ -12,6 +12,8 @@
  * Kept free of MCP runtime state so it can be unit-tested with a mocked SDK.
  */
 
+import { limitRpcServer } from "./upstreamConcurrency.js";
+
 export interface UsdcTransferInput {
   /** Secret key of the paying wallet. */
   secretKey: string;
@@ -69,9 +71,11 @@ export async function transferUsdc(input: UsdcTransferInput): Promise<UsdcTransf
     await import("@stellar/stellar-sdk");
 
   const keypair = Keypair.fromSecret(input.secretKey);
-  const server = new rpc.Server(input.rpcUrl, {
-    allowHttp: input.rpcUrl.startsWith("http://"),
-  });
+  const server = limitRpcServer(
+    new rpc.Server(input.rpcUrl, {
+      allowHttp: input.rpcUrl.startsWith("http://"),
+    }),
+  );
 
   const account = await server.getAccount(keypair.publicKey());
   const usdc = new Contract(input.usdcSacContractId);

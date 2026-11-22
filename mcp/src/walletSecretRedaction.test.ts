@@ -8,6 +8,7 @@
  * agent transcript or log.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { StrKey } from "@stellar/stellar-sdk";
 import { validateToolArgs, ToolValidationError } from "./validation.js";
 
 // ---------------------------------------------------------------------------
@@ -32,7 +33,7 @@ const ZERO_SECRET = "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 // ---------------------------------------------------------------------------
 
 describe("mindvault_import_wallet — validation layer does not echo secret", () => {
-  it("pattern_mismatch error for a short secret key does not echo the value", () => {
+  it("invalid_stellar_secret error for a short secret key does not echo the value", () => {
     let err: ToolValidationError | undefined;
     try {
       validateToolArgs("mindvault_import_wallet", { secretKey: SHORT_SECRET });
@@ -46,7 +47,7 @@ describe("mindvault_import_wallet — validation layer does not echo secret", ()
     }
   });
 
-  it("pattern_mismatch error for a wrong-prefix secret does not echo the value", () => {
+  it("invalid_stellar_secret error for a wrong-prefix secret does not echo the value", () => {
     let err: ToolValidationError | undefined;
     try {
       validateToolArgs("mindvault_import_wallet", { secretKey: WRONG_PREFIX_SECRET });
@@ -60,7 +61,7 @@ describe("mindvault_import_wallet — validation layer does not echo secret", ()
     }
   });
 
-  it("pattern_mismatch error for an arbitrary string secret does not echo the value", () => {
+  it("invalid_stellar_secret error for an arbitrary string secret does not echo the value", () => {
     let err: ToolValidationError | undefined;
     try {
       validateToolArgs("mindvault_import_wallet", { secretKey: PLAINTEXT_SECRET });
@@ -74,7 +75,7 @@ describe("mindvault_import_wallet — validation layer does not echo secret", ()
     }
   });
 
-  it("issue code is pattern_mismatch for a malformed secret key", () => {
+  it("issue code is invalid_stellar_secret for a malformed secret key", () => {
     let err: ToolValidationError | undefined;
     try {
       validateToolArgs("mindvault_import_wallet", { secretKey: SHORT_SECRET });
@@ -83,7 +84,7 @@ describe("mindvault_import_wallet — validation layer does not echo secret", ()
     }
     expect(err).toBeInstanceOf(ToolValidationError);
     const issue = err!.issues.find((i) => i.field === "secretKey");
-    expect(issue?.code).toBe("pattern_mismatch");
+    expect(issue?.code).toBe("invalid_stellar_secret");
   });
 });
 
@@ -92,7 +93,7 @@ describe("mindvault_import_wallet — validation layer does not echo secret", ()
 // ---------------------------------------------------------------------------
 
 describe("mindvault_repair_sponsored_account — validation layer does not echo secret", () => {
-  it("pattern_mismatch error for a short secret key does not echo the value", () => {
+  it("invalid_stellar_secret error for a short secret key does not echo the value", () => {
     let err: ToolValidationError | undefined;
     try {
       validateToolArgs("mindvault_repair_sponsored_account", { secretKey: SHORT_SECRET });
@@ -106,7 +107,7 @@ describe("mindvault_repair_sponsored_account — validation layer does not echo 
     }
   });
 
-  it("pattern_mismatch error for an arbitrary string secret does not echo the value", () => {
+  it("invalid_stellar_secret error for an arbitrary string secret does not echo the value", () => {
     let err: ToolValidationError | undefined;
     try {
       validateToolArgs("mindvault_repair_sponsored_account", { secretKey: PLAINTEXT_SECRET });
@@ -120,7 +121,7 @@ describe("mindvault_repair_sponsored_account — validation layer does not echo 
     }
   });
 
-  it("issue code is pattern_mismatch for a malformed secret key", () => {
+  it("issue code is invalid_stellar_secret for a malformed secret key", () => {
     let err: ToolValidationError | undefined;
     try {
       validateToolArgs("mindvault_repair_sponsored_account", { secretKey: SHORT_SECRET });
@@ -129,7 +130,7 @@ describe("mindvault_repair_sponsored_account — validation layer does not echo 
     }
     expect(err).toBeInstanceOf(ToolValidationError);
     const issue = err!.issues.find((i) => i.field === "secretKey");
-    expect(issue?.code).toBe("pattern_mismatch");
+    expect(issue?.code).toBe("invalid_stellar_secret");
   });
 
   it("missing_required error (no secretKey) does not contain any secret material", () => {
@@ -151,6 +152,8 @@ describe("mindvault_repair_sponsored_account — validation layer does not echo 
 // ---------------------------------------------------------------------------
 
 describe("repairSponsoredAccount runtime — SDK errors do not echo the secret", () => {
+  const testSeed = StrKey.encodeEd25519SecretSeed(Buffer.alloc(32));
+
   beforeEach(() => {
     // Simulate the Stellar SDK throwing an error that might naively include the
     // bad key in its message — the fix must catch and redact it.
@@ -164,6 +167,7 @@ describe("repairSponsoredAccount runtime — SDK errors do not echo the secret",
   });
 
   afterEach(() => {
+    vi.doUnmock("@stellar/stellar-sdk");
     vi.restoreAllMocks();
   });
 
@@ -172,14 +176,14 @@ describe("repairSponsoredAccount runtime — SDK errors do not echo the secret",
     // runtime guard added around Keypair.fromSecret.
     const { dispatchTool } = await import("./index.js");
     await expect(
-      dispatchTool("mindvault_repair_sponsored_account", { secretKey: ZERO_SECRET }),
-    ).rejects.toThrow(expect.not.stringContaining(ZERO_SECRET));
+      dispatchTool("mindvault_repair_sponsored_account", { secretKey: testSeed }),
+    ).rejects.toThrow(expect.not.stringContaining(testSeed));
   });
 
   it("error message describes the shape problem, not the value", async () => {
     const { dispatchTool } = await import("./index.js");
     await expect(
-      dispatchTool("mindvault_repair_sponsored_account", { secretKey: ZERO_SECRET }),
+      dispatchTool("mindvault_repair_sponsored_account", { secretKey: testSeed }),
     ).rejects.toThrow(/invalid stellar secret key|could not derive public key/i);
   });
 });

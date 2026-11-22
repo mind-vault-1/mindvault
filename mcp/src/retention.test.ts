@@ -166,7 +166,7 @@ describe("resolveRetentionSettings", () => {
 
 describe("applyRetentionPolicies — state backups", () => {
   it("removes backups strictly older than the age limit and keeps one exactly at it", () => {
-    const now = new Date();
+    const now = new Date("2026-01-01T00:00:00.000Z");
     const older = writeBackup("state-older.backup", new Date(now.getTime() - 31 * DAY_MS));
     const atLimit = writeBackup("state-at-limit.backup", new Date(now.getTime() - 30 * DAY_MS));
     const recent = writeBackup("state-recent.backup", now);
@@ -284,7 +284,7 @@ describe("applyRetentionPolicies — state backups", () => {
 
 describe("applyRetentionPolicies — audit log", () => {
   it("prunes rotated generations past the age limit but never the live file", () => {
-    const now = new Date();
+    const now = new Date("2026-01-01T00:00:00.000Z");
     const dir = join(testDir, "audit");
     mkdirSync(dir, { recursive: true });
     const live = join(dir, "audit.jsonl");
