@@ -191,6 +191,14 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     source: "mcp/src/readOnlyMode.ts",
   },
   {
+    name: "MINDVAULT_TOOL_ALLOWLIST",
+    description:
+      "Restrict the advertised and dispatchable tool surface to an explicit comma-separated list of tool names. Unset or blank keeps the full surface; unknown names are refused and no tool argument can widen the list. Intersects with MINDVAULT_READ_ONLY.",
+    default: "unset (full surface)",
+    values: ["unset — every servable tool", "comma-separated mindvault_* tool names"],
+    source: "mcp/src/toolAllowlist.ts",
+  },
+  {
     name: "MINDVAULT_CONFIRM_PAID_OPERATIONS",
     description:
       "Require an explicit confirmPaid: true before tools spend from the agent wallet, independently of network. An unrecognized value is an error, not a fallback to off.",

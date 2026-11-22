@@ -1829,7 +1829,7 @@ pub enum Error {
     RevisionOverflow = 55,
     /// A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for
     /// that role. The grant is rejected without modifying state.
-    RoleCapacityReached = 56,
+    RoleCapacityReached = 57,
     /// A fee-recipient or fee-destination change was attempted while accrued
     /// fees remain unclaimed. Call `claim_fees` first to acknowledge receipt
     /// of outstanding fees, then retry the change.
@@ -7958,19 +7958,28 @@ impl VaultRegistry {
         Self::bump_persistent(env, &Self::creator_key(env, creator));
     }
 
-    fn remove_from_creator_index(env: &Env, creator: &Address, id: &String) {
+    /// Remove every occurrence of `id` from `creator`'s index.
+    ///
+    /// Returns whether the index actually changed. Callers that maintain
+    /// derived counters use that to apply a listed-count delta only when an
+    /// entry really moved, so repairing a stale duplicate cannot double-count.
+    fn remove_from_creator_index(env: &Env, creator: &Address, id: &String) -> bool {
         let list = Self::creator_list(env, creator);
         let mut out: Vec<String> = Vec::new(env);
+        let mut removed = false;
         for i in 0..list.len() {
             let v = list.get(i).unwrap();
             if v != *id {
                 out.push_back(v);
+            } else {
+                removed = true;
             }
         }
         env.storage()
             .persistent()
             .set(&Self::creator_key(env, creator), &out);
         Self::bump_persistent(env, &Self::creator_key(env, creator));
+        removed
     }
 
     /// Move a resource id from `previous_owner`'s index/count to `new_owner`'s,
@@ -7986,7 +7995,7 @@ impl VaultRegistry {
         // Rewrite each side once. Removing every occurrence repairs any stale
         // duplicate left by an old transfer, while the destination insert is
         // idempotent so A→B→C transitions cannot accumulate duplicate ids.
-        Self::remove_from_creator_index(env, previous_owner, id);
+        let removed_from_source = Self::remove_from_creator_index(env, previous_owner, id);
         let mut destination = Self::creator_list(env, new_owner);
         let mut found = false;
         for i in 0..destination.len() {
@@ -8012,9 +8021,16 @@ impl VaultRegistry {
 
         // A listed resource changing hands is one fewer listed for the previous
         // owner and one more for the new one; the global count is unchanged.
+        // Each delta is tied to an actual index change: when the destination
+        // already held a stale copy, adding another would double-count, and
+        // when the source no longer held the id there is nothing to subtract.
         if listed {
-            Self::bump_creator_listed_count(env, previous_owner, -1);
-            Self::bump_creator_listed_count(env, new_owner, 1);
+            if removed_from_source {
+                Self::bump_creator_listed_count(env, previous_owner, -1);
+            }
+            if !found {
+                Self::bump_creator_listed_count(env, new_owner, 1);
+            }
         }
     }
 

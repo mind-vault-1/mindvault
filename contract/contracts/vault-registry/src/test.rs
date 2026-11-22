@@ -12287,6 +12287,7 @@ include!("test/auth_fixtures.rs");
 include!("test/tombstone_read.rs");
 include!("test/listed_count_matrix.rs");
 include!("test/creator_listed_count.rs");
+include!("test/creator_index_transfer.rs");
 include!("test/memo_hash.rs");
 include!("test/flag_details.rs");
 include!("test/payment_idempotency.rs");
