@@ -371,6 +371,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("override_purchase_receipt_anchor", "admin"),
     ("get_purchase_receipt", "—"),
     ("get_anchor_attempts", "—"),
+    ("get_anchor_status", "—"),
     // ── Access leases ─────────────────────────────────────────────────────
     ("buy_lease", "holder"),
     ("extend_lease", "holder"),
@@ -1627,6 +1628,27 @@ pub struct AnchorAttempts {
     pub attempts: u32,
     /// Ledger sequence of the most recent rejected attempt.
     pub last_attempt_ledger: u32,
+}
+
+/// Explicit lifecycle status for a purchase-receipt anchor pair.
+///
+/// - `Missing`: no anchor, no durable failure record, and no recorded retry
+///   attempts.
+/// - `Pending`: the pair is not confirmed but still retryable (for example a
+///   recorded failure or rejected attempts below the cap).
+/// - `Failed`: retries are exhausted (`attempts >= MAX_ANCHOR_ATTEMPTS`) and
+///   no anchor has been written.
+/// - `Confirmed`: a purchase receipt anchor exists for the pair.
+///
+/// A successful anchor transition to `Confirmed` clears attempt/failure state,
+/// so `Confirmed` and failure/retry state never read as active together.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum AnchorStatus {
+    Missing = 0,
+    Pending = 1,
+    Failed = 2,
+    Confirmed = 3,
 }
 
 /// Duration tier of a time-limited access lease. Each tier maps to a fixed
@@ -5716,6 +5738,44 @@ impl VaultRegistry {
             .ok_or(Error::NotFound)?;
         Self::bump_persistent(&env, &key);
         Ok(failure)
+    }
+
+    /// Read the explicit anchor lifecycle status for `(resource_id, buyer)`.
+    ///
+    /// - `Confirmed` when a purchase receipt anchor exists.
+    /// - `Failed` when retry attempts are exhausted and no anchor exists.
+    /// - `Pending` when a durable failure record or retryable rejected attempts
+    ///   exist.
+    /// - `Missing` when no anchor, failure record, or attempts exist.
+    pub fn get_anchor_status(
+        env: Env,
+        resource_id: String,
+        buyer: Address,
+    ) -> Result<AnchorStatus, Error> {
+        Self::validate_resource_id(&resource_id)?;
+        let anchor_key = DataKey::PurchaseReceipt(resource_id.clone(), buyer.clone());
+        if env.storage().persistent().has(&anchor_key) {
+            Self::bump_persistent(&env, &anchor_key);
+            return Ok(AnchorStatus::Confirmed);
+        }
+
+        let attempts = Self::anchor_attempts_state(
+            &env,
+            &DataKey::AnchorAttempts(resource_id.clone(), buyer.clone()),
+        );
+        let failure_key = DataKey::AnchorFailure(resource_id, buyer);
+        let has_failure = env.storage().persistent().has(&failure_key);
+        if has_failure {
+            Self::bump_persistent(&env, &failure_key);
+        }
+
+        if attempts.attempts >= MAX_ANCHOR_ATTEMPTS {
+            return Ok(AnchorStatus::Failed);
+        }
+        if has_failure || attempts.attempts > 0 {
+            return Ok(AnchorStatus::Pending);
+        }
+        Ok(AnchorStatus::Missing)
     }
 
     /// Settle-time retry hook: write the anchor for `(resource_id, buyer)` as
