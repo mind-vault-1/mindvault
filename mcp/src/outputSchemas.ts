@@ -692,6 +692,8 @@ export const REGISTRY_INFO_OUTPUT_SCHEMA = {
 export const NETWORK_PROFILE_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
+    schema: { type: "string", const: "mindvault.network-profile/v1" },
+    sections: { type: "array", items: { type: "string" } },
     stellarNetwork: { type: "string" },
     x402Network: { type: "string" },
     sorobanRpcUrl: { type: "string" },
@@ -701,16 +703,13 @@ export const NETWORK_PROFILE_OUTPUT_SCHEMA = {
     timeouts: {},
     retries: {},
     warnings: { type: "array", items: { type: "string" } },
+    network: { type: "object" },
+    endpoints: { type: "object" },
+    contracts: { type: "object" },
+    policies: { type: "object" },
+    diagnostics: { type: "array", items: { type: "object" } },
   },
-  required: [
-    "stellarNetwork",
-    "x402Network",
-    "sorobanRpcUrl",
-    "horizonUrl",
-    "registryContractId",
-    "usdcContractId",
-    "warnings",
-  ],
+  required: ["schema", "sections"],
 } as const;
 
 export const CONSISTENCY_OUTPUT_SCHEMA = {

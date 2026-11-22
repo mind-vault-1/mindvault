@@ -415,7 +415,9 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     confirmMainnet: CONFIRM_MAINNET,
     confirmPaid: CONFIRM_PAID,
   },
-  mindvault_network_profile: {},
+  mindvault_network_profile: {
+    sections: { kind: "string_array", maxLength: 5 },
+  },
   mindvault_check_bindings: {},
   mindvault_check_consistency: {
     resourceId: RESOURCE_ID,
