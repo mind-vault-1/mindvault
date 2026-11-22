@@ -107,6 +107,8 @@ codex mcp add mindvault -- node /path/to/mindvault/mcp/dist/index.js
 
 Copy-ready configs for Claude Code, Claude Desktop, Codex, Cursor, VS Code, and Windsurf — plus the state file path, network profiles, and security notes — are in **[docs/mcp-client-configs.md](docs/mcp-client-configs.md)**.
 
+Which MCP features each client needs, and what still works when a client lacks one, is in **[docs/mcp-client-compatibility.md](docs/mcp-client-compatibility.md)**.
+
 All env vars are optional — the defaults point to the hosted testnet backend:
 
 | Variable                     | Default                                                | Description                                                           |
@@ -120,6 +122,8 @@ All env vars are optional — the defaults point to the hosted testnet backend:
 | `MCP_LOG_LEVEL`              | `info`                                                 | Logging priority level threshold: `debug`, `info`, `warn`, or `error` |
 
 Every tool validates its arguments against an explicit schema before doing any work: unknown or malformed arguments are rejected with a deterministic error instead of reaching the API as a failed request. See **[docs/mcp-tool-arguments.md](docs/mcp-tool-arguments.md)** for the per-tool contract and error shape.
+
+Adding a tool? **[docs/mcp-adding-a-tool.md](docs/mcp-adding-a-tool.md)** lists every file a new tool must be declared in, the tests that guard each one, and the commands to validate it before opening a PR.
 
 An agent can set up a wallet, register as a publisher, publish a resource (paying for verification), and then another agent can discover and buy that resource. The full agent-to-agent economy runs through x402.
 

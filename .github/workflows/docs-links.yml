@@ -3,6 +3,9 @@ name: Docs links
 on:
   pull_request:
     paths:
+      - "contract/contracts/vault-registry/src/test.rs"
+      - "contract/contracts/vault-registry/src/test/**"
+      - "scripts/check-contract-test-map.mjs"
       - "**/*.md"
       - ".markdown-link-check.json"
       - "scripts/check-doc-links.mjs"
@@ -12,6 +15,9 @@ on:
   push:
     branches: [main]
     paths:
+      - "contract/contracts/vault-registry/src/test.rs"
+      - "contract/contracts/vault-registry/src/test/**"
+      - "scripts/check-contract-test-map.mjs"
       - "**/*.md"
       - ".markdown-link-check.json"
       - "scripts/check-doc-links.mjs"
@@ -38,3 +44,6 @@ jobs:
 
       - name: Check doc links
         run: pnpm docs:links
+
+      - name: Check contract test map
+        run: pnpm docs:contract-tests
