@@ -173,6 +173,7 @@ Set `VITE_API_URL=http://localhost:4021` when running the web app separately (e.
 | `make dev-web`    | Frontend only on `:5173`                                            |
 | `make seed`       | Seed the catalog with sample resources for local dev                |
 | `make test`       | Run unit tests                                                      |
+| `make bindings`   | Regenerate TypeScript bindings from the deployed testnet contract   |
 
 ### Local services
 
