@@ -43,6 +43,24 @@ describe("prompts", () => {
   });
 
   describe("getPrompt", () => {
+    it("provides a read-only purchase review with an explicit approval gate", () => {
+      const result = getPrompt("safe_purchase_review", { resourceId: "res-123" });
+      expect(result.messages[0].content.text).toContain("res-123");
+      const review = result.messages[1].content.text;
+      expect(review).toContain("mindvault_preview");
+      expect(review).toContain("mindvault_wallet_info");
+      expect(review).toContain("dryRun: true");
+      expect(review).toContain("explicit approval");
+    });
+
+    it.each([{}, { resourceId: " " }, { resourceId: "bad\ncommand" }])(
+      "rejects invalid resource IDs and accepts a corrected request",
+      (args) => {
+        expect(() => getPrompt("safe_purchase_review", args)).toThrow(/resourceId/);
+        expect(() => getPrompt("safe_purchase_review", { resourceId: "res-123" })).not.toThrow();
+      },
+    );
+
     it("returns publish workflow with argument substitution", () => {
       const result = getPrompt("publish", {
         title: "My Tutorial",

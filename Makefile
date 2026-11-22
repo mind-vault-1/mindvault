@@ -1,4 +1,4 @@
-.PHONY: setup setup-usdc dev dev-server dev-web test install migrate wallets seed validate bindings reset
+.PHONY: setup setup-usdc dev dev-server dev-web test install migrate wallets seed validate bindings
 
 # MindVault local development entrypoints.
 # Prerequisites: Node.js 20+, pnpm, and a configured server/.env (see server/.env.example).
@@ -61,29 +61,10 @@ validate:
 	pnpm run lint
 	@echo "==> Checking doc links..."
 	pnpm run docs:links
+	@echo "==> Checking generated MCP tool docs..."
+	pnpm --filter @mindvault/mcp check-tool-docs
 	@echo ""
 	@echo "All checks passed."
-
-# Print the SQL and commands needed for a partial DB+storage reset, then reseed.
-# This target is informational — it does not modify Supabase directly.
-# For the full reset process see docs/local-testnet-reset.md.
-reset:
-	@echo ""
-	@echo "=== MindVault local testnet reset ==="
-	@echo ""
-	@echo "Step 1 — Truncate all tables in the Supabase SQL editor:"
-	@echo "  TRUNCATE TABLE payments, verifications, resources, publishers RESTART IDENTITY CASCADE;"
-	@echo ""
-	@echo "Step 2 — Clear storage objects in the Supabase dashboard:"
-	@echo "  Storage → resources bucket → select all → Delete"
-	@echo "  (or: supabase storage rm \"ss:///resources\" --project-ref <ref> --recursive)"
-	@echo ""
-	@echo "Step 3 — Reseed:"
-	@echo "  make seed"
-	@echo "  make seed ONCHAIN=1   # also register on Stellar testnet"
-	@echo ""
-	@echo "For full reset (new wallets) or MCP-only reset see docs/local-testnet-reset.md"
-	@echo ""
 
 # Regenerate TypeScript bindings from the deployed testnet contract.
 # To generate from a local WASM instead (after `make contract-build`):

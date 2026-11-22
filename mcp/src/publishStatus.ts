@@ -29,6 +29,12 @@ export const MIN_POLL_INTERVAL_MS = 200;
 
 export type PublishStatusSnapshot = {
   resourceId: string;
+  /**
+   * Stable handle for this publish (#1250, see publishOperation.ts): pass it
+   * back as `operationId` to resume polling after a reconnect or restart.
+   * Null when the caller did not supply a scope to derive it from.
+   */
+  operationId: string | null;
   title: string | null;
   verificationStatus: VerificationStatus | string;
   listed: boolean | null;
@@ -178,7 +184,7 @@ export function normalizeWaitFlag(raw: unknown): boolean {
 export function buildPublishStatusSnapshot(
   resourceId: string,
   data: PublishStatusFetch,
-  opts: { polled: boolean; attempts: number; timedOut: boolean },
+  opts: { polled: boolean; attempts: number; timedOut: boolean; operationId?: string | null },
 ): PublishStatusSnapshot {
   const meta = data.meta;
   const ver = data.verification;
@@ -213,6 +219,7 @@ export function buildPublishStatusSnapshot(
 
   return {
     resourceId,
+    operationId: opts.operationId ?? null,
     title: ver?.title ?? meta?.title ?? null,
     verificationStatus,
     listed: ver?.listed ?? meta?.listed ?? null,

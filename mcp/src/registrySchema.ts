@@ -12,12 +12,13 @@
  *  - Existing client compatibility is preserved for supported schema versions (v6 and v7).
  */
 
+import { withUpstreamSlot } from "./upstreamConcurrency.js";
+import { createLimitedRegistryClient } from "./upstreamStellar.js";
 import { Client as ContractClient } from "@stellar/stellar-sdk/contract";
 import {
   CURRENT_RESOURCE_SCHEMA_VERSION,
   SUPPORTED_RESOURCE_SCHEMA_VERSIONS,
   isSupportedResourceSchemaVersion,
-  createRegistryClient,
 } from "@mindvault/registry-client";
 import { mcpError, type MappedErrorException } from "./errorMapping.js";
 import { _isMock } from "./runtime.js";
@@ -51,10 +52,7 @@ export const ONCHAIN_MUTATION_TOOLS: ReadonlySet<string> = new Set([
  * Dry runs and read operations (like mindvault_terms with operation="get")
  * are not mutations and are not blocked by the schema guard.
  */
-export function isOnChainMutation(
-  name: string,
-  rawArgs?: Record<string, unknown>,
-): boolean {
+export function isOnChainMutation(name: string, rawArgs?: Record<string, unknown>): boolean {
   if (!ONCHAIN_MUTATION_TOOLS.has(name)) return false;
   if (name === "mindvault_publish" && rawArgs?.dryRun === true) return false;
   if (name === "mindvault_buy_lease" && rawArgs?.dryRun === true) return false;
@@ -109,7 +107,7 @@ export function resetRegistrySchemaCache(): void {
 export async function fetchDeployedResourceSchemaVersion(
   query: DeployedSchemaQuery,
 ): Promise<number> {
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: query.contractId,
     rpcUrl: query.rpcUrl,
     networkPassphrase: query.networkPassphrase,
@@ -137,14 +135,16 @@ export async function fetchDeployedResourceSchemaVersion(
 
   // 3. Try bare resource_schema_version()
   try {
-    const deployed = await ContractClient.from({
-      contractId: query.contractId,
-      rpcUrl: query.rpcUrl,
-      networkPassphrase: query.networkPassphrase ?? "Test SDF Network ; September 2015",
-    });
+    const deployed = await withUpstreamSlot(() =>
+      ContractClient.from({
+        contractId: query.contractId,
+        rpcUrl: query.rpcUrl,
+        networkPassphrase: query.networkPassphrase ?? "Test SDF Network ; September 2015",
+      }),
+    );
     const method = (deployed as any).resource_schema_version;
     if (typeof method === "function") {
-      const tx = await method();
+      const tx = await withUpstreamSlot<{ result?: unknown }>(() => method.call(deployed));
       if (typeof tx?.result === "number") {
         return tx.result;
       }

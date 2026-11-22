@@ -21,6 +21,34 @@
  * unit-testable without real waiting.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
+export const RETRY_BUDGET_ENV = "MINDVAULT_TOOL_RETRY_BUDGET";
+export const DEFAULT_TOOL_RETRY_BUDGET = 4;
+
+export function retryBudgetFromEnv(env: NodeJS.ProcessEnv): number {
+  const raw = env[RETRY_BUDGET_ENV]?.trim() ?? String(DEFAULT_TOOL_RETRY_BUDGET);
+  const budget = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(budget)) {
+    throw new Error(`${RETRY_BUDGET_ENV} must be a non-negative integer.`);
+  }
+  return budget;
+}
+
+const retryBudget = new AsyncLocalStorage<{ remaining: number }>();
+
+export function runWithRetryBudget<T>(budget: number, call: () => T): T {
+  return retryBudget.run({ remaining: budget }, call);
+}
+
+function takeRetry(): boolean {
+  const budget = retryBudget.getStore();
+  if (!budget) return true;
+  if (budget.remaining === 0) return false;
+  budget.remaining--;
+  return true;
+}
+
 export interface RetryPolicy {
   /** Total attempts including the first. 1 disables retrying. */
   attempts: number;
@@ -391,6 +419,7 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions<T
       const result = await fn();
       if (!isLast && options.shouldRetryResult?.(result)) {
         const override = options.delayFromResult?.(result) ?? null;
+        if (!takeRetry()) return result;
         const delayMs = override ?? computeBackoffDelay(attempt, policy, random);
         options.onRetry?.({
           label,
@@ -405,7 +434,7 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions<T
       return result;
     } catch (err) {
       lastError = err;
-      if (isLast || !isRetryableError(err)) throw err;
+      if (isLast || !isRetryableError(err) || !takeRetry()) throw err;
       const delayMs = computeBackoffDelay(attempt, policy, random);
       options.onRetry?.({
         label,

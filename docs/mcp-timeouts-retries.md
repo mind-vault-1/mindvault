@@ -13,6 +13,18 @@ and idempotent calls retry transient failures with bounded, jittered backoff.
 - [Timeouts](#timeouts) — `mcp/src/httpTimeout.ts`
 - [Retries](#retries) — `mcp/src/retry.ts`
 
+## Upstream concurrency
+
+`MINDVAULT_MAX_CONCURRENT_UPSTREAM_REQUESTS` sets the maximum number of active
+upstream requests per MCP process (default `8`, positive integers only). The
+MindVault API, sponsored-account service, Horizon, Soroban RPC, and x402
+payment transport share this limit. Excess work waits in arrival order. MCP
+fetch deadlines include time spent waiting for a slot, and a queued fetch
+whose signal is aborted is removed from the queue. A fetch releases its slot
+when headers arrive or an error occurs. SDK calls release their slot when the
+RPC completes. x402 payload creation reserves a slot for its SDK simulation
+sequence. Retry backoff never holds a slot.
+
 ## Timeouts
 
 Every outbound HTTP call the MindVault MCP server makes runs under a deadline.
@@ -153,6 +165,15 @@ list (`unknownToolNames`) rather than assuming a parsed entry took effect.
   — per-tool override parsing, precedence, and malformed-entry handling
 
 ## Retries
+
+`MINDVAULT_TOOL_RETRY_BUDGET` caps the extra attempts across eligible requests
+within a single tool call (default `4`). Use `0` to disable tool retries.
+Each request still gets its first attempt and is subject to its own retry
+ceiling. When a tool runs out of retries, the current upstream response or
+error follows the usual tool error handling. Concurrent tool invocations get
+independent allowances. Polling schedules and paid operation recovery retain
+their existing behavior. Both new settings are read on process startup or
+first transport use and require a restart to change.
 
 A single dropped connection or a 503 from a cold-starting backend used to fail a
 whole tool call, leaving the agent to decide whether retrying was safe. For reads
@@ -296,7 +317,7 @@ submit would be a second transaction.
 All of these mutations go through `signAndSendTracked` (in
 [`mcp/src/submittedTransaction.ts`](../mcp/src/submittedTransaction.ts)), which
 captures the transaction hash the moment `sendTransaction` returns via the SDK's
-`onSubmitted` hook. This is the single entry point for all anchor retry paths:
+`onSubmitted` hook. This is the single entry point for all transaction retry paths:
 manual retries (an agent calling the tool again after a failure) and automatic
 retries (the SDK's own internal polling) are both bounded by the same submitted-hash
 invariant. Neither path can bypass it.

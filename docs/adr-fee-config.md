@@ -150,7 +150,11 @@ pub const FEE_BPS_DENOM: u32 = 10_000; // basis-point denominator
 
 `FEE_BPS_DENOM` is exported so off-chain code that computes
 `amount * fee_bps / FEE_BPS_DENOM` can share the denominator constant rather
-than hardcoding `10_000`.
+than hardcoding `10_000`. Settlement and the focused fee tests use the same
+integer helper, so a quote built from this formula — with `amount` in USDC base
+units and truncation at the base-unit boundary — matches the fee persisted on
+the receipt even for prices where the fee rounds to zero. Property tests cover
+those fee and price boundaries.
 
 ### Public API
 
