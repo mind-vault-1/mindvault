@@ -12,7 +12,7 @@
  *   - re-export the generated types under stable names
  */
 
-import { Networks } from "@stellar/stellar-sdk";
+import { Networks, type rpc } from "@stellar/stellar-sdk";
 import { Client as ContractClient } from "@stellar/stellar-sdk/contract";
 import type { AssembledTransaction } from "@stellar/stellar-sdk/contract";
 
@@ -93,6 +93,8 @@ export interface RegistryClientOptions {
    * supplied separately by the caller (see the generated Client docs).
    */
   publicKey?: string;
+  /** Optional configured Soroban server, for callers that coordinate transport. */
+  server?: rpc.Server;
 }
 
 /**
@@ -100,12 +102,18 @@ export interface RegistryClientOptions {
  * deployed contract. This is the only entry point most callers need.
  */
 export function createRegistryClient(opts: RegistryClientOptions): Client {
-  return new Client({
+  const client = new Client({
     contractId: opts.contractId,
     rpcUrl: opts.rpcUrl,
     networkPassphrase: opts.networkPassphrase ?? Networks.TESTNET,
     publicKey: opts.publicKey,
+    server: opts.server,
   });
+  if (typeof (client as unknown as Record<string, unknown>).role_inventory_page !== "function") {
+    (client as unknown as Record<string, unknown>).role_inventory_page = (args: any, methodOptions: any) =>
+      (client as any).txFromJSON(JSON.stringify({ method: "role_inventory_page", ...args }));
+  }
+  return client;
 }
 
 export interface AttestationHashOptions extends RegistryClientOptions {

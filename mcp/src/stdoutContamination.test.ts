@@ -74,14 +74,11 @@ import {
 
 function mockResponse(data: unknown, ok = true, status = 200): Response {
   const body = JSON.stringify(data);
-  return {
-    ok,
+  return new Response(body, {
     status,
     statusText: ok ? "OK" : "Error",
-    text: () => Promise.resolve(body),
-    json: () => Promise.resolve(data),
-    headers: new Headers({ "content-type": "application/json" }),
-  } as Response;
+    headers: { "content-type": "application/json" },
+  });
 }
 
 const testWallet = { publicKey: "GPUB...TEST", secretKey: "SECRET...KEY" };

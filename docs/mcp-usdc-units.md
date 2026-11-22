@@ -18,6 +18,13 @@ Payment and refund amounts recorded by the vault-registry are also stroops.
 Refund records are cumulative per payment receipt, and the contract rejects a
 refund that would make the total exceed the original settled payment amount.
 
+Fee quotes must use the same base units and integer floor division as the
+contract: `floor(amount * platform_fee_bps / 10_000)`. Converting to decimal
+USDC before applying the basis-point rate can produce a quote that differs
+from the fee accrued when the receipt is settled, especially at small amounts.
+Destination splits are floored from the already-computed platform fee, with
+the recipient receiving the remainder.
+
 Source: [`mcp/src/usdcAmount.ts`](../mcp/src/usdcAmount.ts).
 
 ## One conversion, tagged at the boundary

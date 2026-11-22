@@ -27,9 +27,13 @@ import {
 } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
-import { Keypair, StrKey } from "@stellar/stellar-sdk";
-import { inferNetworkFromX402 } from "@mindvault/registry-client";
-import { STATE_VERSION, type ProfileState, type WalletProfile } from "./profiles.js";
+import {
+  isProfileNetwork,
+  profileNetworkName,
+  STATE_VERSION,
+  type ProfileState,
+  type WalletProfile,
+} from "./profiles.js";
 
 const STATE_DIR = join(homedir(), ".mindvault");
 const STATE_FILE = join(STATE_DIR, "state.json");
@@ -471,6 +475,20 @@ export function restoreState(
   } catch {
     throw new StateBackupError("Backup contents are not valid state.");
   }
+  const expectedNetwork = options.expectedNetwork;
+  if (expectedNetwork) {
+    const mismatched = Object.entries(state.profiles).find(
+      ([, profile]) =>
+        profile.network &&
+        (!isProfileNetwork(expectedNetwork) ||
+          profileNetworkName(profile.network) !== profileNetworkName(expectedNetwork)),
+    );
+    if (mismatched) {
+      throw new StateBackupError(
+        `Backup belongs to network "${mismatched[1].network}" but the active profile uses "${options.expectedNetwork}".`,
+      );
+    }
+  }
   write(state);
   return `State restored: ${Object.keys(state.profiles).length} profile(s), active "${state.activeProfile}".`;
 }
@@ -518,7 +536,7 @@ function normalizePersisted(raw: unknown): ProfileState {
       }
     }
     if (typeof v.apiKey === "string" && v.apiKey.length > 0) profile.apiKey = v.apiKey;
-    if (v.network === "testnet" || v.network === "mainnet") profile.network = v.network;
+    if (isProfileNetwork(v.network)) profile.network = v.network;
     if (v.preferences && typeof v.preferences === "object" && !Array.isArray(v.preferences)) {
       profile.preferences = {};
       for (const [key, item] of Object.entries(v.preferences as Record<string, unknown>)) {

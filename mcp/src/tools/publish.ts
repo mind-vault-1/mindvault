@@ -1,4 +1,5 @@
-import { createRegistryClient, Errors as RegistryErrors } from "@mindvault/registry-client";
+import { createLimitedRegistryClient } from "../upstreamStellar.js";
+import { Errors as RegistryErrors } from "@mindvault/registry-client";
 import type { BatchRegisterItem } from "@mindvault/registry-client";
 import {
   activeProfile,
@@ -37,6 +38,7 @@ import {
   mockSetListed,
   mockSetPrice,
   mockTransferOwnership,
+  mockPrepareOwnershipTransfer,
   mockUpdateMetadata,
   mockPublishBatch,
   mockAcceptTransfer,
@@ -544,7 +546,7 @@ export async function agentStatus(): Promise<string> {
 }
 
 function makeClient(publicKey: string) {
-  return createRegistryClient({
+  return createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -1027,7 +1029,7 @@ export async function publishBatch(
   let unconfirmed = false;
 
   if (verifiedItems.length > 0) {
-    const client = createRegistryClient({
+    const client = createLimitedRegistryClient({
       contractId: REGISTRY_CONTRACT_ID,
       rpcUrl: SOROBAN_RPC_URL,
       networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -1218,6 +1220,82 @@ export async function setListed(resourceId: string, listed: boolean): Promise<st
     null,
     2,
   );
+}
+
+/**
+ * Prepare an ownership transfer for a resource without submitting it on-chain (#1187).
+ * When an API key is configured, calls the MindVault API to prepare the transaction;
+ * otherwise builds the unsigned transaction directly from the registry client.
+ */
+export async function prepareOwnershipTransfer(
+  resourceId: string,
+  newCreator: string,
+): Promise<string> {
+  if (_isMock()) return mockPrepareOwnershipTransfer(resourceId, newCreator);
+
+  const apiKey = currentApiKey();
+  if (apiKey) {
+    const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/ownership/prepare`, {
+      method: "POST",
+      headers: { "x-api-key": apiKey },
+      body: { newCreator },
+    });
+    if (!res.ok) {
+      throwHttpError({
+        operation: `Prepare ownership transfer failed for resource "${resourceId}"`,
+        source: "api",
+        status: res.status,
+        data: res.data,
+        credential: publisherCredential(),
+      });
+    }
+    return JSON.stringify(
+      {
+        resourceId,
+        newCreator,
+        unsignedXdr: res.data.unsignedXdr,
+        networkPassphrase: res.data.networkPassphrase ?? REGISTRY_NETWORK_PASSPHRASE,
+      },
+      null,
+      2,
+    );
+  }
+
+  const wallet = requireWallet();
+  const client = makeClient(wallet.publicKey);
+  try {
+    const tx = await (client as any).transfer_ownership(
+      { id: resourceId, new_creator: newCreator },
+      { simulate: false },
+    );
+    const unsignedXdr = typeof tx?.toXDR === "function" ? tx.toXDR() : String(tx);
+    return JSON.stringify(
+      {
+        resourceId,
+        newCreator,
+        unsignedXdr,
+        networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+      },
+      null,
+      2,
+    );
+  } catch (err: any) {
+    if (isTimeoutError(err)) {
+      throw mcpError(
+        mapTransportError({
+          operation: `Prepare ownership transfer failed for resource "${resourceId}"`,
+          source: "soroban",
+          error: err,
+        }),
+      );
+    }
+    throw mcpError(
+      mapRegistryError({
+        operation: `Prepare ownership transfer failed for resource "${resourceId}"`,
+        message: err?.message || String(err),
+      }),
+    );
+  }
 }
 
 export async function acceptTransfer(resourceId: string): Promise<string> {

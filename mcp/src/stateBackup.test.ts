@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 import { createCipheriv, randomBytes, scryptSync } from "crypto";
 import * as fs from "fs";
 import {
@@ -30,6 +30,15 @@ import {
 } from "./stateBackup.js";
 import { STATE_VERSION, type ProfileState } from "./profiles.js";
 import { Keypair } from "@stellar/stellar-sdk";
+
+vi.mock("os", async (importOriginal) => {
+  const os = await importOriginal<typeof import("os")>();
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const home = mkdtempSync(join(os.tmpdir(), "mindvault-state-backup-test-"));
+  afterAll(() => rmSync(home, { recursive: true, force: true }));
+  return { ...os, homedir: () => home };
+});
 
 const STATE_DIR = join(homedir(), ".mindvault");
 const STATE_FILE = join(STATE_DIR, "state.json");

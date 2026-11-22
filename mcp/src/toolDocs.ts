@@ -19,6 +19,7 @@
  * prettier-formatted output and the generator writes that form as well.
  */
 
+import { PROMPT_DEFINITIONS } from "./prompts.js";
 import type { ToolDefinition } from "./tools.js";
 
 /** Paths are relative to the repository root. */
@@ -58,9 +59,12 @@ export function groupOf(name: string): string {
     return "Profiles";
   if (
     [
+      "mindvault_metadata_diff",
       "mindvault_browse",
       "mindvault_search",
       "mindvault_preview",
+      "mindvault_batch_catalog_lookup",
+      "mindvault_preview_metadata_hash",
       "mindvault_prewarm_catalog",
     ].includes(name)
   )
@@ -84,6 +88,7 @@ export function groupOf(name: string): string {
       "mindvault_set_price",
       "mindvault_set_tags",
       "mindvault_transfer_ownership",
+      "mindvault_prepare_ownership_transfer",
       "mindvault_set_listed",
       "mindvault_accept_transfer",
       "mindvault_cancel_transfer",
@@ -110,6 +115,8 @@ export function groupOf(name: string): string {
       "mindvault_tx_status",
       "mindvault_onchain_preflight",
       "mindvault_verify_deployment",
+      "mindvault_explain_error_code",
+      "mindvault_rpc_health",
       "mindvault_verify_attestation",
       "mindvault_resource_provenance",
       "mindvault_resource_change_log",
@@ -117,7 +124,15 @@ export function groupOf(name: string): string {
     ].includes(name)
   )
     return "Registry & Diagnostics";
-  if (["mindvault_purchase_history", "mindvault_export_receipts"].includes(name)) return "Receipts";
+  if (
+    [
+      "mindvault_purchase_history",
+      "mindvault_export_receipts",
+      "mindvault_verify_receipt",
+    ].includes(name)
+  ) {
+    return "Receipts";
+  }
   if (
     [
       "mindvault_backup_state",
@@ -213,6 +228,19 @@ export function renderToolReference(tools: readonly ToolDefinition[]): string {
     lines.push("");
   }
 
+  lines.push(
+    "## Prompts",
+    "",
+    "| Prompt | Description | Required arguments |",
+    "| --- | --- | --- |",
+  );
+  for (const prompt of PROMPT_DEFINITIONS) {
+    const required = prompt.arguments.filter((argument) => argument.required);
+    lines.push(
+      `| \`${prompt.name}\` | ${escapeCell(prompt.description)} | ${required.map((argument) => `\`${argument.name}\``).join(", ")} |`,
+    );
+  }
+  lines.push("");
   lines.push("---", "");
   lines.push(`_This file was generated from \`mcp/src/tools.ts\` — ${tools.length} tools._`, "");
 

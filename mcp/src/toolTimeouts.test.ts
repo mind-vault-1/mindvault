@@ -120,13 +120,7 @@ describe("outbound API calls carry a deadline", () => {
   });
 
   it("completes normally when the backend answers within the budget", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () => Promise.resolve("[]"),
-      json: () => Promise.resolve([]),
-      headers: new Headers({ "content-type": "application/json" }),
-    } as Response);
+    globalThis.fetch = vi.fn().mockImplementation(async () => Response.json([]));
 
     await expect(browse()).resolves.toBe("No resources listed yet.");
   });

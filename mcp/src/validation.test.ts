@@ -57,7 +57,7 @@ const OVERSIZE_BATCH = Array.from({ length: 26 }, (_, i) => `res-${String(i).pad
 /**
  * Advertised tools that go through this layer.
  *
- * `mindvault_publish_status` and `mindvault_purchase_history` normalize their
+ * `mindvault_publish_status` and `mindvault_publish_batch` normalize their
  * own arguments (see TOOLS_WITHOUT_ARG_VALIDATION) and so have no spec to
  * compare against. The exemption itself is checked below.
  */
@@ -80,6 +80,8 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_browse: {},
   mindvault_search: { query: "stellar" },
   mindvault_preview: { resourceId: "res-001" },
+  mindvault_batch_catalog_lookup: { resourceIds: ["res-001"] },
+  mindvault_preview_metadata_hash: { resourceId: "res-001" },
   mindvault_register: { name: "Agent A", email: "agent@example.com" },
   mindvault_publish: {
     title: "Dataset",
@@ -94,7 +96,9 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   },
   mindvault_import_profiles: { data: "{}" },
   mindvault_export_profiles: {},
+  mindvault_purchase_history: {},
   mindvault_export_receipts: {},
+  mindvault_verify_receipt: { receipt: {} },
   mindvault_register_onchain: { resourceId: "res-001" },
   mindvault_agent_status: {},
   mindvault_registry_info: {},
@@ -113,7 +117,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_registry_lookup: { resourceId: "res-001" },
   mindvault_registry_list: {},
   mindvault_registry_count: {},
-  mindvault_registry_count: {},
+  mindvault_explain_error_code: { code: 1 },
   mindvault_registry_creator_page: {
     creator: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
   },
@@ -128,6 +132,10 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_metrics: {},
   mindvault_update_metadata: { resourceId: "res-001", metadata: "ipfs://Qm123" },
   mindvault_set_price: { resourceId: "res-001", price: "10.00" },
+  mindvault_prepare_ownership_transfer: {
+    resourceId: "res-001",
+    newCreator: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
+  },
   mindvault_transfer_ownership: {
     resourceId: "res-001",
     newCreator: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
@@ -145,6 +153,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   },
   mindvault_check_state_permissions: {},
   mindvault_registry_health: {},
+  mindvault_rpc_health: {},
   mindvault_prewarm_catalog: {},
   mindvault_client_config: {},
   mindvault_mainnet_banner: {},

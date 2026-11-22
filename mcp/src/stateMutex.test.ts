@@ -215,6 +215,10 @@ describe("stateMutex", () => {
         "mindvault_rotate_publisher_key",
         "mindvault_publish",
         "mindvault_buy",
+        "mindvault_buy_lease",
+        "mindvault_import_profiles",
+        "mindvault_publish_batch",
+        "mindvault_switch_network_profile",
       ]);
       expect(STATE_SERIALIZED_TOOLS).toEqual(expected);
     });
