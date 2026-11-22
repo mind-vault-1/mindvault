@@ -84,4 +84,18 @@ describe("effective network profile", () => {
 
     expect(checkOutput(NETWORK_PROFILE_OUTPUT_SCHEMA, profile)).toEqual({ valid: true });
   });
+
+  it.each(["network", "endpoints", "contracts", "policies", "diagnostics"] as const)(
+    "returns only the requested %s section when filtered",
+    (section) => {
+      const profile = buildNetworkProfile(baseEnv, {
+        sections: [section],
+        timeouts: "http=12000ms",
+        retries: "attempts=3",
+      });
+
+      expect(Object.keys(profile).sort()).toEqual(["schema", "sections", section].sort());
+      expect(profile.sections).toEqual([section]);
+    },
+  );
 });

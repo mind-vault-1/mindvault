@@ -259,7 +259,7 @@ import {
   type TimeoutService,
 } from "./httpTimeout.js";
 import { resolveToolTimeouts, timeoutForTool } from "./toolTimeoutOverrides.js";
-import { describeProxyConfig, resolveProxyConfig, withProxy } from "./proxy.js";
+import { resolveProxyConfig, withProxy } from "./proxy.js";
 import {
   describeRetryPolicy,
   formatRetryLog,
@@ -4926,8 +4926,7 @@ export function networkProfile(sections?: readonly string[]): string {
     sections,
     timeouts: describeTimeouts(TIMEOUTS),
     retries: describeRetryPolicy(RETRY_POLICY),
-  }) as NetworkProfile & { proxy?: string };
-  profile.proxy = describeProxyConfig(PROXY_CONFIG) as unknown as string;
+  }) as NetworkProfile;
   return JSON.stringify(profile, null, 2);
 }
 

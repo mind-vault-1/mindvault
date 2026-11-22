@@ -714,17 +714,6 @@ const NETWORK_PROFILE_DIAGNOSTIC_SCHEMA = {
   required: ["variable", "severity", "message"],
 } as const;
 
-const NETWORK_PROFILE_PROXY_SCHEMA = {
-  type: "object",
-  properties: {
-    enabled: { type: "boolean" },
-    httpProxy: { type: ["string", "null"] },
-    httpsProxy: { type: ["string", "null"] },
-    noProxy: { type: ["string", "null"] },
-  },
-  required: ["enabled", "httpProxy", "httpsProxy", "noProxy"],
-} as const;
-
 export const NETWORK_PROFILE_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -797,7 +786,6 @@ export const NETWORK_PROFILE_OUTPUT_SCHEMA = {
       required: ["readOnly", "mainnetMutationConfirmationRequired", "timeouts", "retries"],
     },
     diagnostics: { type: "array", items: NETWORK_PROFILE_DIAGNOSTIC_SCHEMA },
-    proxy: NETWORK_PROFILE_PROXY_SCHEMA,
   },
   required: ["schema", "sections"],
 } as const;
