@@ -115,6 +115,7 @@ import { applyMigratedState, migrationPreviewTool } from "./stateMigrationPrevie
 import { supportBundleTool } from "./supportBundle.js";
 import { applyRetentionPolicies } from "./retention.js";
 import { exportReceiptsToolWithTimeout } from "./receipts.js";
+import { verifyPaymentReceipt, type PaymentReceiptExpectations } from "./receiptVerification.js";
 import { normalizeToolResult, outcomeText, type ToolOutcome } from "./toolResult.js";
 import { advertisedTools, hasOutputSchema, outputSchemaFor } from "./toolSurface.js";
 import { enforceOutputContract } from "./outputValidation.js";
@@ -5122,6 +5123,15 @@ async function executeTool(
         return exportReceiptsToolWithTimeout(
           rawRecord,
           timeoutForTool("mindvault_export_receipts", "http", TIMEOUTS, TOOL_TIMEOUTS),
+        );
+      case "mindvault_verify_receipt":
+        return JSON.stringify(
+          verifyPaymentReceipt(
+            args.receipt,
+            args.expected as PaymentReceiptExpectations | undefined,
+          ),
+          null,
+          2,
         );
       case "mindvault_register_onchain":
         return registerOnchain(requiredString(args, "resourceId"), onProgress);

@@ -21,6 +21,7 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_buy_lease",
   "mindvault_lease_status",
   "mindvault_export_receipts",
+  "mindvault_verify_receipt",
   "mindvault_register_onchain",
   "mindvault_agent_status",
   "mindvault_registry_info",

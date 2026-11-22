@@ -121,7 +121,15 @@ export function groupOf(name: string): string {
     ].includes(name)
   )
     return "Registry & Diagnostics";
-  if (["mindvault_purchase_history", "mindvault_export_receipts"].includes(name)) return "Receipts";
+  if (
+    [
+      "mindvault_purchase_history",
+      "mindvault_export_receipts",
+      "mindvault_verify_receipt",
+    ].includes(name)
+  ) {
+    return "Receipts";
+  }
   if (
     [
       "mindvault_backup_state",

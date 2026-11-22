@@ -98,6 +98,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_export_profiles: {},
   mindvault_purchase_history: {},
   mindvault_export_receipts: {},
+  mindvault_verify_receipt: { receipt: {} },
   mindvault_register_onchain: { resourceId: "res-001" },
   mindvault_agent_status: {},
   mindvault_registry_info: {},
