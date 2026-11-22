@@ -378,6 +378,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("settle_lease", "settler"),
     ("revoke_lease", "creator"),
     ("get_lease", "—"),
+    ("list_holder_leases", "—"),
     ("lease_is_active", "—"),
     ("lease_price", "—"),
     // ── TTL ───────────────────────────────────────────────────────────────
@@ -933,6 +934,19 @@ pub struct CatalogPage {
     pub next_cursor: Option<u32>,
 }
 
+/// One page of currently-active leases held by a single address.
+///
+/// `next_cursor` is the holder-index position to pass back as `cursor`;
+/// `None` means end-of-list. Pending, revoked, and expired leases are skipped
+/// using the same predicate as `lease_is_active`, so every page contains only
+/// leases that grant access at the current ledger.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct HolderLeasePage {
+    pub items: Vec<Lease>,
+    pub next_cursor: Option<u32>,
+}
+
 /// Persisted cursor metadata for a future bounded `repair_index` continuation.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1186,6 +1200,9 @@ pub enum DataKey {
     FlagModerator(String),
     /// Active lease held by `holder` on a resource.
     Lease(String, Address),
+    /// Ordered resource ids leased by a holder, used by `list_holder_leases`
+    /// so a buyer can enumerate leases without already knowing resource ids.
+    HolderLeaseIndex(Address),
     /// Anchor attempt counter for `(resource_id, buyer)`.
     AnchorAttempts(String, Address),
     /// Registry-level listing terms hash (fallback for `get_terms_hash`).
@@ -6346,6 +6363,54 @@ impl VaultRegistry {
         }
     }
 
+    /// Return a bounded page of leases that currently grant `holder` access.
+    ///
+    /// The holder index is maintained by `buy_lease` / `record_lease`, so the
+    /// caller does not need to know any resource ids. Entries are visited in
+    /// the order the leases were first recorded; `cursor` is the index to
+    /// resume from and `next_cursor` is `None` at end-of-list.
+    ///
+    /// - `limit` is clamped to `1..=LIST_PAGE_CAP` (20).
+    /// - Pending, revoked, and expired leases are skipped with the same
+    ///   predicate used by `lease_is_active`; the cursor still advances past
+    ///   them so paging always terminates.
+    /// - A holder with no leases returns an empty page and `next_cursor: None`.
+    pub fn list_holder_leases(
+        env: Env,
+        holder: Address,
+        cursor: Option<u32>,
+        limit: u32,
+    ) -> HolderLeasePage {
+        let limit = limit.clamp(1, LIST_PAGE_CAP);
+        let index_key = DataKey::HolderLeaseIndex(holder.clone());
+        let index: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&index_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        if index.len() != 0 {
+            Self::bump_persistent(&env, &index_key);
+        }
+
+        let start = cursor.unwrap_or(0).min(index.len());
+        let end = start.saturating_add(limit).min(index.len());
+        let mut items = Vec::new(&env);
+        for position in start..end {
+            let resource_id = index.get(position).unwrap();
+            let key = DataKey::Lease(resource_id, holder.clone());
+            if let Some(lease) = env.storage().persistent().get::<DataKey, Lease>(&key) {
+                if Self::lease_grants_access(&env, &lease) {
+                    items.push_back(lease);
+                }
+            }
+        }
+
+        HolderLeasePage {
+            items,
+            next_cursor: if end < index.len() { Some(end) } else { None },
+        }
+    }
+
     /// Extend the TTL of a resource's persistent storage entry.
     ///
     /// Only the resource's current creator (owner) may call this.
@@ -7837,6 +7902,28 @@ impl VaultRegistry {
         };
         env.storage().persistent().set(&key, &lease);
         Self::bump_persistent(env, &key);
+
+        // Maintain the holder-scoped index used by `list_holder_leases`.
+        // Re-purchasing an expired/revoked lease reuses its existing slot, so
+        // the index stays duplicate-free and the cursor remains deterministic.
+        let index_key = DataKey::HolderLeaseIndex(lease.holder.clone());
+        let mut index: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&index_key)
+            .unwrap_or_else(|| Vec::new(env));
+        let mut seen = false;
+        for position in 0..index.len() {
+            if index.get(position).unwrap() == lease.resource_id {
+                seen = true;
+                break;
+            }
+        }
+        if !seen {
+            index.push_back(lease.resource_id.clone());
+            env.storage().persistent().set(&index_key, &index);
+            Self::bump_persistent(env, &index_key);
+        }
 
         // Track the resource price for the active-lease fee-config guard (#991).
         Self::update_lease_price_floor(env, resource.price);

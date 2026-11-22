@@ -11969,6 +11969,161 @@ fn differently_cased_tags_indexed_under_same_normalized_tag() {
     assert_eq!(results.len(), 2);
 }
 
+// ── Issue #994: bounded holder lease listing ───────────────────────────────
+
+#[test]
+fn list_holder_leases_pages_deterministically_across_holders_and_resources() {
+    let (env, creator, _admin, settler, client) = setup_with_settler();
+    let holder_a = Address::generate(&env);
+    let holder_b = Address::generate(&env);
+
+    let a1 = register_priced(&env, &creator, &client, "leasea01", 100);
+    let a2 = register_priced(&env, &creator, &client, "leasea02", 100);
+    let a3 = register_priced(&env, &creator, &client, "leasea03", 100);
+    let b1 = register_priced(&env, &creator, &client, "leaseb01", 100);
+
+    client.record_lease(
+        &settler,
+        &holder_a,
+        &a1,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leaseha1"),
+    );
+    client.record_lease(
+        &settler,
+        &holder_a,
+        &a2,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leaseha2"),
+    );
+    client.record_lease(
+        &settler,
+        &holder_a,
+        &a3,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leaseha3"),
+    );
+    client.record_lease(
+        &settler,
+        &holder_b,
+        &b1,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leasehb1"),
+    );
+
+    let page1 = client.list_holder_leases(&holder_a, &None::<u32>, &2u32);
+    assert_eq!(page1.items.len(), 2);
+    assert_eq!(page1.items.get(0).unwrap().resource_id, a1);
+    assert_eq!(page1.items.get(1).unwrap().resource_id, a2);
+    assert_eq!(page1.next_cursor, Some(2));
+
+    let page2 = client.list_holder_leases(&holder_a, &page1.next_cursor, &2u32);
+    assert_eq!(page2.items.len(), 1);
+    assert_eq!(page2.items.get(0).unwrap().resource_id, a3);
+    assert_eq!(page2.next_cursor, None);
+
+    let other = client.list_holder_leases(&holder_b, &None::<u32>, &20u32);
+    assert_eq!(other.items.len(), 1);
+    assert_eq!(other.items.get(0).unwrap().resource_id, b1);
+    assert_eq!(other.next_cursor, None);
+
+    let unknown = client.list_holder_leases(&Address::generate(&env), &None::<u32>, &20u32);
+    assert_eq!(unknown.items.len(), 0);
+    assert_eq!(unknown.next_cursor, None);
+}
+
+#[test]
+fn list_holder_leases_clamps_limit_and_skips_non_active_records() {
+    let (env, creator, _admin, settler, client) = setup_with_settler();
+    let holder = Address::generate(&env);
+
+    // 21 active leases for one holder: an oversized limit must still be
+    // capped at LIST_PAGE_CAP and leave a next cursor.
+    for index in 0..21 {
+        let id = format!("lease{:02}", index);
+        let resource = register_priced(&env, &creator, &client, &id, 100);
+        let tx = format!("leasetx{:02}", index);
+        client.record_lease(
+            &settler,
+            &holder,
+            &resource,
+            &LeaseTier::Hour,
+            &100i128,
+            &String::from_str(&env, &tx),
+        );
+    }
+    let capped = client.list_holder_leases(&holder, &None::<u32>, &u32::MAX);
+    assert_eq!(capped.items.len(), LIST_PAGE_CAP as usize);
+    assert_eq!(capped.next_cursor, Some(LIST_PAGE_CAP));
+
+    let tail = client.list_holder_leases(&holder, &capped.next_cursor, &20u32);
+    assert_eq!(tail.items.len(), 1);
+    assert_eq!(tail.next_cursor, None);
+
+    // Pending, revoked, and expired records are skipped with the same
+    // predicate as lease_is_active, while the cursor still advances.
+    let pending_id = register_priced(&env, &creator, &client, "leasepend", 100);
+    client.buy_lease(
+        &holder,
+        &pending_id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leasependtx"),
+    );
+    let revoked_id = register_priced(&env, &creator, &client, "leaservok", 100);
+    client.record_lease(
+        &settler,
+        &holder,
+        &revoked_id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leaservoktx"),
+    );
+    client.revoke_lease(&revoked_id, &holder);
+    let expired_id = register_priced(&env, &creator, &client, "leaseexpr", 100);
+    client.record_lease(
+        &settler,
+        &holder,
+        &expired_id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leaseexprtx"),
+    );
+    env.ledger().set_sequence_number(LEASE_HOUR_LEDGERS + 1);
+
+    // Re-record the 21 leases at the new ledger so they are active again;
+    // their original entries have expired and are replaced in place.
+    for index in 0..21 {
+        let id = format!("lease{:02}", index);
+        let tx = format!("leasernew{:02}", index);
+        client.record_lease(
+            &settler,
+            &holder,
+            &String::from_str(&env, &id),
+            &LeaseTier::Hour,
+            &100i128,
+            &String::from_str(&env, &tx),
+        );
+    }
+
+    let filtered = client.list_holder_leases(&holder, &None::<u32>, &LIST_PAGE_CAP);
+    assert_eq!(filtered.items.len(), LIST_PAGE_CAP as usize);
+    for lease in filtered.items.iter() {
+        assert!(client.lease_is_active(&lease.resource_id, &holder));
+    }
+
+    let remainder = client.list_holder_leases(&holder, &filtered.next_cursor, &LIST_PAGE_CAP);
+    assert_eq!(remainder.items.len(), 1);
+    assert_eq!(remainder.next_cursor, None);
+    assert!(!client.lease_is_active(&pending_id, &holder));
+    assert!(!client.lease_is_active(&revoked_id, &holder));
+    assert!(!client.lease_is_active(&expired_id, &holder));
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 
