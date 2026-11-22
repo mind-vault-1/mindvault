@@ -105,9 +105,7 @@ describe("buildWalletAllowanceSummary", () => {
     expect(summary.estimatedPendingSpend.amount).toBe("1.5000000");
     expect(summary.estimatedPendingSpend.count).toBe(1);
     expect(summary.estimatedPendingSpend.estimate).toBe(true);
-    expect(summary.estimatedPendingSpend.purchases.map((p) => p.resourceId)).toEqual([
-      "pending-1",
-    ]);
+    expect(summary.estimatedPendingSpend.purchases.map((p) => p.resourceId)).toEqual(["pending-1"]);
     expect(summary.estimatedPendingSpend.purchases[0]).toMatchObject({
       asset: ASSET,
       network: NETWORK,

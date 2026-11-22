@@ -117,6 +117,12 @@ Poll verification and on-chain sync after publish. Returns `verificationStatus` 
 }
 ```
 
+**Review before buying.** In a client with MCP prompt support, select
+`safe_purchase_review` with the catalog `resourceId`. The prompt guides the
+agent through a fresh preview, wallet and network checks, and a dry run before
+asking for your approval. Fetching the prompt has no network or payment side
+effects. See the [generated prompt reference](mcp-tool-reference.md#prompts).
+
 **Errors:** missing `resourceId` and HTTP 404s return deterministic messages so agents can retry or correct the id.
 
 ---
@@ -370,6 +376,9 @@ If any step fails, the most common root causes are:
 | `buy` returns `402 Payment Required`            | Buyer wallet under-funded for resource price      | Re-fund and retry                                            |
 | `Not registered. Run mindvault_register first.` | API key was lost (e.g. server restart)            | Re-run `mindvault_register` in the same session              |
 | `No wallet. Run mindvault_setup_wallet first.`  | Wallet state cleared between sessions             | The wallet is in-memory only — re-create it for each session |
+
+See the [Stellar transaction failure decision tree](stellar-transaction-troubleshooting.md)
+for simulation errors, submission failures, and unresolved transaction hashes.
 
 See also: [docs/x402-payment-troubleshooting.md](x402-payment-troubleshooting.md) for x402-specific sign/pay failures.
 

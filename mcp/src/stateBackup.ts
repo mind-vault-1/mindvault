@@ -27,7 +27,13 @@ import {
 } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
-import { STATE_VERSION, type ProfileState, type WalletProfile } from "./profiles.js";
+import {
+  isProfileNetwork,
+  profileNetworkName,
+  STATE_VERSION,
+  type ProfileState,
+  type WalletProfile,
+} from "./profiles.js";
 
 const STATE_DIR = join(homedir(), ".mindvault");
 const STATE_FILE = join(STATE_DIR, "state.json");
@@ -360,9 +366,13 @@ export function restoreState(
   } catch {
     throw new StateBackupError("Backup contents are not valid state.");
   }
-  if (options.expectedNetwork) {
+  const expectedNetwork = options.expectedNetwork;
+  if (expectedNetwork) {
     const mismatched = Object.entries(state.profiles).find(
-      ([, profile]) => profile.network && profile.network !== options.expectedNetwork,
+      ([, profile]) =>
+        profile.network &&
+        (!isProfileNetwork(expectedNetwork) ||
+          profileNetworkName(profile.network) !== profileNetworkName(expectedNetwork)),
     );
     if (mismatched) {
       throw new StateBackupError(
@@ -417,7 +427,7 @@ function normalizePersisted(raw: unknown): ProfileState {
       }
     }
     if (typeof v.apiKey === "string" && v.apiKey.length > 0) profile.apiKey = v.apiKey;
-    if (v.network === "testnet" || v.network === "mainnet") profile.network = v.network;
+    if (isProfileNetwork(v.network)) profile.network = v.network;
     if (v.preferences && typeof v.preferences === "object" && !Array.isArray(v.preferences)) {
       profile.preferences = {};
       for (const [key, item] of Object.entries(v.preferences as Record<string, unknown>)) {

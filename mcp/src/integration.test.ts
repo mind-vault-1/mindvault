@@ -45,6 +45,20 @@ describe("MCP integration harness", () => {
     _resetProfiles();
   });
 
+  it("advertises the safe purchase prompt and rejects invalid requests", async () => {
+    const name = "safe_purchase_review";
+    const { prompts } = await harness.client.listPrompts();
+    expect(prompts.find((prompt) => prompt.name === name)?.arguments).toEqual([
+      expect.objectContaining({ name: "resourceId", required: true }),
+    ]);
+    await expect(harness.client.getPrompt({ name })).rejects.toMatchObject({ code: -32602 });
+    const result = await harness.client.getPrompt({ name, arguments: { resourceId: "res-123" } });
+    expect(result.messages[1].content).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("explicit approval"),
+    });
+  });
+
   it("lists tools through the SDK request interface", async () => {
     const { tools } = await harness.listTools();
     const names = tools.map((t) => t.name).sort();

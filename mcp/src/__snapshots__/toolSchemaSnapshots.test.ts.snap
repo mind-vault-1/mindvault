@@ -354,6 +354,197 @@ exports[`tool schema snapshots > mindvault_backup_state > input schema 1`] = `
 
 exports[`tool schema snapshots > mindvault_backup_state > output schema 1`] = `null`;
 
+exports[`tool schema snapshots > mindvault_batch_catalog_lookup > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Batch Catalog Lookup",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_batch_catalog_lookup > input schema 1`] = `
+{
+  "properties": {
+    "refetch": {
+      "description": "When true, skip the offline cache fallback and fail if the catalog API is unreachable. Default false (serve a labelled cached snapshot when offline).",
+      "type": "boolean",
+    },
+    "resourceIds": {
+      "description": "1–25 resource ids, from mindvault_browse or mindvault_search. A comma-separated string is also accepted. Duplicates are looked up once each.",
+      "examples": [
+        [
+          "cm7x8y9z",
+          "res-001",
+        ],
+      ],
+      "items": {
+        "type": "string",
+      },
+      "maxItems": 25,
+      "minItems": 1,
+      "type": "array",
+    },
+  },
+  "required": [
+    "resourceIds",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_batch_catalog_lookup > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "foundCount": {
+          "type": "integer",
+        },
+        "items": {
+          "items": {
+            "properties": {
+              "accessUrl": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "found": {
+                "type": "boolean",
+              },
+              "id": {
+                "type": "string",
+              },
+              "price": {
+                "type": [
+                  "string",
+                  "number",
+                  "null",
+                ],
+              },
+              "resourceType": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "verificationStatus": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+            },
+            "required": [
+              "id",
+              "found",
+              "title",
+              "price",
+              "verificationStatus",
+              "resourceType",
+              "accessUrl",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "missing": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "notice": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "requested": {
+          "type": "integer",
+        },
+        "truncated": {
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "items",
+        "requested",
+        "foundCount",
+        "missing",
+        "notice",
+        "truncated",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_browse > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -2451,6 +2642,12 @@ exports[`tool schema snapshots > mindvault_export_profiles > output schema 1`] =
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -3316,6 +3513,12 @@ exports[`tool schema snapshots > mindvault_import_profiles > output schema 1`] =
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -4782,6 +4985,10 @@ exports[`tool schema snapshots > mindvault_preview > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_preview > input schema 1`] = `
 {
   "properties": {
+    "bypassCache": {
+      "description": "Fetch fresh metadata for this call and report cacheStatus=bypassed without changing shared cache policy.",
+      "type": "boolean",
+    },
     "resourceId": {
       "description": "The unique resource identifier from mindvault_browse or mindvault_search. Example: 'cm7x8y9z'",
       "examples": [
@@ -4832,6 +5039,165 @@ exports[`tool schema snapshots > mindvault_preview > output schema 1`] = `
         "verificationStatus",
         "accessUrl",
         "cacheStatus",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_preview_metadata_hash > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Preview Metadata Hash",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_preview_metadata_hash > input schema 1`] = `
+{
+  "properties": {
+    "resourceId": {
+      "description": "The on-chain resource id to read (from mindvault_browse, mindvault_registry_list, or mindvault_publish). Letters, digits, dot, dash, or underscore.",
+      "examples": [
+        "cm7x8y9z",
+        "res-001",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "resourceId",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_preview_metadata_hash > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "pointer": {
+          "properties": {
+            "present": {
+              "type": "boolean",
+            },
+            "source": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "source",
+            "present",
+          ],
+          "type": "object",
+        },
+        "report": {
+          "properties": {
+            "algorithm": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "canonical": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "present": {
+              "type": "boolean",
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "valid": {
+              "type": "boolean",
+            },
+          },
+          "required": [
+            "present",
+            "valid",
+            "canonical",
+            "algorithm",
+            "reason",
+          ],
+          "type": "object",
+        },
+        "resourceId": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "resourceId",
+        "pointer",
+        "report",
       ],
       "type": "object",
     },
@@ -5398,8 +5764,15 @@ exports[`tool schema snapshots > mindvault_publish_status > input schema 1`] = `
       ],
       "type": "number",
     },
+    "operationId": {
+      "description": "The operationId returned by mindvault_publish or a previous mindvault_publish_status call. Resolves to the same resource on the network and API it was issued for; refused on any other. Does not expire. Use instead of resourceId to resume polling.",
+      "examples": [
+        "pubop1.Y203eDh5OXo.b31b1f387d53f169",
+      ],
+      "type": "string",
+    },
     "resourceId": {
-      "description": "The resource ID from mindvault_publish (or browse/search). Example: 'cm7x8y9z'",
+      "description": "The resource ID from mindvault_publish (or browse/search). Required unless operationId is given. Example: 'cm7x8y9z'",
       "examples": [
         "cm7x8y9z",
         "res-001",
@@ -5421,9 +5794,7 @@ exports[`tool schema snapshots > mindvault_publish_status > input schema 1`] = `
       "type": "boolean",
     },
   },
-  "required": [
-    "resourceId",
-  ],
+  "required": [],
   "type": "object",
 }
 `;
@@ -5469,6 +5840,12 @@ exports[`tool schema snapshots > mindvault_publish_status > output schema 1`] = 
             "null",
           ],
         },
+        "operationId": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
         "polled": {
           "type": "boolean",
         },
@@ -5499,6 +5876,7 @@ exports[`tool schema snapshots > mindvault_publish_status > output schema 1`] = 
       },
       "required": [
         "resourceId",
+        "operationId",
         "title",
         "verificationStatus",
         "listed",
@@ -5930,10 +6308,6 @@ exports[`tool schema snapshots > mindvault_register_onchain > annotations 1`] = 
 exports[`tool schema snapshots > mindvault_register_onchain > input schema 1`] = `
 {
   "properties": {
-    "bypassCache": {
-      "description": "Fetch fresh metadata for this call and report cacheStatus=bypassed without changing shared cache policy.",
-      "type": "boolean",
-    },
     "confirmMainnet": {
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
       "type": "boolean",
@@ -11207,6 +11581,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_accept_transfer",
   "mindvault_agent_status",
   "mindvault_backup_state",
+  "mindvault_batch_catalog_lookup",
   "mindvault_browse",
   "mindvault_buy",
   "mindvault_buy_lease",
@@ -11234,6 +11609,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_onchain_preflight",
   "mindvault_pending_transfer",
   "mindvault_preview",
+  "mindvault_preview_metadata_hash",
   "mindvault_prewarm_catalog",
   "mindvault_publish",
   "mindvault_publish_batch",

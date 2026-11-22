@@ -1,3 +1,4 @@
+import { withUpstreamSlot } from "../upstreamConcurrency.js";
 import { checkContractBindings } from "@mindvault/registry-client";
 import {
   activeProfile,
@@ -301,12 +302,14 @@ export function networkProfile(): string {
 
 export async function checkBindings(): Promise<string> {
   if (_isMock()) return "Mock mode: contract binding check skipped (no live RPC).";
-  const result = await checkContractBindings({
-    contractId: REGISTRY_CONTRACT_ID,
-    rpcUrl: SOROBAN_RPC_URL,
-    networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
-    network: STELLAR_NETWORK,
-  });
+  const result = await withUpstreamSlot(() =>
+    checkContractBindings({
+      contractId: REGISTRY_CONTRACT_ID,
+      rpcUrl: SOROBAN_RPC_URL,
+      networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
+      network: STELLAR_NETWORK,
+    }),
+  );
   return result.message;
 }
 

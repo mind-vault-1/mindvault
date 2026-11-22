@@ -51,6 +51,7 @@ import {
   TRANSACTION_WAIT_POLICIES,
 } from "./settlement.js";
 import { StrKey } from "@stellar/stellar-sdk";
+import { checkUsdcAmountInput, USDC_AMOUNT_FORMAT } from "./usdcAmount.js";
 
 // ── Spec model ────────────────────────────────────────────────────────────────
 
@@ -76,6 +77,10 @@ import { StrKey } from "@stellar/stellar-sdk";
  *                 bounded length. Unlike `tag_array` entries keep their case
  *                 and duplicates — they are data selectors, not on-chain tags.
  *                 Accepts a comma-separated string as well.
+ * - `usdc_amount` — a USDC amount as a decimal string (see usdcAmount.ts):
+ *                 at most 7 decimal places, no sign, no exponent, at most the
+ *                 registry's `MAX_PRICE`. Refused, never rounded (#1252).
+ *                 `positive` also refuses zero.
  * - `object`    — a JSON object passed through unchanged. Used for structured
  *                 payloads whose field-level validation belongs to the owning
  *                 module (e.g. an expected deployment manifest), so the tool
@@ -100,6 +105,7 @@ export type ArgumentKind =
   | "string_array"
   | "url"
   | "integer"
+  | "usdc_amount"
   | "object";
 
 export interface ArgumentSpec {
@@ -132,6 +138,8 @@ export interface ArgumentSpec {
    * only the URL form carries a host to check.
    */
   rejectLocalHost?: boolean;
+  /** Refuse zero — `usdc_amount` only. */
+  positive?: boolean;
 }
 
 export type ToolArgumentSpec = Record<string, ArgumentSpec>;
@@ -166,13 +174,22 @@ const PROFILE_NAME: ArgumentSpec = {
   patternHint: "letters, digits, dot, dash, or underscore (1–64 chars)",
 };
 
-/** Decimal USDC amount as a string, e.g. "5", "0.50". */
-const USDC_AMOUNT: ArgumentSpec = {
+/**
+ * Decimal USDC amount as a string for catalog price filters, e.g. "5", "0.50".
+ * `parseCatalogFilters` re-checks it.
+ */
+const USDC_FILTER_AMOUNT: ArgumentSpec = {
   kind: "string",
   maxLength: 32,
   pattern: /^\d+(\.\d+)?$/,
   patternHint: 'a non-negative decimal amount in USDC, e.g. "5.00"',
 };
+
+/** A USDC amount the caller pays or charges: a ceiling or a price (#1252). */
+const USDC_AMOUNT: ArgumentSpec = { kind: "usdc_amount" };
+
+/** A price: a USDC amount that must be above zero. */
+const USDC_PRICE: ArgumentSpec = { kind: "usdc_amount", positive: true, required: true };
 
 /**
  * Batch-size ceiling for tools that take a list of resource ids in one call.
@@ -238,8 +255,8 @@ const PASSPHRASE: ArgumentSpec = { kind: "string", required: true, minLength: 8,
  */
 const CATALOG_FILTER_ARGS: ToolArgumentSpec = {
   query: { kind: "string", maxLength: 256 },
-  minPrice: USDC_AMOUNT,
-  maxPrice: USDC_AMOUNT,
+  minPrice: USDC_FILTER_AMOUNT,
+  maxPrice: USDC_FILTER_AMOUNT,
   verificationStatus: {
     kind: "enum",
     values: ["pending", "verified", "rejected", "skipped"],
@@ -323,7 +340,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_publish: {
     title: { kind: "string", required: true, maxLength: 256 },
     description: { kind: "string", maxLength: 2048 },
-    price: { ...USDC_AMOUNT, required: true },
+    price: USDC_PRICE,
     externalUrl: {
       kind: "url",
       required: true,
@@ -350,6 +367,12 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     },
     intervalMs: { kind: "integer", min: MIN_SETTLEMENT_INTERVAL_MS },
   },
+  mindvault_purchase_history: {
+    resourceId: { ...RESOURCE_ID, required: false },
+    network: { kind: "string", maxLength: 64 },
+    query: { kind: "string" },
+    idempotencyKey: { kind: "string" },
+  },
   mindvault_export_receipts: {
     format: { kind: "enum", values: ["json", "csv", "ndjson"] },
     resourceId: { ...RESOURCE_ID, required: false },
@@ -375,7 +398,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     resourceId: RESOURCE_ID,
     tier: { kind: "enum", required: true, values: ["hour", "day", "week"] },
     dryRun: DRY_RUN,
-    maxAutoPayUsdc: { kind: "string", maxLength: 32 },
+    maxAutoPayUsdc: USDC_AMOUNT,
     confirmMainnet: CONFIRM_MAINNET,
     confirmPaid: CONFIRM_PAID,
   },
@@ -450,6 +473,20 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     cursor: { kind: "integer", min: 0 },
     limit: { kind: "integer", min: 1, max: REGISTRY_LIST_MAX_LIMIT },
   },
+  mindvault_batch_catalog_lookup: {
+    // `pattern` constrains each entry: ids are interpolated into API paths,
+    // so an entry must satisfy the same shape single-id tools enforce.
+    resourceIds: {
+      kind: "string_array",
+      required: true,
+      minLength: 1,
+      maxLength: BATCH_LOOKUP_MAX_IDS,
+      pattern: /^[A-Za-z0-9._-]+$/,
+      patternHint: "a resource id: letters, digits, dot, dash, or underscore (max 128 chars)",
+    },
+    refetch: { kind: "flag" },
+  },
+  mindvault_preview_metadata_hash: { resourceId: RESOURCE_ID },
   mindvault_tx_status: { txHash: { kind: "hash", required: true, bareHex: true } },
   // `confirm` is what resetGuard.isResetConfirmed reads. It was advertised in
   // ListTools and absent here, so every confirmed reset failed validation as an
@@ -503,7 +540,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   },
   mindvault_set_price: {
     resourceId: RESOURCE_ID,
-    price: { ...USDC_AMOUNT, required: true },
+    price: USDC_PRICE,
     confirmMainnet: CONFIRM_MAINNET,
     confirmPaid: CONFIRM_PAID,
   },
@@ -602,6 +639,7 @@ export type ValidationIssueCode =
   | "invalid_stellar_secret"
   | "invalid_tag_array"
   | "invalid_string_array"
+  | "invalid_usdc_amount"
   | "blocked_url";
 
 export interface ValidationIssue {
@@ -678,6 +716,8 @@ function expectation(spec: ArgumentSpec): string {
     }
     case "object":
       return "a JSON object";
+    case "usdc_amount":
+      return spec.positive ? `${USDC_AMOUNT_FORMAT}, above zero` : USDC_AMOUNT_FORMAT;
     case "string": {
       if (spec.patternHint) return spec.patternHint;
       if (spec.maxLength) return `a string of up to ${spec.maxLength} characters`;
@@ -1128,6 +1168,41 @@ function validateObject(
   return value as Record<string, unknown>;
 }
 
+/**
+ * Validate a USDC amount (#1252). Only a string is accepted: a JSON number has
+ * already been through floating point (`0.1 + 0.2`, `1e-7`) and may not be the
+ * amount the caller meant, so it is refused rather than stringified.
+ */
+function validateUsdcAmount(
+  field: string,
+  value: unknown,
+  spec: ArgumentSpec,
+  issues: ValidationIssue[],
+): string | undefined {
+  if (typeof value !== "string") {
+    issues.push({
+      field,
+      code: "wrong_type",
+      message: `${field} must be a string; received ${typeName(value)}. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+  if (value.trim().length === 0) {
+    issues.push({
+      field,
+      code: "empty_string",
+      message: `${field} must not be empty. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+  const check = checkUsdcAmountInput(value, { positive: spec.positive === true });
+  if (!check.ok) {
+    issues.push({ field, code: "invalid_usdc_amount", message: `${field}: ${check.message}` });
+    return undefined;
+  }
+  return check.amount;
+}
+
 function validateHash(
   field: string,
   value: unknown,
@@ -1351,6 +1426,11 @@ export function validateToolArgs(tool: string, rawArgs: unknown): ValidatedArgs 
       case "object": {
         const obj = validateObject(field, value, issues);
         if (obj !== undefined) out[field] = obj;
+        break;
+      }
+      case "usdc_amount": {
+        const amount = validateUsdcAmount(field, value, fieldSpec, issues);
+        if (amount !== undefined) out[field] = amount;
         break;
       }
       case "string": {

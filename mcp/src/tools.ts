@@ -71,7 +71,6 @@ import {
   WALLET_BALANCES_OUTPUT_SCHEMA,
   WALLET_INFO_OUTPUT_SCHEMA,
   WALLET_SETUP_OUTPUT_SCHEMA,
-  WALLET_ALLOWANCE_OUTPUT_SCHEMA,
 } from "./outputSchemas.js";
 import {
   RECEIPT_EXPORT_MAX_LIMIT,
@@ -727,11 +726,6 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "The resource ID to register on-chain (from mindvault_publish output). Must be verified and not already registered. Example: 'cm7x8y9z'",
           examples: ["cm7x8y9z", "res-001", "ckx9j2h3f"],
-        },
-        bypassCache: {
-          type: "boolean",
-          description:
-            "Fetch fresh metadata for this call and report cacheStatus=bypassed without changing shared cache policy.",
         },
         confirmMainnet: {
           type: "boolean",
@@ -2005,15 +1999,21 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     // defined here, so the generated tool reference never listed it (#596).
     name: "mindvault_publish_status",
     description:
-      "Poll a published resource's verification and on-chain sync status. Returns verificationStatus (pending, verified, rejected, skipped), listed, onchainStatus, onchainTxHash, and optional verification details. Pass wait: true to poll until verification settles or timeoutMs elapses. Deterministic errors for missing resourceId and 404s.",
+      "Poll a published resource's verification and on-chain sync status. Returns verificationStatus (pending, verified, rejected, skipped), listed, onchainStatus, onchainTxHash, and optional verification details, plus the publish's operationId. Pass resourceId, or the operationId from mindvault_publish to resume polling after a reconnect or restart. Pass wait: true to poll until verification settles or timeoutMs elapses. Deterministic errors for a missing or unknown id and 404s.",
     inputSchema: {
       type: "object",
       properties: {
         resourceId: {
           type: "string",
           description:
-            "The resource ID from mindvault_publish (or browse/search). Example: 'cm7x8y9z'",
+            "The resource ID from mindvault_publish (or browse/search). Required unless operationId is given. Example: 'cm7x8y9z'",
           examples: ["cm7x8y9z", "res-001", "swcn98besxpp6t1u8e77fqz3"],
+        },
+        operationId: {
+          type: "string",
+          description:
+            "The operationId returned by mindvault_publish or a previous mindvault_publish_status call. Resolves to the same resource on the network and API it was issued for; refused on any other. Does not expire. Use instead of resourceId to resume polling.",
+          examples: ["pubop1.Y203eDh5OXo.b31b1f387d53f169"],
         },
         wait: {
           type: "boolean",
@@ -2033,7 +2033,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           examples: [1000, 2000, 5000],
         },
       },
-      required: ["resourceId"],
+      required: [],
     },
     outputSchema: PUBLISH_STATUS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {

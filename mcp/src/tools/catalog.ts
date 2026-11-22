@@ -168,6 +168,7 @@ export async function preview(resourceId: string): Promise<string> {
     type: r.resourceType ?? null,
     verificationStatus: r.verificationStatus ?? null,
     accessUrl: r.accessUrl ?? null,
+    cacheStatus: label ? "offline" : "live",
   };
   if (label) out.offlineCache = label;
   // Publisher-supplied title/description are unbounded at the source, so cap

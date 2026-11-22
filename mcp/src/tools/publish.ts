@@ -1,4 +1,5 @@
-import { createRegistryClient, Errors as RegistryErrors } from "@mindvault/registry-client";
+import { createLimitedRegistryClient } from "../upstreamStellar.js";
+import { Errors as RegistryErrors } from "@mindvault/registry-client";
 import type { BatchRegisterItem } from "@mindvault/registry-client";
 import {
   activeProfile,
@@ -545,7 +546,7 @@ export async function agentStatus(): Promise<string> {
 }
 
 function makeClient(publicKey: string) {
-  return createRegistryClient({
+  return createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     rpcUrl: SOROBAN_RPC_URL,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
@@ -1028,7 +1029,7 @@ export async function publishBatch(
   let unconfirmed = false;
 
   if (verifiedItems.length > 0) {
-    const client = createRegistryClient({
+    const client = createLimitedRegistryClient({
       contractId: REGISTRY_CONTRACT_ID,
       rpcUrl: SOROBAN_RPC_URL,
       networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
