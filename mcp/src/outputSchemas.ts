@@ -1133,6 +1133,193 @@ export const RPC_HEALTH_OUTPUT_SCHEMA = {
   required: ["profile", "horizonUrl", "sorobanRpcUrl", "allOk", "endpoints", "summary"],
 } as const;
 
+/** mindvault_state_diagnostics (#1207). Mirrors StateLoadDiagnostics in stateRecovery.ts. */
+export const STATE_DIAGNOSTICS_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    status: { type: "string", enum: ["ok", "missing", "recovered", "unrecovered"] },
+    stateFile: { type: "string" },
+    reason: { type: ["string", "null"], enum: ["unreadable", "invalid_json", "no_profiles", null] },
+    detail: { type: ["string", "null"] },
+    position: {
+      anyOf: [
+        {
+          type: "object",
+          properties: { line: { type: "integer" }, column: { type: "integer" } },
+          required: ["line", "column"],
+        },
+        { type: "null" },
+      ],
+    },
+    quarantinePath: { type: ["string", "null"] },
+    writesBlocked: { type: "boolean" },
+    detectedAt: { type: ["string", "null"] },
+    backups: { type: "array", items: { type: "string" } },
+    quarantinedFiles: { type: "array", items: { type: "string" } },
+    nextSteps: { type: "array", items: { type: "string" } },
+  },
+  required: [
+    "status",
+    "stateFile",
+    "reason",
+    "detail",
+    "position",
+    "quarantinePath",
+    "writesBlocked",
+    "detectedAt",
+    "backups",
+    "quarantinedFiles",
+    "nextSteps",
+  ],
+} as const;
+
+/** mindvault_cache_chain_diff (#1203). Mirrors CacheChainDiffReport in cacheChainDiff.ts. */
+const CACHE_DIFF_RESOURCE_STATUSES = [
+  "in_sync",
+  "drift",
+  "missing_onchain",
+  "missing_in_cache",
+  "not_found",
+  "lookup_failed",
+] as const;
+
+export const CACHE_CHAIN_DIFF_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    context: {
+      type: "object",
+      properties: {
+        profile: { type: "string" },
+        network: { type: "string" },
+        contractId: { type: "string" },
+        apiOrigin: { type: "string" },
+        rpcUrl: { type: "string" },
+      },
+      required: ["profile", "network", "contractId", "apiOrigin", "rpcUrl"],
+    },
+    cache: {
+      type: "object",
+      properties: {
+        snapshotCount: { type: "integer" },
+        cachedResourceCount: { type: "integer" },
+        oldestSnapshotAt: { type: ["string", "null"] },
+        newestSnapshotAt: { type: ["string", "null"] },
+      },
+      required: ["snapshotCount", "cachedResourceCount", "oldestSnapshotAt", "newestSnapshotAt"],
+    },
+    requested: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }] },
+    compared: { type: "integer" },
+    truncated: { type: "boolean" },
+    counts: {
+      type: "object",
+      properties: Object.fromEntries(
+        CACHE_DIFF_RESOURCE_STATUSES.map((s) => [s, { type: "integer" }]),
+      ),
+      required: [...CACHE_DIFF_RESOURCE_STATUSES],
+    },
+    verdict: { type: "string", enum: ["in_sync", "drift", "incomplete", "no_cache"] },
+    results: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          resourceId: { type: "string" },
+          status: { type: "string", enum: [...CACHE_DIFF_RESOURCE_STATUSES] },
+          cachedAt: { type: ["string", "null"] },
+          fields: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                field: { type: "string", enum: ["price", "metadata", "listed", "creator", "tags"] },
+                status: {
+                  type: "string",
+                  enum: ["match", "mismatch", "missing_cache", "missing_onchain"],
+                },
+                cached: {},
+                onchain: {},
+              },
+              required: ["field", "status", "cached", "onchain"],
+            },
+          },
+          error: { type: ["string", "null"] },
+        },
+        required: ["resourceId", "status", "cachedAt", "fields", "error"],
+      },
+    },
+    nextSteps: { type: "array", items: { type: "string" } },
+  },
+  required: [
+    "context",
+    "cache",
+    "requested",
+    "compared",
+    "truncated",
+    "counts",
+    "verdict",
+    "results",
+    "nextSteps",
+  ],
+} as const;
+
+/** mindvault_upstream_health (#1205). Mirrors UpstreamProbeReport in upstreamProbe.ts. */
+const UPSTREAM_STATUSES = ["ok", "degraded", "down", "not_configured", "skipped"] as const;
+
+export const UPSTREAM_HEALTH_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    profile: { type: "string" },
+    expectedNetworkPassphrase: { type: "string" },
+    timeoutMs: { type: "integer" },
+    verdict: { type: "string", enum: ["healthy", "degraded", "unhealthy"] },
+    counts: {
+      type: "object",
+      properties: Object.fromEntries(UPSTREAM_STATUSES.map((s) => [s, { type: "integer" }])),
+      required: [...UPSTREAM_STATUSES],
+    },
+    upstreams: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string", enum: ["api", "horizon", "soroban_rpc", "sponsored_account"] },
+          name: { type: "string" },
+          url: { type: ["string", "null"] },
+          status: { type: "string", enum: [...UPSTREAM_STATUSES] },
+          httpStatus: { type: ["integer", "null"] },
+          latencyMs: { type: ["integer", "null"] },
+          networkPassphrase: { type: ["string", "null"] },
+          networkMatch: { type: ["boolean", "null"] },
+          error: { type: ["string", "null"] },
+          action: { type: ["string", "null"] },
+        },
+        required: [
+          "id",
+          "name",
+          "url",
+          "status",
+          "httpStatus",
+          "latencyMs",
+          "networkPassphrase",
+          "networkMatch",
+          "error",
+          "action",
+        ],
+      },
+    },
+    summary: { type: "string" },
+  },
+  required: [
+    "profile",
+    "expectedNetworkPassphrase",
+    "timeoutMs",
+    "verdict",
+    "counts",
+    "upstreams",
+    "summary",
+  ],
+} as const;
+
 export const METADATA_DIFF_OUTPUT_SCHEMA = {
   type: "object",
   properties: {

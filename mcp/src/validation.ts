@@ -424,6 +424,16 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_metadata_diff: {
     resourceId: RESOURCE_ID,
   },
+  mindvault_cache_chain_diff: {
+    resourceIds: {
+      kind: "string_array",
+      minLength: 1,
+      maxLength: CACHE_CHAIN_DIFF_MAX_RESOURCES,
+      pattern: /^[A-Za-z0-9._-]{1,128}$/,
+      patternHint: RESOURCE_ID.patternHint,
+    },
+    limit: { kind: "integer", min: 1, max: CACHE_CHAIN_DIFF_MAX_RESOURCES },
+  },
   mindvault_verify_attestation: {
     resourceId: ON_CHAIN_RESOURCE_ID,
     attestationHash: ATTESTATION_HASH,
@@ -593,8 +603,23 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     confirmPaid: CONFIRM_PAID,
   },
   mindvault_check_state_permissions: {},
+  mindvault_state_diagnostics: {},
   mindvault_registry_health: {},
   mindvault_rpc_health: {},
+  mindvault_upstream_health: {
+    upstreams: {
+      kind: "string_array",
+      minLength: 1,
+      maxLength: UPSTREAM_IDS.length,
+      pattern: new RegExp(`^(${UPSTREAM_IDS.join("|")})$`),
+      patternHint: `one of ${UPSTREAM_IDS.join(", ")}`,
+    },
+    timeoutMs: {
+      kind: "integer",
+      min: UPSTREAM_PROBE_MIN_TIMEOUT_MS,
+      max: UPSTREAM_PROBE_MAX_TIMEOUT_MS,
+    },
+  },
   mindvault_prewarm_catalog: {},
   mindvault_client_config: {
     client: {

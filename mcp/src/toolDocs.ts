@@ -105,6 +105,8 @@ export function groupOf(name: string): string {
       "mindvault_registry_lookup",
       "mindvault_registry_list",
       "mindvault_registry_health",
+      "mindvault_cache_chain_diff",
+      "mindvault_upstream_health",
       "mindvault_registry_count",
       "mindvault_registry_creator_page",
       "mindvault_registry_tag_search",
@@ -137,6 +139,7 @@ export function groupOf(name: string): string {
       "mindvault_restore_state",
       "mindvault_reset",
       "mindvault_check_state_permissions",
+      "mindvault_state_diagnostics",
       "mindvault_migration_preview",
       "mindvault_compare_state_backup",
     ].includes(name)

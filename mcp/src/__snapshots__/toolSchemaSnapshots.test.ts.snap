@@ -1411,6 +1411,318 @@ exports[`tool schema snapshots > mindvault_buy_lease > output schema 1`] = `
 }
 `;
 
+exports[`tool schema snapshots > mindvault_cache_chain_diff > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Cache vs Chain Diff",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_cache_chain_diff > input schema 1`] = `
+{
+  "properties": {
+    "limit": {
+      "description": "How many cached resources to compare when resourceIds is omitted (default 20).",
+      "maximum": 50,
+      "minimum": 1,
+      "type": "integer",
+    },
+    "resourceIds": {
+      "description": "Compare exactly these resource ids, cached or not. Omit to compare cached resources in id order.",
+      "items": {
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9._-]+$",
+        "type": "string",
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "type": "array",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_cache_chain_diff > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "cache": {
+          "properties": {
+            "cachedResourceCount": {
+              "type": "integer",
+            },
+            "newestSnapshotAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "oldestSnapshotAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "snapshotCount": {
+              "type": "integer",
+            },
+          },
+          "required": [
+            "snapshotCount",
+            "cachedResourceCount",
+            "oldestSnapshotAt",
+            "newestSnapshotAt",
+          ],
+          "type": "object",
+        },
+        "compared": {
+          "type": "integer",
+        },
+        "context": {
+          "properties": {
+            "apiOrigin": {
+              "type": "string",
+            },
+            "contractId": {
+              "type": "string",
+            },
+            "network": {
+              "type": "string",
+            },
+            "profile": {
+              "type": "string",
+            },
+            "rpcUrl": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "profile",
+            "network",
+            "contractId",
+            "apiOrigin",
+            "rpcUrl",
+          ],
+          "type": "object",
+        },
+        "counts": {
+          "properties": {
+            "drift": {
+              "type": "integer",
+            },
+            "in_sync": {
+              "type": "integer",
+            },
+            "lookup_failed": {
+              "type": "integer",
+            },
+            "missing_in_cache": {
+              "type": "integer",
+            },
+            "missing_onchain": {
+              "type": "integer",
+            },
+            "not_found": {
+              "type": "integer",
+            },
+          },
+          "required": [
+            "in_sync",
+            "drift",
+            "missing_onchain",
+            "missing_in_cache",
+            "not_found",
+            "lookup_failed",
+          ],
+          "type": "object",
+        },
+        "nextSteps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "requested": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "results": {
+          "items": {
+            "properties": {
+              "cachedAt": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "fields": {
+                "items": {
+                  "properties": {
+                    "cached": {},
+                    "field": {
+                      "enum": [
+                        "price",
+                        "metadata",
+                        "listed",
+                        "creator",
+                        "tags",
+                      ],
+                      "type": "string",
+                    },
+                    "onchain": {},
+                    "status": {
+                      "enum": [
+                        "match",
+                        "mismatch",
+                        "missing_cache",
+                        "missing_onchain",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "field",
+                    "status",
+                    "cached",
+                    "onchain",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "resourceId": {
+                "type": "string",
+              },
+              "status": {
+                "enum": [
+                  "in_sync",
+                  "drift",
+                  "missing_onchain",
+                  "missing_in_cache",
+                  "not_found",
+                  "lookup_failed",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "resourceId",
+              "status",
+              "cachedAt",
+              "fields",
+              "error",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "truncated": {
+          "type": "boolean",
+        },
+        "verdict": {
+          "enum": [
+            "in_sync",
+            "drift",
+            "incomplete",
+            "no_cache",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "context",
+        "cache",
+        "requested",
+        "compared",
+        "truncated",
+        "counts",
+        "verdict",
+        "results",
+        "nextSteps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_cancel_transfer > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -9038,6 +9350,190 @@ exports[`tool schema snapshots > mindvault_setup_wallet > output schema 1`] = `
 }
 `;
 
+exports[`tool schema snapshots > mindvault_state_diagnostics > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "State File Diagnostics",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_state_diagnostics > input schema 1`] = `
+{
+  "properties": {},
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_state_diagnostics > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "backups": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "detectedAt": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "nextSteps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "position": {
+          "anyOf": [
+            {
+              "properties": {
+                "column": {
+                  "type": "integer",
+                },
+                "line": {
+                  "type": "integer",
+                },
+              },
+              "required": [
+                "line",
+                "column",
+              ],
+              "type": "object",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "quarantinePath": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "quarantinedFiles": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "reason": {
+          "enum": [
+            "unreadable",
+            "invalid_json",
+            "no_profiles",
+            null,
+          ],
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "stateFile": {
+          "type": "string",
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "missing",
+            "recovered",
+            "unrecovered",
+          ],
+          "type": "string",
+        },
+        "writesBlocked": {
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "status",
+        "stateFile",
+        "reason",
+        "detail",
+        "position",
+        "quarantinePath",
+        "writesBlocked",
+        "detectedAt",
+        "backups",
+        "quarantinedFiles",
+        "nextSteps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_support_bundle > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -9996,6 +10492,254 @@ exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] =
           ],
           "type": "object",
         },
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_upstream_health > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Upstream Health Probe",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_upstream_health > input schema 1`] = `
+{
+  "properties": {
+    "timeoutMs": {
+      "description": "Per-upstream timeout in milliseconds (default 5000).",
+      "maximum": 30000,
+      "minimum": 100,
+      "type": "integer",
+    },
+    "upstreams": {
+      "description": "Probe only these upstreams. Omit to probe all of them.",
+      "items": {
+        "enum": [
+          "api",
+          "horizon",
+          "soroban_rpc",
+          "sponsored_account",
+        ],
+        "type": "string",
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "type": "array",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_upstream_health > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "counts": {
+          "properties": {
+            "degraded": {
+              "type": "integer",
+            },
+            "down": {
+              "type": "integer",
+            },
+            "not_configured": {
+              "type": "integer",
+            },
+            "ok": {
+              "type": "integer",
+            },
+            "skipped": {
+              "type": "integer",
+            },
+          },
+          "required": [
+            "ok",
+            "degraded",
+            "down",
+            "not_configured",
+            "skipped",
+          ],
+          "type": "object",
+        },
+        "expectedNetworkPassphrase": {
+          "type": "string",
+        },
+        "profile": {
+          "type": "string",
+        },
+        "summary": {
+          "type": "string",
+        },
+        "timeoutMs": {
+          "type": "integer",
+        },
+        "upstreams": {
+          "items": {
+            "properties": {
+              "action": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "httpStatus": {
+                "type": [
+                  "integer",
+                  "null",
+                ],
+              },
+              "id": {
+                "enum": [
+                  "api",
+                  "horizon",
+                  "soroban_rpc",
+                  "sponsored_account",
+                ],
+                "type": "string",
+              },
+              "latencyMs": {
+                "type": [
+                  "integer",
+                  "null",
+                ],
+              },
+              "name": {
+                "type": "string",
+              },
+              "networkMatch": {
+                "type": [
+                  "boolean",
+                  "null",
+                ],
+              },
+              "networkPassphrase": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "status": {
+                "enum": [
+                  "ok",
+                  "degraded",
+                  "down",
+                  "not_configured",
+                  "skipped",
+                ],
+                "type": "string",
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+            },
+            "required": [
+              "id",
+              "name",
+              "url",
+              "status",
+              "httpStatus",
+              "latencyMs",
+              "networkPassphrase",
+              "networkMatch",
+              "error",
+              "action",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "verdict": {
+          "enum": [
+            "healthy",
+            "degraded",
+            "unhealthy",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "profile",
+        "expectedNetworkPassphrase",
+        "timeoutMs",
+        "verdict",
+        "counts",
+        "upstreams",
+        "summary",
       ],
       "type": "object",
     },
@@ -12083,6 +12827,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_browse",
   "mindvault_buy",
   "mindvault_buy_lease",
+  "mindvault_cache_chain_diff",
   "mindvault_cancel_transfer",
   "mindvault_check_bindings",
   "mindvault_check_consistency",
@@ -12137,12 +12882,14 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_set_price",
   "mindvault_set_tags",
   "mindvault_setup_wallet",
+  "mindvault_state_diagnostics",
   "mindvault_support_bundle",
   "mindvault_switch_network_profile",
   "mindvault_terms",
   "mindvault_transfer_ownership",
   "mindvault_tx_status",
   "mindvault_update_metadata",
+  "mindvault_upstream_health",
   "mindvault_use_profile",
   "mindvault_verify_attestation",
   "mindvault_verify_deployment",
