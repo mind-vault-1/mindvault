@@ -434,8 +434,8 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (42, "ReceiptAlreadyExists", "A payment or refund receipt is already stored for the supplied id."),
     (43, "InvalidPaymentTransition", "Payment is not settled, its creator refund deadline has expired, or a payment state transition is not allowed."),
     (44, "InvalidReceiptId", "`receipt_id` is empty or exceeds `MAX_RECEIPT_ID_LEN` (64 bytes)."),
-    (45, "ContentHashTooLong", "`content_hash` exceeds `MAX_CONTENT_HASH_LEN` (128 bytes)."),
-    (46, "AttestationHashTooLong", "`attestation_hash` exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes)."),
+    (45, "ContentHashTooLong", "`content_hash` is empty, malformed, or exceeds `MAX_CONTENT_HASH_LEN` (128 bytes) after normalization."),
+    (46, "AttestationHashTooLong", "`attestation_hash` is empty, malformed, or exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes) after normalization."),
     (47, "PaymentAmountMismatch", "Payment amount differs from the resource price or cumulative refunds exceed the original payment."),
     (48, "DuplicateTxHash", "A payment or refund receipt already uses the supplied transaction hash (`tx_hash`)."),
     (49, "FeeConfigNotSet", "`set_fee_recipient` or `set_fee_destination` was called before any fee config was set via `set_fee_config`."),
@@ -1618,9 +1618,11 @@ pub enum Error {
     InvalidPaymentTransition = 43,
     /// `receipt_id` is empty or exceeds `MAX_RECEIPT_ID_LEN` (64 bytes).
     InvalidReceiptId = 44,
-    /// `content_hash` exceeds `MAX_CONTENT_HASH_LEN` (128 bytes).
+    /// `content_hash` is empty, malformed, or exceeds `MAX_CONTENT_HASH_LEN`
+    /// (128 bytes) after normalization.
     ContentHashTooLong = 45,
-    /// `attestation_hash` exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes).
+    /// `attestation_hash` is empty, malformed, or exceeds
+    /// `MAX_ATTESTATION_HASH_LEN` (64 bytes) after normalization.
     AttestationHashTooLong = 46,
     /// Payment receipt amount does not match the resource's current price.
     PaymentAmountMismatch = 47,
@@ -1681,8 +1683,10 @@ impl VaultRegistry {
     /// registration: `update_metadata` cannot change it afterward. Passing
     /// `None` preserves the mutable metadata behavior of `register`.
     ///
-    /// Rejects an empty hash or one longer than `MAX_CONTENT_HASH_LEN`
-    /// (`ContentHashTooLong`). All other validation matches `register`.
+    /// The hash is trimmed, lowercased, and prefix-normalized before storage,
+    /// so equivalent spellings of the same digest produce one canonical value.
+    /// Rejects empty, malformed, or over-long hashes (`ContentHashTooLong`).
+    /// All other validation matches `register`.
     pub fn register_with_hash(
         env: Env,
         creator: Address,
@@ -2167,7 +2171,9 @@ impl VaultRegistry {
     /// this. Only `Pending -> Verified`, `Pending -> Rejected`,
     /// `Verified -> Rejected`, and `Rejected -> Verified` are allowed;
     /// self-transitions and reverting to `Pending` error with
-    /// `InvalidVerificationTransition`.
+    /// `InvalidVerificationTransition`. Attestation hashes use the same
+    /// normalization rules as registration content hashes before being stored
+    /// and emitted.
     pub fn set_verification_status(
         env: Env,
         id: String,
@@ -2294,10 +2300,15 @@ impl VaultRegistry {
         if resource.verified != status {
             return false;
         }
-        match Self::get_attestation_hash(env.clone(), id.clone()) {
-            Some(stored) => {
-                stored == Self::compute_attestation_hash(env, id, status, document_hash)
-            }
+        let expected =
+            Self::compute_attestation_hash(env.clone(), id.clone(), status, document_hash);
+        match Self::get_attestation_hash(env.clone(), id) {
+            // Legacy records may predate canonical storage. Normalize the
+            // stored value before comparing so equivalent spellings still
+            // verify without requiring a storage migration.
+            Some(stored) => Self::normalize_attestation_hash(&env, &stored)
+                .map(|normalized| normalized == expected)
+                .unwrap_or(false),
             None => false,
         }
     }
@@ -6592,43 +6603,140 @@ impl VaultRegistry {
         }
     }
 
-    fn normalize_attestation_hash(env: &Env, hash: &String) -> Result<String, Error> {
-        let bytes = Self::string_bytes(hash);
-        let mut separator = None;
-        for (idx, byte) in bytes.iter().enumerate() {
-            if *byte == b':' {
-                separator = Some(idx);
-                break;
-            }
+    /// Split a supplied hash into its canonical algorithm and digest bytes.
+    ///
+    /// Registration content hashes and verification attestation hashes accept
+    /// the same spelling variants: surrounding ASCII whitespace is ignored,
+    /// ASCII case is folded, a `0x` digest prefix is removed, and `:` separates
+    /// an optional algorithm from its digest. Internal whitespace or control
+    /// bytes are never valid in a hash. Callers supply the field-specific error
+    /// because the two fields have different length limits but reject the same
+    /// malformed encodings. `max_len` bounds the trimmed input before any
+    /// canonical prefix is added.
+    fn normalize_hash_parts(
+        hash: &String,
+        malformed: Error,
+        max_len: usize,
+    ) -> Result<(Option<alloc::vec::Vec<u8>>, alloc::vec::Vec<u8>), Error> {
+        let raw = Self::string_bytes(hash);
+        let mut start = 0usize;
+        let mut end = raw.len();
+        while start < end && raw[start].is_ascii_whitespace() {
+            start += 1;
+        }
+        while end > start && raw[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        if start == end || end - start > max_len {
+            return Err(malformed);
         }
 
-        if let Some(separator) = separator {
-            let algorithm = &bytes[..separator];
-            let digest = &bytes[separator + 1..];
-            if algorithm.is_empty()
-                || algorithm.len() > MAX_ATTESTATION_HASH_ALGORITHM_LEN as usize
-                || digest.is_empty()
-                || digest.len() > MAX_ATTESTATION_HASH_LEN as usize
-            {
-                return Err(Error::AttestationHashTooLong);
+        let mut lower = alloc::vec::Vec::with_capacity(end - start);
+        for &byte in &raw[start..end] {
+            if byte.is_ascii_whitespace() || byte.is_ascii_control() {
+                return Err(malformed);
             }
-            for &byte in algorithm {
-                if !matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_') {
-                    return Err(Error::AttestationHashTooLong);
+            lower.push(byte.to_ascii_lowercase());
+        }
+
+        let separator = lower.iter().position(|&byte| byte == b':');
+        let (algorithm, digest) = match separator {
+            Some(separator) => {
+                let algorithm = &lower[..separator];
+                if algorithm.is_empty()
+                    || !algorithm
+                        .iter()
+                        .all(|&byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_'))
+                {
+                    return Err(malformed);
                 }
+                (Some(algorithm.to_vec()), &lower[separator + 1..])
             }
-            return Ok(hash.clone());
+            None => (None, lower.as_slice()),
+        };
+
+        let digest = if digest.len() >= 2 && digest[0] == b'0' && digest[1] == b'x' {
+            &digest[2..]
+        } else {
+            digest
+        };
+        if digest.is_empty() {
+            return Err(malformed);
+        }
+        Ok((algorithm, digest.to_vec()))
+    }
+
+    /// Return the canonical storage form of a registration content hash.
+    ///
+    /// `SHA256:AbCd…`, `SHA-256:0xABCD…`, `0xAbCd…`, and surrounding
+    /// whitespace all normalize to `sha256:abcd…`. Explicit algorithms are
+    /// lowercased and preserved; untagged digests gain the default `sha256:`
+    /// prefix when it fits the 128-byte limit, and keep their legacy bare form
+    /// when it does not.
+    fn normalize_content_hash(env: &Env, hash: &String) -> Result<String, Error> {
+        let (algorithm, digest) = Self::normalize_hash_parts(
+            hash,
+            Error::ContentHashTooLong,
+            MAX_CONTENT_HASH_LEN as usize,
+        )?;
+        if digest.len() > MAX_CONTENT_HASH_LEN as usize {
+            return Err(Error::ContentHashTooLong);
         }
 
-        if bytes.is_empty() || bytes.len() > MAX_ATTESTATION_HASH_LEN as usize {
+        let canonical_algorithm: &[u8] = match algorithm.as_deref() {
+            Some(algorithm) if algorithm == b"sha-256" => {
+                DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes()
+            }
+            Some(algorithm) => algorithm,
+            None => DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes(),
+        };
+
+        let tagged_len = canonical_algorithm.len() + 1 + digest.len();
+        if algorithm.is_some() || tagged_len <= MAX_CONTENT_HASH_LEN as usize {
+            let mut out = alloc::vec::Vec::with_capacity(tagged_len);
+            out.extend_from_slice(canonical_algorithm);
+            out.push(b':');
+            out.extend_from_slice(&digest);
+            if out.len() > MAX_CONTENT_HASH_LEN as usize {
+                return Err(Error::ContentHashTooLong);
+            }
+            return Ok(String::from_bytes(env, &out));
+        }
+
+        Ok(String::from_bytes(env, &digest))
+    }
+
+    /// Return the canonical storage form of a verification attestation hash.
+    /// Uses the same spelling rules as [`Self::normalize_content_hash`], with
+    /// the attestation-specific algorithm and digest length limits.
+    fn normalize_attestation_hash(env: &Env, hash: &String) -> Result<String, Error> {
+        // Algorithm, colon, digest, and an optional `0x` prefix.
+        const MAX_INPUT_LEN: usize =
+            MAX_ATTESTATION_HASH_ALGORITHM_LEN as usize + 1 + MAX_ATTESTATION_HASH_LEN as usize + 2;
+        let (algorithm, digest) =
+            Self::normalize_hash_parts(hash, Error::AttestationHashTooLong, MAX_INPUT_LEN)?;
+        if digest.len() > MAX_ATTESTATION_HASH_LEN as usize {
             return Err(Error::AttestationHashTooLong);
         }
-        let mut tagged = alloc::vec::Vec::with_capacity(
-            DEFAULT_ATTESTATION_HASH_ALGORITHM.len() + 1 + bytes.len(),
-        );
-        tagged.extend_from_slice(DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes());
+
+        let canonical_algorithm: &[u8] = match algorithm.as_deref() {
+            Some(algorithm) if algorithm == b"sha-256" => {
+                DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes()
+            }
+            Some(algorithm) => {
+                if algorithm.len() > MAX_ATTESTATION_HASH_ALGORITHM_LEN as usize {
+                    return Err(Error::AttestationHashTooLong);
+                }
+                algorithm
+            }
+            None => DEFAULT_ATTESTATION_HASH_ALGORITHM.as_bytes(),
+        };
+
+        let mut tagged =
+            alloc::vec::Vec::with_capacity(canonical_algorithm.len() + 1 + digest.len());
+        tagged.extend_from_slice(canonical_algorithm);
         tagged.push(b':');
-        tagged.extend_from_slice(&bytes);
+        tagged.extend_from_slice(&digest);
         Ok(String::from_bytes(env, &tagged))
     }
 
@@ -7711,12 +7819,10 @@ impl VaultRegistry {
         if Self::is_reserved_id(&id) {
             return Err(Error::ReservedId);
         }
-        if let Some(ref hash) = content_hash {
-            let hash_len = hash.len();
-            if hash_len == 0 || hash_len > MAX_CONTENT_HASH_LEN {
-                return Err(Error::ContentHashTooLong);
-            }
-        }
+        let content_hash = match content_hash {
+            Some(ref hash) => Some(Self::normalize_content_hash(&env, hash)?),
+            None => None,
+        };
         let key = DataKey::Resource(id.clone());
         if env.storage().persistent().has(&key) {
             return Err(Error::AlreadyRegistered);
