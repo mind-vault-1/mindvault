@@ -410,6 +410,19 @@ export function mockTransferOwnership(resourceId: string, newCreator: string): s
   );
 }
 
+export function mockPrepareOwnershipTransfer(resourceId: string, newCreator: string): string {
+  return JSON.stringify(
+    {
+      resourceId,
+      newCreator,
+      unsignedXdr: `AAAAAgAAAABtb2NrX3RyYW5zZmVyX293bmVyc2hpcF94ZHJf${Buffer.from(resourceId).toString("base64")}`,
+      networkPassphrase: "Test SDF Network ; September 2015",
+    },
+    null,
+    2,
+  );
+}
+
 export function mockAcceptTransfer(resourceId: string): string {
   return JSON.stringify(
     {

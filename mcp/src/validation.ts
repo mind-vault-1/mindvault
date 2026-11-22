@@ -423,6 +423,18 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     start: { kind: "integer", min: 0 },
     limit: { kind: "integer", min: 1, max: REGISTRY_LIST_MAX_LIMIT },
   },
+  mindvault_batch_catalog_lookup: {
+    resourceIds: {
+      kind: "string_array",
+      required: true,
+      minLength: 1,
+      maxLength: BATCH_LOOKUP_MAX_IDS,
+      pattern: /^[A-Za-z0-9._-]+$/,
+      patternHint: "a resource id: letters, digits, dot, dash, or underscore (max 128 chars)",
+    },
+    refetch: { kind: "flag" },
+  },
+  mindvault_preview_metadata_hash: { resourceId: RESOURCE_ID },
   mindvault_registry_count: {
     creator: { kind: "string" },
   },
@@ -494,6 +506,10 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     price: { ...USDC_AMOUNT, required: true },
     confirmMainnet: CONFIRM_MAINNET,
     confirmPaid: CONFIRM_PAID,
+  },
+  mindvault_prepare_ownership_transfer: {
+    resourceId: RESOURCE_ID,
+    newCreator: { ...STELLAR_ADDRESS, required: true },
   },
   mindvault_transfer_ownership: {
     resourceId: RESOURCE_ID,

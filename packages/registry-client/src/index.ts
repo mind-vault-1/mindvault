@@ -100,12 +100,17 @@ export interface RegistryClientOptions {
  * deployed contract. This is the only entry point most callers need.
  */
 export function createRegistryClient(opts: RegistryClientOptions): Client {
-  return new Client({
+  const client = new Client({
     contractId: opts.contractId,
     rpcUrl: opts.rpcUrl,
     networkPassphrase: opts.networkPassphrase ?? Networks.TESTNET,
     publicKey: opts.publicKey,
   });
+  if (typeof (client as unknown as Record<string, unknown>).role_inventory_page !== "function") {
+    (client as unknown as Record<string, unknown>).role_inventory_page = (args: any, methodOptions: any) =>
+      (client as any).txFromJSON(JSON.stringify({ method: "role_inventory_page", ...args }));
+  }
+  return client;
 }
 
 export interface AttestationHashOptions extends RegistryClientOptions {

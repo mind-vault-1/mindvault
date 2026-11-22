@@ -67,6 +67,7 @@ export const Errors = {
   53: { message: "RecoveryAdminNotSet" },
   54: { message: "UnsupportedResourceSchema" },
   55: { message: "RevisionOverflow" },
+  56: { message: "RoleCapacityReached" },
 } as const;
 
 /** A vault-registry error code (the on-chain discriminant). */
@@ -93,7 +94,7 @@ export const ERROR_DESCRIPTIONS = {
   6: "Caller is unauthorized, including a refund recipient mismatch.",
   7: "No pending admin is set, or caller does not match the pending admin.",
   8: "A pending admin nomination is already active.",
-  9: "Nominated new admin is already the current contract admin.",
+  9: "Requested admin address is already an active governance address (current, pending, or recovery admin).",
   10: "Terms hash exceeds `MAX_TERMS_HASH_LEN` (64 bytes).",
   11: "Resource id is empty, exceeds 24 bytes, or contains non-lowercase-alphanumeric characters.",
   12: "Metadata pointer does not start with a supported prefix.",
@@ -140,6 +141,7 @@ export const ERROR_DESCRIPTIONS = {
   53: "`recover_admin` was called but no recovery admin is configured.",
   54: "A resource uses a schema version this deployment cannot safely read or upgrade.",
   55: "A listing revision increment would exceed `u32::MAX`; the mutation is rejected without changing resource state.",
+  56: "A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for that role.",
 } as const;
 
 /**

@@ -84,6 +84,7 @@ export function groupOf(name: string): string {
       "mindvault_set_price",
       "mindvault_set_tags",
       "mindvault_transfer_ownership",
+      "mindvault_prepare_ownership_transfer",
       "mindvault_set_listed",
       "mindvault_accept_transfer",
       "mindvault_cancel_transfer",

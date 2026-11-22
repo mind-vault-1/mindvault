@@ -112,7 +112,8 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   },
   mindvault_registry_lookup: { resourceId: "res-001" },
   mindvault_registry_list: {},
-  mindvault_registry_count: {},
+  mindvault_batch_catalog_lookup: { resourceIds: ["res-001"] },
+  mindvault_preview_metadata_hash: { resourceId: "res-001" },
   mindvault_registry_count: {},
   mindvault_registry_creator_page: {
     creator: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
@@ -128,6 +129,10 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_metrics: {},
   mindvault_update_metadata: { resourceId: "res-001", metadata: "ipfs://Qm123" },
   mindvault_set_price: { resourceId: "res-001", price: "10.00" },
+  mindvault_prepare_ownership_transfer: {
+    resourceId: "res-001",
+    newCreator: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
+  },
   mindvault_transfer_ownership: {
     resourceId: "res-001",
     newCreator: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",

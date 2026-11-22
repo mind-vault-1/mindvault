@@ -1,8 +1,4 @@
-// ─── Partial refund accounting (#990) ───────────────────────────────────────
-
-use crate::test::{register_default, setup_with_settlement};
-use crate::{Error, PaymentState, VaultRegistryClient};
-use soroban_sdk::{testutils::Address as _, Address, Env, String};
+// ─── Partial refund accounting (#990, #1182) ─────────────────────────────────
 
 fn setup_with_payment<'a>() -> (
     Env,
@@ -13,7 +9,7 @@ fn setup_with_payment<'a>() -> (
     String,
     String,
 ) {
-    let (env, creator, admin, settler, client) = setup_with_settlement();
+    let (env, creator, _admin, settler, client) = setup_with_settlement();
     let resource_id = register_default(&env, &creator, &client, "refundres");
     let payment_id = String::from_str(&env, "payment1");
     let payer = Address::generate(&env);
@@ -95,7 +91,7 @@ fn refund_cannot_exceed_remaining_balance() {
         &String::from_str(&env, "reftx1"),
     );
     
-    // Try to refund 5M more (would exceed 10M total)
+    // Try to refund 5M more (would exceed 10M total: 6M + 5M = 11M > 10M)
     let result = client.try_record_creator_refund(
         &creator,
         &String::from_str(&env, "refund2"),
@@ -108,6 +104,179 @@ fn refund_cannot_exceed_remaining_balance() {
     assert_eq!(result, Err(Ok(Error::PaymentAmountMismatch)));
     assert_eq!(client.get_refunded_amount(&payment_id), 6_000_000i128);
     assert_eq!(client.get_remaining_refundable(&payment_id), 4_000_000i128);
+}
+
+#[test]
+fn refund_exact_remaining_boundary_and_exceeding_fails() {
+    let (env, creator, _settler, payer, client, _resource_id, payment_id) =
+        setup_with_payment();
+    
+    // Partial refund of 6M leaving exactly 4M
+    client.record_creator_refund(
+        &creator,
+        &String::from_str(&env, "refund1"),
+        &payment_id,
+        &payer,
+        &6_000_000i128,
+        &String::from_str(&env, "reftx1"),
+    );
+    assert_eq!(client.get_remaining_refundable(&payment_id), 4_000_000i128);
+
+    // Boundary check: 4_000_001 exceeds remaining balance by 1 unit -> must fail
+    let exceed_res = client.try_record_creator_refund(
+        &creator,
+        &String::from_str(&env, "refund_exceed"),
+        &payment_id,
+        &payer,
+        &4_000_001i128,
+        &String::from_str(&env, "reftx_exceed"),
+    );
+    assert_eq!(exceed_res, Err(Ok(Error::PaymentAmountMismatch)));
+    assert_eq!(client.get_remaining_refundable(&payment_id), 4_000_000i128);
+
+    // Exact boundary check: 4_000_000 matches remaining balance exactly -> must succeed
+    let exact_res = client.try_record_creator_refund(
+        &creator,
+        &String::from_str(&env, "refund_exact"),
+        &payment_id,
+        &payer,
+        &4_000_000i128,
+        &String::from_str(&env, "reftx_exact"),
+    );
+    assert_eq!(exact_res, Ok(Ok(())));
+    assert_eq!(client.get_refunded_amount(&payment_id), 10_000_000i128);
+    assert_eq!(client.get_remaining_refundable(&payment_id), 0i128);
+}
+
+#[test]
+fn refund_zero_or_negative_amount_fails() {
+    let (env, creator, _settler, payer, client, _resource_id, payment_id) =
+        setup_with_payment();
+    
+    let zero_res = client.try_record_creator_refund(
+        &creator,
+        &String::from_str(&env, "refzero"),
+        &payment_id,
+        &payer,
+        &0i128,
+        &String::from_str(&env, "reftxzero"),
+    );
+    assert_eq!(zero_res, Err(Ok(Error::InvalidPaymentAmount)));
+
+    let neg_res = client.try_record_creator_refund(
+        &creator,
+        &String::from_str(&env, "refneg"),
+        &payment_id,
+        &payer,
+        &-100i128,
+        &String::from_str(&env, "reftxneg"),
+    );
+    assert_eq!(neg_res, Err(Ok(Error::InvalidPaymentAmount)));
+}
+
+#[test]
+fn unauthorized_caller_cannot_creator_refund() {
+    let (env, _creator, _settler, payer, client, _resource_id, payment_id) =
+        setup_with_payment();
+    let impostor = Address::generate(&env);
+
+    let res = client.try_record_creator_refund(
+        &impostor,
+        &String::from_str(&env, "refunauth"),
+        &payment_id,
+        &payer,
+        &1_000_000i128,
+        &String::from_str(&env, "reftxunauth"),
+    );
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn unauthorized_admin_cannot_admin_refund() {
+    let (env, _creator, _settler, payer, client, _resource_id, payment_id) =
+        setup_with_payment();
+    let fake_admin = Address::generate(&env);
+
+    let res = client.try_record_admin_refund(
+        &fake_admin,
+        &String::from_str(&env, "refunauthadmin"),
+        &payment_id,
+        &payer,
+        &1_000_000i128,
+        &String::from_str(&env, "reftxunauthadmin"),
+    );
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn refund_wrong_recipient_fails() {
+    let (env, creator, _settler, _payer, client, _resource_id, payment_id) =
+        setup_with_payment();
+    let wrong_recipient = Address::generate(&env);
+
+    let res = client.try_record_creator_refund(
+        &creator,
+        &String::from_str(&env, "refwrongrec"),
+        &payment_id,
+        &wrong_recipient,
+        &1_000_000i128,
+        &String::from_str(&env, "reftxwrongrec"),
+    );
+    assert_eq!(res, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn creator_refund_after_deadline_fails() {
+    let (env, creator, _settler, payer, client, _resource_id, payment_id) =
+        setup_with_payment();
+    
+    let deadline = client.get_refund_deadline(&payment_id);
+    env.ledger().set_sequence_number(deadline);
+
+    let res = client.try_record_creator_refund(
+        &creator,
+        &String::from_str(&env, "refexpired"),
+        &payment_id,
+        &payer,
+        &1_000_000i128,
+        &String::from_str(&env, "reftxexpired"),
+    );
+    assert_eq!(res, Err(Ok(Error::InvalidPaymentTransition)));
+}
+
+#[test]
+fn failed_refund_preserves_atomic_state() {
+    let (env, creator, _settler, payer, client, _resource_id, payment_id) =
+        setup_with_payment();
+    
+    // First valid refund of 2M
+    client.record_creator_refund(
+        &creator,
+        &String::from_str(&env, "refok1"),
+        &payment_id,
+        &payer,
+        &2_000_000i128,
+        &String::from_str(&env, "reftxok1"),
+    );
+    assert_eq!(client.get_refunded_amount(&payment_id), 2_000_000i128);
+    assert_eq!(client.get_remaining_refundable(&payment_id), 8_000_000i128);
+
+    // Attempt invalid refund exceeding remaining balance
+    let failed_refund_id = String::from_str(&env, "reffail");
+    let res = client.try_record_creator_refund(
+        &creator,
+        &failed_refund_id,
+        &payment_id,
+        &payer,
+        &9_000_000i128,
+        &String::from_str(&env, "reftxfail"),
+    );
+    assert_eq!(res, Err(Ok(Error::PaymentAmountMismatch)));
+
+    // State is preserved atomically
+    assert_eq!(client.get_refunded_amount(&payment_id), 2_000_000i128);
+    assert_eq!(client.get_remaining_refundable(&payment_id), 8_000_000i128);
+    assert_eq!(client.try_get_refund(&failed_refund_id), Err(Ok(Error::NotFound)));
 }
 
 #[test]
@@ -230,7 +399,7 @@ fn remaining_refundable_never_negative() {
 
 #[test]
 fn refunds_work_independently_across_payments() {
-    let (env, creator, settler, client) = setup_with_settlement();
+    let (env, creator, _admin, settler, client) = setup_with_settlement();
     let resource_id = register_default(&env, &creator, &client, "multiref");
     let payer = Address::generate(&env);
     

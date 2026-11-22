@@ -7,12 +7,7 @@
 //   • Keep changes bounded to the stated behavior and preserve existing client
 //     compatibility where applicable.
 
-fn setup_with_settlement<'a>() -> (Env, Address, Address, Address, VaultRegistryClient<'a>) {
-    let (env, creator, admin, client) = setup_with_admin();
-    let settler = Address::generate(&env);
-    client.add_settler(&settler);
-    (env, creator, admin, settler, client)
-}
+
 
 // ── Simulation succeeds for valid payments ──────────────────────────────────
 

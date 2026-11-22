@@ -43,6 +43,7 @@ import {
   LEASE_BUY_OUTPUT_SCHEMA,
   LEASE_STATUS_OUTPUT_SCHEMA,
   PENDING_TRANSFER_OUTPUT_SCHEMA,
+  PREPARE_OWNERSHIP_TRANSFER_OUTPUT_SCHEMA,
   PREVIEW_OUTPUT_SCHEMA,
   PUBLISH_BUY_OUTPUT_SCHEMA,
   PUBLISH_BATCH_OUTPUT_SCHEMA,
@@ -377,6 +378,11 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "The unique resource identifier from mindvault_browse or mindvault_search. Example: 'cm7x8y9z'",
           examples: ["cm7x8y9z", "res-001", "ckx9j2h3f"],
+        },
+        bypassCache: {
+          type: "boolean",
+          description:
+            "Fetch fresh metadata for this call and report cacheStatus=bypassed without changing shared cache policy.",
         },
       },
       required: ["resourceId"],
@@ -1095,6 +1101,68 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    // Batch lookup over the API catalog (#608). Reads go through the same
+    // snapshot fallback as browse/preview, so one unreachable API degrades to
+    // labelled cached answers instead of failing the whole batch.
+    name: "mindvault_batch_catalog_lookup",
+    description:
+      "Look up several catalog resources in one call. Accepts up to 25 resource ids and returns per-id results — title, price, verification status, type, and access URL — plus a missing list for ids the API does not know. A miss is a result, not an error, so one bad id cannot sink the batch. Serves the last cached snapshot (labelled) when the catalog API is unreachable, unless refetch is true. For on-chain registry data use mindvault_registry_lookup instead; for a single fresh id use mindvault_preview.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceIds: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: 25,
+          description:
+            "1–25 resource ids, from mindvault_browse or mindvault_search. A comma-separated string is also accepted. Duplicates are looked up once each.",
+          examples: [["cm7x8y9z", "res-001"]],
+        },
+        refetch: {
+          type: "boolean",
+          description:
+            "When true, skip the offline cache fallback and fail if the catalog API is unreachable. Default false (serve a labelled cached snapshot when offline).",
+        },
+      },
+      required: ["resourceIds"],
+    },
+    outputSchema: BATCH_CATALOG_LOOKUP_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Batch Catalog Lookup",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    // Metadata digest preview (#604): reads the same on-chain pointer as
+    // check_consistency but reports the digest without requiring the resource
+    // to exist in the API catalog.
+    name: "mindvault_preview_metadata_hash",
+    description:
+      "Preview the content digest anchored in a resource's on-chain metadata pointer without buying the resource. Returns the algorithm and canonical digest when present, or a deterministic reason when the pointer is absent, not digest-anchored (a bare URI/CID), or malformed — so an agent can compare expected hashes before purchasing. Pair with mindvault_check_consistency, which compares the same pointer against the API catalog. Accepts the fixed metadata hash format; see docs/mcp-metadata-hash.md.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description:
+            "The on-chain resource id to read (from mindvault_browse, mindvault_registry_list, or mindvault_publish). Letters, digits, dot, dash, or underscore.",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: METADATA_HASH_PREVIEW_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Preview Metadata Hash",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_tx_status",
     description:
       "Look up the status of a Stellar transaction by hash via Soroban RPC. Returns SUCCESS, FAILED, or NOT_FOUND along with ledger number, close time, application order, and XDR envelopes. Useful for debugging on-chain registration failures.",
@@ -1422,6 +1490,34 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Set Price",
       readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_prepare_ownership_transfer",
+    description:
+      "Build an unsigned ownership transfer transaction for a resource without signing or submitting it on-chain. Returns the unsigned transaction XDR and network passphrase.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description: "The resource ID to transfer ownership of. Example: 'cm7x8y9z'",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+        newCreator: {
+          type: "string",
+          description: "The Stellar public key (G… , 56 chars) of the proposed new resource owner.",
+          examples: ["GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH"],
+        },
+      },
+      required: ["resourceId", "newCreator"],
+    },
+    outputSchema: PREPARE_OWNERSHIP_TRANSFER_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Prepare Ownership Transfer",
+      readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
     },

@@ -1,4 +1,4 @@
-import { BASE_URL, jsonFetch } from "../runtime.js";
+import { BASE_URL, catalogCacheContext, jsonFetch } from "../runtime.js";
 import { createSingleFlight } from "../singleFlight.js";
 import {
   applyCatalogSort,
@@ -56,6 +56,7 @@ async function loadCatalog(url: string, operation: string): Promise<CatalogLoad>
 }
 
 async function loadCatalogUnshared(url: string, operation: string): Promise<CatalogLoad> {
+  const context = catalogCacheContext();
   try {
     const res = await jsonFetch(url);
     if (!res.ok) {
@@ -64,11 +65,11 @@ async function loadCatalogUnshared(url: string, operation: string): Promise<Cata
       );
     }
     const items = Array.isArray(res.data) ? res.data : [];
-    recordCatalogSnapshot(items);
+    recordCatalogSnapshot(items, "catalog", context);
     return { items, notice: cacheStalenessNotice(res.headers), fromCache: false };
   } catch (err) {
     const reason = catalogFallbackFor(err);
-    const snapshot = reason ? getCatalogSnapshot() : null;
+    const snapshot = reason ? getCatalogSnapshot(Date.now(), "catalog", context) : null;
     if (!snapshot || !reason) throw err;
     return {
       items: Array.isArray(snapshot.resources) ? (snapshot.resources as any[]) : [],
@@ -135,6 +136,7 @@ async function previewData(resourceId: string): Promise<{ r: any; label: string 
 }
 
 async function previewDataUnshared(resourceId: string): Promise<{ r: any; label: string | null }> {
+  const context = catalogCacheContext();
   try {
     const res = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
     if (!res.ok)
@@ -144,11 +146,11 @@ async function previewDataUnshared(resourceId: string): Promise<{ r: any; label:
         status: res.status,
         data: res.data,
       });
-    recordPreviewSnapshot(resourceId, res.data);
+    recordPreviewSnapshot(resourceId, res.data, context);
     return { r: res.data, label: null };
   } catch (err) {
     const reason = catalogFallbackFor(err);
-    const snap = reason ? getPreviewSnapshot(resourceId) : null;
+    const snap = reason ? getPreviewSnapshot(resourceId, Date.now(), context) : null;
     if (!snap || !reason) throw err;
     return { r: snap.meta as any, label: catalogCacheLabel(snap.savedAtMs, Date.now(), reason) };
   }

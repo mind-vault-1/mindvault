@@ -245,6 +245,45 @@ export function catalogCacheLabel(
 }
 
 /**
+ * Invalidate cached catalog and preview snapshots (#1186).
+ * If a profile is specified, only entries scoped to that profile are cleared.
+ * If omitted, all cached snapshots are cleared.
+ */
+export function clearCatalogCache(profile?: string): void {
+  if (!profile) {
+    catalog.clear();
+    previews.clear();
+    return;
+  }
+  for (const key of catalog.keys()) {
+    try {
+      const sep = key.startsWith("{") ? key.indexOf("}:") : key.indexOf(":");
+      if (sep !== -1) {
+        const parsed = JSON.parse(key.substring(0, sep + 1));
+        if (parsed && typeof parsed === "object" && parsed.profile === profile) {
+          catalog.delete(key);
+        }
+      }
+    } catch {
+      // ignore malformed keys
+    }
+  }
+  for (const key of previews.keys()) {
+    try {
+      const sep = key.startsWith("{") ? key.indexOf("}:") : key.indexOf(":");
+      if (sep !== -1) {
+        const parsed = JSON.parse(key.substring(0, sep + 1));
+        if (parsed && typeof parsed === "object" && parsed.profile === profile) {
+          previews.delete(key);
+        }
+      }
+    } catch {
+      // ignore malformed keys
+    }
+  }
+}
+
+/**
  * Test-only: clear the in-memory snapshots so the "no cache" path is testable.
  * Also restores the default lifetime, so one test's TTL cannot leak into the
  * next.
