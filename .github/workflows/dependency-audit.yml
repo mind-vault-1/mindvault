@@ -55,5 +55,14 @@ jobs:
             ${{ runner.os }}-cargo-audit-
       - name: Report RustSec advisories
         working-directory: contract
-        run: cargo audit
+        run: |
+          wasm_dependencies=$(cargo tree --locked --color never --target wasm32v1-none --edges normal --prefix none)
+          # The Soroban SDK pins crypto-bigint 0.5 through the native test
+          # host. Remove this exception when the host can use 0.7.6 or newer.
+          if grep -q '^crypto-bigint v' <<< "$wasm_dependencies"; then
+            cargo audit
+          else
+            echo "::warning::RUSTSEC-2026-0387 affects the native Soroban host only. The deployed WASM does not depend on crypto-bigint."
+            cargo audit --ignore RUSTSEC-2026-0387
+          fi
 

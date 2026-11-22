@@ -15,6 +15,7 @@ import {
   mapHttpError,
   mapRegistryError,
   mapTransportError,
+  mappedErrorOf,
   mcpError,
   troubleshootingHint,
   throwHttpError,
@@ -299,6 +300,47 @@ describe("troubleshootingHint", () => {
     );
     expect(hint.status).toBeNull();
     expect(hint.detail).toBe("offline");
+  });
+
+  it("redacts secrets from the structured payload and its nested cause", () => {
+    const secret = "SABCDEFGHIJKLMNOPQRSTUVWXYZ23456789";
+    const mapped = mapTransportError({
+      operation: "Browse failed",
+      source: "api",
+      error: new Error("outer", { cause: new Error(`api_key=${secret}`) }),
+    });
+
+    const hint = troubleshootingHint(mapped);
+
+    expect(hint.summary).toContain("Browse failed");
+    expect(JSON.stringify(hint)).not.toContain(secret);
+    expect(JSON.stringify(hint)).toContain("[REDACTED]");
+  });
+});
+
+describe("mappedErrorOf with wrapped errors (#1193)", () => {
+  const mapped = mapHttpError({
+    operation: "Browse failed",
+    source: "api",
+    status: 429,
+    data: { error: "too many requests" },
+  });
+
+  it("recovers a mapping hidden in a cause chain", () => {
+    const wrapped = new Error("wrapper", {
+      cause: new Error("transport", { cause: mcpError(mapped) }),
+    });
+    expect(mappedErrorOf(wrapped)).toBe(mapped);
+  });
+
+  it("stops on a circular cause chain", () => {
+    const outer = new Error("outer") as Error & { cause?: unknown };
+    outer.cause = outer;
+    expect(mappedErrorOf(outer)).toBeUndefined();
+  });
+
+  it("returns undefined for unmapped errors", () => {
+    expect(mappedErrorOf(new Error("plain"))).toBeUndefined();
   });
 });
 

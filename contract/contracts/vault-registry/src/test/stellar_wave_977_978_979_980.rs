@@ -64,10 +64,10 @@ fn repair_tag_index_reordered_input_converges_to_same_index() {
 fn repair_tag_index_duplicate_input_does_not_inflate_popularity() {
     let (env, creator, _admin, client) = setup_with_admin();
     let a = register_tagged(&env, &creator, &client, "sw977popp", &["pop977"]);
-    let before = client.top_tags();
+    let before = client.top_tags(&20);
 
     client.repair_tag_index(&Vec::from_array(&env, [a.clone(), a.clone()]));
-    let after = client.top_tags();
+    let after = client.top_tags(&20);
 
     assert_eq!(
         before, after,
@@ -80,11 +80,10 @@ fn repair_tag_index_rejects_oversized_input_before_writes() {
     let (env, creator, _admin, client) = setup_with_admin();
     let a = register_tagged(&env, &creator, &client, "sw977biga", &["big977"]);
 
-    let mut ids: std::vec::Vec<String> = std::vec::Vec::new();
+    let mut input = Vec::new(&env);
     for _ in 0..=MAX_TAG_INDEX_REPAIR {
-        ids.push(a.clone());
+        input.push_back(a.clone());
     }
-    let input = Vec::from_array(&env, ids.as_slice());
     let res = client.try_repair_tag_index(&input);
     assert_eq!(
         res,
@@ -105,7 +104,7 @@ fn repair_tag_index_rejects_oversized_input_before_writes() {
 
 #[test]
 fn set_maintenance_status_records_kind_and_reason_code() {
-    let (env, _creator, admin, client) = setup_with_admin();
+    let (_env, _creator, admin, client) = setup_with_admin();
 
     let status = client.maintenance_status();
     assert_eq!(status.kind, MaintenanceKind::None);
@@ -124,7 +123,7 @@ fn set_maintenance_status_records_kind_and_reason_code() {
 
 #[test]
 fn set_maintenance_status_rejects_reason_code_above_max() {
-    let (env, _creator, admin, client) = setup_with_admin();
+    let (_env, _creator, admin, client) = setup_with_admin();
     client.set_maintenance_status(&admin, &MaintenanceKind::Scheduled, &5u32);
 
     let res = client.try_set_maintenance_status(
@@ -149,7 +148,7 @@ fn set_maintenance_status_requires_current_admin() {
 
 #[test]
 fn maintenance_status_readable_while_paused() {
-    let (env, _creator, admin, client) = setup_with_admin();
+    let (_env, _creator, admin, client) = setup_with_admin();
     client.set_maintenance_status(&admin, &MaintenanceKind::Emergency, &2u32);
     client.set_paused(&admin, &true);
 
@@ -260,7 +259,7 @@ fn cancel_admin_nomination_clears_pending_nomination() {
 
 #[test]
 fn cancel_admin_nomination_without_pending_is_stable_error() {
-    let (env, _creator, admin, client) = setup_with_admin();
+    let (_env, _creator, admin, client) = setup_with_admin();
     let res = client.try_cancel_admin_nomination(&admin);
     assert_eq!(
         res,

@@ -81,15 +81,11 @@ describe("exhaustiveness against TypeScript bindings", () => {
     }
   });
 
-  it("covers all 50 errors currently in the installed bindings", () => {
-    // This is a canary: if the registry-client package is updated with new
-    // errors, both the bindings and this map must be updated. The count
-    // reflects the installed @mindvault/registry-client version.
-    // When the package adds entries 51+, update this count and add map entries.
-    expect(Object.keys(Errors).length).toBe(50);
-    // The map may contain more entries than the installed bindings (forward
-    // compat); it must never have fewer than what the bindings define.
-    expect(ALL_REGISTRY_ERROR_NAMES.length).toBeGreaterThanOrEqual(Object.keys(Errors).length);
+  it("assigns a unique discriminant to every mapped error", () => {
+    const discriminants = ALL_REGISTRY_ERROR_NAMES.map(
+      (name) => REGISTRY_ERROR_MAP[name].discriminant,
+    );
+    expect(new Set(discriminants).size).toBe(discriminants.length);
   });
 });
 

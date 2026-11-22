@@ -48,6 +48,13 @@ sha256-9F86D081…  →  sha256:9f86d081…
 canonicalizes both sides before comparing, so a case or prefix difference is
 never reported as a mismatch.
 
+The vault-registry contract applies the same canonical `algorithm:digest` form
+when it stores a registration `content_hash` or a verification attestation
+hash, so `SHA256:AB…`, `SHA-256:0xAB…`, `0xAB…`, and a trimmed bare digest do
+not become distinct on-chain anchors. MCP's parser stays stricter about which
+algorithms and hex digests it accepts; the contract additionally preserves
+bounded custom attestation algorithms after lowercasing them.
+
 ### What is rejected
 
 | Input                                   | Reason (`code`)                                              |
