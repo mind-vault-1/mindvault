@@ -43,6 +43,7 @@ import {
   LEASE_BUY_OUTPUT_SCHEMA,
   LEASE_STATUS_OUTPUT_SCHEMA,
   PENDING_TRANSFER_OUTPUT_SCHEMA,
+  PREPARE_OWNERSHIP_TRANSFER_OUTPUT_SCHEMA,
   PREVIEW_OUTPUT_SCHEMA,
   PUBLISH_BUY_OUTPUT_SCHEMA,
   PUBLISH_BATCH_OUTPUT_SCHEMA,
@@ -51,6 +52,7 @@ import {
   PROFILE_EXPORT_OUTPUT_SCHEMA,
   PROFILE_IMPORT_OUTPUT_SCHEMA,
   PURCHASE_HISTORY_OUTPUT_SCHEMA,
+  RECEIPT_VERIFICATION_OUTPUT_SCHEMA,
   BUY_OUTPUT_SCHEMA,
   RECOVER_CACHE_OUTPUT_SCHEMA,
   REGISTER_ONCHAIN_OUTPUT_SCHEMA,
@@ -63,6 +65,9 @@ import {
   REGISTRY_LOOKUP_OUTPUT_SCHEMA,
   RESOURCE_SUBSCRIPTION_OUTPUT_SCHEMA,
   RPC_HEALTH_OUTPUT_SCHEMA,
+  STATE_DIAGNOSTICS_OUTPUT_SCHEMA,
+  CACHE_CHAIN_DIFF_OUTPUT_SCHEMA,
+  UPSTREAM_HEALTH_OUTPUT_SCHEMA,
   SERVER_ENDPOINTS_OUTPUT_SCHEMA,
   TX_STATUS_OUTPUT_SCHEMA,
   USE_PROFILE_OUTPUT_SCHEMA,
@@ -70,7 +75,6 @@ import {
   WALLET_BALANCES_OUTPUT_SCHEMA,
   WALLET_INFO_OUTPUT_SCHEMA,
   WALLET_SETUP_OUTPUT_SCHEMA,
-  WALLET_ALLOWANCE_OUTPUT_SCHEMA,
 } from "./outputSchemas.js";
 import {
   RECEIPT_EXPORT_MAX_LIMIT,
@@ -294,7 +298,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_import_profiles",
     description:
-      "Import a versioned, non-secret profile setup payload. It merges profile names and preferences without overwriting wallet credentials or publisher API keys.",
+      "Import a versioned, non-secret profile setup payload. It merges profile names and preferences without overwriting wallet credentials or publisher API keys. Network bindings are validated before merging: an unknown network, or one that would rebind a profile whose wallet is already bound to the other network, rejects the whole payload with a per-profile list and merges nothing.",
     inputSchema: {
       type: "object",
       properties: { data: { type: "string", description: "JSON profile-export payload." } },
@@ -377,6 +381,11 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "The unique resource identifier from mindvault_browse or mindvault_search. Example: 'cm7x8y9z'",
           examples: ["cm7x8y9z", "res-001", "ckx9j2h3f"],
+        },
+        bypassCache: {
+          type: "boolean",
+          description:
+            "Fetch fresh metadata for this call and report cacheStatus=bypassed without changing shared cache policy.",
         },
       },
       required: ["resourceId"],
@@ -710,6 +719,47 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_verify_receipt",
+    description:
+      "Verify a payment receipt and return a machine-readable typed validation result for amount, currency, transaction hash, network, and resource identity. Reports valid, invalid, or indeterminate outcomes, handling partial and malformed receipts deterministically without network calls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        receipt: {
+          type: "object",
+          description:
+            "Payment receipt object to verify (expected fields: amount, currency, txHash, network, resourceId).",
+        },
+        expected: {
+          type: "object",
+          description:
+            "Optional expected field values to match against (amount, currency, txHash, network, resourceId).",
+          properties: {
+            amount: { type: "string", description: "Expected positive decimal USDC amount." },
+            currency: { type: "string", description: "Expected currency code (e.g. USDC)." },
+            txHash: {
+              type: "string",
+              description: "Expected 64-character hexadecimal transaction hash.",
+            },
+            network: {
+              type: "string",
+              description: "Expected network identifier (e.g. stellar:testnet or stellar:pubnet).",
+            },
+            resourceId: { type: "string", description: "Expected resource identifier." },
+          },
+        },
+      },
+      required: ["receipt"],
+    },
+    outputSchema: RECEIPT_VERIFICATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Verify Payment Receipt",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_register_onchain",
     description:
       "Register an already-published, verified resource on the vault registry contract. Use this to retry on-chain registration after mindvault_publish reports the on-chain step failed. Prepares the unsigned transaction, signs it with the agent wallet (which must be the resource creator), submits it, and returns the registry status and on-chain tx hash.",
@@ -721,11 +771,6 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "The resource ID to register on-chain (from mindvault_publish output). Must be verified and not already registered. Example: 'cm7x8y9z'",
           examples: ["cm7x8y9z", "res-001", "ckx9j2h3f"],
-        },
-        bypassCache: {
-          type: "boolean",
-          description:
-            "Fetch fresh metadata for this call and report cacheStatus=bypassed without changing shared cache policy.",
         },
         confirmMainnet: {
           type: "boolean",
@@ -760,7 +805,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_registry_info",
     description:
-      "Return the on-chain vault-registry contract ID, network passphrase, RPC URL, and the resource fields available for direct Soroban queries. Use this to verify ownership, price, and listing state directly from Stellar without trusting the MindVault API.",
+      "Return the on-chain vault-registry contract ID, network passphrase, RPC URL, resource fields, and schema version negotiation status. The schemaVersion field reports which resource schema versions this client supports, the current version it targets, and the version detected on the deployed contract (or null when the contract is unreachable). Use this to verify ownership, price, and listing state directly from Stellar, and to check schema compatibility before calling mutation tools.",
     inputSchema: { type: "object", properties: {}, required: [] },
     outputSchema: REGISTRY_INFO_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
@@ -883,6 +928,39 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: METADATA_DIFF_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Metadata Diff",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_cache_chain_diff",
+    description:
+      "Compare the catalog records held in the offline catalog cache (what browse, search and preview would serve when the API is unreachable) with the on-chain vault-registry. Per resource it reports in_sync, drift, missing_onchain, missing_in_cache, not_found or lookup_failed, and for each drifted resource a field-level diff of price, metadata pointer, listing status, creator and tags. Only snapshots for the active profile, network, contract and API origin are used. Needs no API access; makes one read-only RPC call per resource, at most 50. Returns an overall verdict (in_sync, drift, incomplete, no_cache) and next steps. Read-only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceIds: {
+          type: "array",
+          items: { type: "string", pattern: "^[A-Za-z0-9._-]+$", maxLength: 128 },
+          minItems: 1,
+          maxItems: 50,
+          description:
+            "Compare exactly these resource ids, cached or not. Omit to compare cached resources in id order.",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 50,
+          description:
+            "How many cached resources to compare when resourceIds is omitted (default 20).",
+        },
+      },
+      required: [],
+    },
+    outputSchema: CACHE_CHAIN_DIFF_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Cache vs Chain Diff",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -1095,6 +1173,68 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    // Batch lookup over the API catalog (#608). Reads go through the same
+    // snapshot fallback as browse/preview, so one unreachable API degrades to
+    // labelled cached answers instead of failing the whole batch.
+    name: "mindvault_batch_catalog_lookup",
+    description:
+      "Look up several catalog resources in one call. Accepts up to 25 resource ids and returns per-id results — title, price, verification status, type, and access URL — plus a missing list for ids the API does not know. A miss is a result, not an error, so one bad id cannot sink the batch. Serves the last cached snapshot (labelled) when the catalog API is unreachable, unless refetch is true. For on-chain registry data use mindvault_registry_lookup instead; for a single fresh id use mindvault_preview.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceIds: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: 25,
+          description:
+            "1–25 resource ids, from mindvault_browse or mindvault_search. A comma-separated string is also accepted. Duplicates are looked up once each.",
+          examples: [["cm7x8y9z", "res-001"]],
+        },
+        refetch: {
+          type: "boolean",
+          description:
+            "When true, skip the offline cache fallback and fail if the catalog API is unreachable. Default false (serve a labelled cached snapshot when offline).",
+        },
+      },
+      required: ["resourceIds"],
+    },
+    outputSchema: BATCH_CATALOG_LOOKUP_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Batch Catalog Lookup",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    // Metadata digest preview (#604): reads the same on-chain pointer as
+    // check_consistency but reports the digest without requiring the resource
+    // to exist in the API catalog.
+    name: "mindvault_preview_metadata_hash",
+    description:
+      "Preview the content digest anchored in a resource's on-chain metadata pointer without buying the resource. Returns the algorithm and canonical digest when present, or a deterministic reason when the pointer is absent, not digest-anchored (a bare URI/CID), or malformed — so an agent can compare expected hashes before purchasing. Pair with mindvault_check_consistency, which compares the same pointer against the API catalog. Accepts the fixed metadata hash format; see docs/mcp-metadata-hash.md.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description:
+            "The on-chain resource id to read (from mindvault_browse, mindvault_registry_list, or mindvault_publish). Letters, digits, dot, dash, or underscore.",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: METADATA_HASH_PREVIEW_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Preview Metadata Hash",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_tx_status",
     description:
       "Look up the status of a Stellar transaction by hash via Soroban RPC. Returns SUCCESS, FAILED, or NOT_FOUND along with ledger number, close time, application order, and XDR envelopes. Useful for debugging on-chain registration failures.",
@@ -1245,7 +1385,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_restore_state",
     description:
-      "Restore ~/.mindvault/state.json from an encrypted backup produced by mindvault_backup_state. Validates integrity (wrong passphrase or tampered data fails before any write). Replaces in-memory profiles and re-persists to disk (mode 0600). Existing reset behavior is unchanged.",
+      "Restore ~/.mindvault/state.json from an encrypted backup produced by mindvault_backup_state. Validates integrity (wrong passphrase or tampered data fails before any write), then validates every network identity before anything is merged: each profile's network must be testnet or mainnet and match this server's network, and each wallet's secret key must derive its stored public key. Failures list every offending field (never key material) and leave state unchanged. Replaces in-memory profiles and re-persists to disk (mode 0600). Existing reset behavior is unchanged.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1422,6 +1562,34 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     annotations: {
       title: "Set Price",
       readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_prepare_ownership_transfer",
+    description:
+      "Build an unsigned ownership transfer transaction for a resource without signing or submitting it on-chain. Returns the unsigned transaction XDR and network passphrase.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description: "The resource ID to transfer ownership of. Example: 'cm7x8y9z'",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+        newCreator: {
+          type: "string",
+          description: "The Stellar public key (G… , 56 chars) of the proposed new resource owner.",
+          examples: ["GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH"],
+        },
+      },
+      required: ["resourceId", "newCreator"],
+    },
+    outputSchema: PREPARE_OWNERSHIP_TRANSFER_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Prepare Ownership Transfer",
+      readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
     },
@@ -1666,6 +1834,19 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_state_diagnostics",
+    description:
+      "Report what happened when the local state file (~/.mindvault/state.json) was loaded at startup, and how to recover. When the file was unreadable, not valid JSON, or held no valid profile, it is moved aside to state.json.corrupt-<ms> (never deleted) and the server starts with empty state; this tool returns the reason, the position of a JSON syntax error, where the original was preserved, the encrypted backups and earlier quarantined copies available, and ordered recovery steps. If the file could not be moved aside, writesBlocked is true and the server refuses to save so the damaged file is not overwritten. Read-only; never returns file contents.",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    outputSchema: STATE_DIAGNOSTICS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "State File Diagnostics",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_check_state_permissions",
     description:
       "Verify the state file (~/.mindvault/state.json) has safe permissions (mode 0600). Warns when the file is world-readable or group-readable, which would expose wallet secret keys and API keys to other system users. Safe by default; run after any manual file operations or environment migration.",
@@ -1727,6 +1908,37 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: RPC_HEALTH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "RPC Health",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_upstream_health",
+    description:
+      "Operator health probe for every configured upstream: the MindVault API, Horizon, Soroban RPC and the sponsored account service. Each is probed once, with no retries, and all in parallel. For each upstream it reports status (ok, degraded, down, not_configured, skipped), HTTP status, latency in milliseconds, the network passphrase that Horizon and Soroban RPC report and whether it matches the configured network, and a suggested action. The overall verdict is healthy, degraded or unhealthy; unhealthy means the API, Horizon or Soroban RPC is unreachable or not configured. URLs are shown without credentials or query strings. Never signs, pays or creates accounts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        upstreams: {
+          type: "array",
+          items: { type: "string", enum: ["api", "horizon", "soroban_rpc", "sponsored_account"] },
+          minItems: 1,
+          maxItems: 4,
+          description: "Probe only these upstreams. Omit to probe all of them.",
+        },
+        timeoutMs: {
+          type: "integer",
+          minimum: 100,
+          maximum: 30000,
+          description: "Per-upstream timeout in milliseconds (default 5000).",
+        },
+      },
+      required: [],
+    },
+    outputSchema: UPSTREAM_HEALTH_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Upstream Health Probe",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -1909,15 +2121,21 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     // defined here, so the generated tool reference never listed it (#596).
     name: "mindvault_publish_status",
     description:
-      "Poll a published resource's verification and on-chain sync status. Returns verificationStatus (pending, verified, rejected, skipped), listed, onchainStatus, onchainTxHash, and optional verification details. Pass wait: true to poll until verification settles or timeoutMs elapses. Deterministic errors for missing resourceId and 404s.",
+      "Poll a published resource's verification and on-chain sync status. Returns verificationStatus (pending, verified, rejected, skipped), listed, onchainStatus, onchainTxHash, and optional verification details, plus the publish's operationId. Pass resourceId, or the operationId from mindvault_publish to resume polling after a reconnect or restart. Pass wait: true to poll until verification settles or timeoutMs elapses. Deterministic errors for a missing or unknown id and 404s.",
     inputSchema: {
       type: "object",
       properties: {
         resourceId: {
           type: "string",
           description:
-            "The resource ID from mindvault_publish (or browse/search). Example: 'cm7x8y9z'",
+            "The resource ID from mindvault_publish (or browse/search). Required unless operationId is given. Example: 'cm7x8y9z'",
           examples: ["cm7x8y9z", "res-001", "swcn98besxpp6t1u8e77fqz3"],
+        },
+        operationId: {
+          type: "string",
+          description:
+            "The operationId returned by mindvault_publish or a previous mindvault_publish_status call. Resolves to the same resource on the network and API it was issued for; refused on any other. Does not expire. Use instead of resourceId to resume polling.",
+          examples: ["pubop1.Y203eDh5OXo.b31b1f387d53f169"],
         },
         wait: {
           type: "boolean",
@@ -1937,7 +2155,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           examples: [1000, 2000, 5000],
         },
       },
-      required: ["resourceId"],
+      required: [],
     },
     outputSchema: PUBLISH_STATUS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {

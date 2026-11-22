@@ -133,6 +133,72 @@ describe("redaction utility", () => {
       const result = safeErrorMessage({ secret: "test123" });
       expect(result).toContain("[REDACTED]");
     });
+
+    it("redacts secrets carried by a nested error cause", () => {
+      const secret = "SABCDEFGHIJKLMNOPQRSTUVWXYZ23456789";
+      const cause = new Error(`connect with api_key=${secret}`);
+      const error = new Error("request failed", { cause });
+
+      const result = safeErrorMessage(error);
+
+      expect(result).toContain("request failed");
+      expect(result).toContain("[REDACTED]");
+      expect(result).not.toContain(secret);
+    });
+
+    it("follows a multi-level cause chain deterministically", () => {
+      const secret = "sk_live_1234567890abcdef";
+      const error = new Error("outer", {
+        cause: new Error("middle", { cause: new Error(`token=${secret}`) }),
+      });
+
+      const first = safeErrorMessage(error);
+      const second = safeErrorMessage(error);
+
+      expect(first).toBe(second);
+      expect(first).toContain("outer");
+      expect(first).toContain("middle");
+      expect(first).toContain("[REDACTED]");
+      expect(first).not.toContain(secret);
+    });
+
+    it("bounds traversal and stops on a circular cause chain", () => {
+      const outer = new Error("outer") as Error & { cause?: unknown };
+      const inner = new Error("inner with sk_live_1234567890abcdef") as Error & {
+        cause?: unknown;
+      };
+      outer.cause = inner;
+      inner.cause = outer;
+
+      const result = safeErrorMessage(outer);
+      const deep = new Error("level 0");
+      let link: Error & { cause?: unknown } = deep;
+      for (let i = 1; i <= 8; i += 1) {
+        const next = new Error(`level ${i} sk_live_1234567890abcdef`) as Error & {
+          cause?: unknown;
+        };
+        link.cause = next;
+        link = next;
+      }
+
+      expect(result).toContain("[REDACTED: circular error cause]");
+      expect(result).not.toContain("sk_live_1234567890abcdef");
+      expect(safeErrorMessage(deep)).toContain("[REDACTED: error cause chain truncated]");
+      expect(safeErrorMessage(deep)).not.toContain("sk_live_1234567890abcdef");
+    });
+
+    it("redacts secrets in non-Error objects with a cause chain", () => {
+      const error = {
+        message: "plain object failed",
+        cause: { detail: "x-api-key: sk_test_1234567890abcdef" },
+      };
+
+      const result = safeErrorMessage(error);
+
+      expect(result).toContain("plain object failed");
+      expect(result).toContain("[REDACTED]");
+      expect(result).not.toContain("sk_test_1234567890abcdef");
+    });
   });
 
   describe("safeLog", () => {

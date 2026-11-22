@@ -315,6 +315,17 @@ the message passes through `safeErrorMessage` so no wallet secret or API key can
 appear in it. Mapped errors add `structuredContent.troubleshooting`; unmapped
 errors retain the existing text-only envelope.
 
+`safeErrorMessage` in [`mcp/src/redaction.ts`](../mcp/src/redaction.ts) follows up
+to four nested `cause` links, redacting each link on its own and stopping at a
+fixed marker for circular or over-long chains. Fetch and RPC failures often put
+the useful detail — and the credential that produced it — in a cause rather than
+the outer message, so quoting only the outer error left that secret reachable.
+The structured hint is redacted at construction in
+[`mcp/src/errorMapping.ts`](../mcp/src/errorMapping.ts), and `mappedErrorOf`
+recovers a mapping wrapped in a cause chain so its classification is not lost.
+The visible text format stays the same for single-link errors, so clients that
+match on the operation label keep working.
+
 ## Coverage
 
 - [`mcp/src/errorMapping.test.ts`](../mcp/src/errorMapping.test.ts) — the pure mapper

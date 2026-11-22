@@ -1,4 +1,4 @@
-.PHONY: setup setup-usdc dev dev-server dev-web test install migrate wallets seed validate
+.PHONY: setup setup-usdc dev dev-server dev-web test install migrate wallets seed validate bindings
 
 # MindVault local development entrypoints.
 # Prerequisites: Node.js 20+, pnpm, and a configured server/.env (see server/.env.example).
@@ -61,10 +61,17 @@ validate:
 	pnpm run lint
 	@echo "==> Checking doc links..."
 	pnpm run docs:links
-	@echo "==> Checking contributor docs..."
-	pnpm run docs:contributing
+	@echo "==> Checking generated MCP tool docs..."
+	pnpm --filter @mindvault/mcp check-tool-docs
 	@echo ""
 	@echo "All checks passed."
+
+# Regenerate TypeScript bindings from the deployed testnet contract.
+# To generate from a local WASM instead (after `make contract-build`):
+#   CONTRACT_WASM=contract/target/wasm32v1-none/release/vault_registry.wasm make bindings
+# See docs/regenerating-bindings.md for the full review process.
+bindings:
+	pnpm contract:bindings
 
 # Populate the catalog with sample resources for local development.
 # Safe to re-run. Pass ONCHAIN=1 to also register on Stellar testnet.

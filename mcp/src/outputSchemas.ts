@@ -492,6 +492,7 @@ export const PUBLISH_STATUS_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
     resourceId: { type: "string" },
+    operationId: { type: ["string", "null"] },
     title: { type: ["string", "null"] },
     verificationStatus: { type: "string" },
     listed: { type: ["boolean", "null"] },
@@ -508,6 +509,7 @@ export const PUBLISH_STATUS_OUTPUT_SCHEMA = {
   },
   required: [
     "resourceId",
+    "operationId",
     "title",
     "verificationStatus",
     "listed",
@@ -661,6 +663,19 @@ export const REGISTRY_INFO_OUTPUT_SCHEMA = {
     x402Network: { type: "string" },
     resourceFields: { type: "array", items: { type: "string" } },
     mainnetDiagnostics: { type: "string" },
+    schemaVersion: {
+      type: "object",
+      properties: {
+        detected: { type: ["number", "null"] },
+        supported: { type: "array", items: { type: "number" } },
+        current: { type: "number" },
+        status: {
+          type: "string",
+          enum: ["supported", "unsupported", "error", "unchecked"],
+        },
+      },
+      required: ["detected", "supported", "current", "status"],
+    },
   },
   required: [
     "contractId",
@@ -670,6 +685,7 @@ export const REGISTRY_INFO_OUTPUT_SCHEMA = {
     "x402Network",
     "resourceFields",
     "mainnetDiagnostics",
+    "schemaVersion",
   ],
 } as const;
 
@@ -938,6 +954,18 @@ export const TEXT_ONLY_TOOLS = [
   "mindvault_resource_change_log",
 ] as const;
 
+/** Output schema for mindvault_prepare_ownership_transfer (#1187). */
+export const PREPARE_OWNERSHIP_TRANSFER_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    resourceId: { type: "string" },
+    newCreator: { type: "string" },
+    unsignedXdr: { type: "string" },
+    networkPassphrase: { type: "string" },
+  },
+  required: ["resourceId", "newCreator", "unsignedXdr", "networkPassphrase"],
+} as const;
+
 /** Output schema for mindvault_pending_transfer. */
 export const PENDING_TRANSFER_OUTPUT_SCHEMA = {
   type: "object",
@@ -950,29 +978,71 @@ export const PENDING_TRANSFER_OUTPUT_SCHEMA = {
   required: ["resourceId", "found", "message"],
 } as const;
 
-/** Output schema for mindvault_batch_catalog_lookup. */
+/**
+ * One entry of a batch catalog lookup result (#608).
+ *
+ * `found` is false with `null` metadata for a resource the API does not know —
+ * a miss is a result, not a failure, so one bad id cannot sink a batch.
+ */
+const BATCH_CATALOG_ITEM_SCHEMA = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    found: { type: "boolean" },
+    title: { type: ["string", "null"] },
+    price: { type: ["string", "number", "null"] },
+    verificationStatus: { type: ["string", "null"] },
+    resourceType: { type: ["string", "null"] },
+    accessUrl: { type: ["string", "null"] },
+  },
+  required: ["id", "found", "title", "price", "verificationStatus", "resourceType", "accessUrl"],
+} as const;
+
 export const BATCH_CATALOG_LOOKUP_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
+    items: { type: "array", items: BATCH_CATALOG_ITEM_SCHEMA },
     requested: { type: "integer" },
-    found: { type: "integer" },
-    missing: { type: "integer" },
-    items: { type: "array" },
-    message: { type: "string" },
+    foundCount: { type: "integer" },
+    missing: { type: "array", items: { type: "string" } },
+    notice: { type: ["string", "null"] },
+    truncated: { type: "boolean" },
   },
-  required: ["requested", "found", "missing", "items"],
+  required: ["items", "requested", "foundCount", "missing", "notice", "truncated"],
 } as const;
 
-/** Output schema for mindvault_preview_metadata_hash. */
+/**
+ * Structured result for the metadata-hash preview tool (#604).
+ *
+ * `pointer` reports where the metadata pointer was read from, and `report`
+ * mirrors `MetadataHashReport` (see metadataHash.ts): the canonical digest
+ * when the pointer anchors one, or a deterministic reason when it does not.
+ */
 export const METADATA_HASH_PREVIEW_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
     resourceId: { type: "string" },
-    pointer: { type: ["string", "null"] },
-    report: { type: "object" },
-    message: { type: "string" },
+    pointer: {
+      type: "object",
+      properties: {
+        source: { type: ["string", "null"] },
+        present: { type: "boolean" },
+      },
+      required: ["source", "present"],
+    },
+    report: {
+      type: "object",
+      properties: {
+        present: { type: "boolean" },
+        valid: { type: "boolean" },
+        canonical: { type: ["string", "null"] },
+        algorithm: { type: ["string", "null"] },
+        reason: { type: ["string", "null"] },
+      },
+      required: ["present", "valid", "canonical", "algorithm", "reason"],
+    },
   },
-  required: ["resourceId"],
+  required: ["resourceId", "pointer", "report"],
 } as const;
 
 /** Output schema for mindvault_publish_template. */
@@ -1061,6 +1131,193 @@ export const RPC_HEALTH_OUTPUT_SCHEMA = {
     summary: { type: "string" },
   },
   required: ["profile", "horizonUrl", "sorobanRpcUrl", "allOk", "endpoints", "summary"],
+} as const;
+
+/** mindvault_state_diagnostics (#1207). Mirrors StateLoadDiagnostics in stateRecovery.ts. */
+export const STATE_DIAGNOSTICS_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    status: { type: "string", enum: ["ok", "missing", "recovered", "unrecovered"] },
+    stateFile: { type: "string" },
+    reason: { type: ["string", "null"], enum: ["unreadable", "invalid_json", "no_profiles", null] },
+    detail: { type: ["string", "null"] },
+    position: {
+      anyOf: [
+        {
+          type: "object",
+          properties: { line: { type: "integer" }, column: { type: "integer" } },
+          required: ["line", "column"],
+        },
+        { type: "null" },
+      ],
+    },
+    quarantinePath: { type: ["string", "null"] },
+    writesBlocked: { type: "boolean" },
+    detectedAt: { type: ["string", "null"] },
+    backups: { type: "array", items: { type: "string" } },
+    quarantinedFiles: { type: "array", items: { type: "string" } },
+    nextSteps: { type: "array", items: { type: "string" } },
+  },
+  required: [
+    "status",
+    "stateFile",
+    "reason",
+    "detail",
+    "position",
+    "quarantinePath",
+    "writesBlocked",
+    "detectedAt",
+    "backups",
+    "quarantinedFiles",
+    "nextSteps",
+  ],
+} as const;
+
+/** mindvault_cache_chain_diff (#1203). Mirrors CacheChainDiffReport in cacheChainDiff.ts. */
+const CACHE_DIFF_RESOURCE_STATUSES = [
+  "in_sync",
+  "drift",
+  "missing_onchain",
+  "missing_in_cache",
+  "not_found",
+  "lookup_failed",
+] as const;
+
+export const CACHE_CHAIN_DIFF_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    context: {
+      type: "object",
+      properties: {
+        profile: { type: "string" },
+        network: { type: "string" },
+        contractId: { type: "string" },
+        apiOrigin: { type: "string" },
+        rpcUrl: { type: "string" },
+      },
+      required: ["profile", "network", "contractId", "apiOrigin", "rpcUrl"],
+    },
+    cache: {
+      type: "object",
+      properties: {
+        snapshotCount: { type: "integer" },
+        cachedResourceCount: { type: "integer" },
+        oldestSnapshotAt: { type: ["string", "null"] },
+        newestSnapshotAt: { type: ["string", "null"] },
+      },
+      required: ["snapshotCount", "cachedResourceCount", "oldestSnapshotAt", "newestSnapshotAt"],
+    },
+    requested: { anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }] },
+    compared: { type: "integer" },
+    truncated: { type: "boolean" },
+    counts: {
+      type: "object",
+      properties: Object.fromEntries(
+        CACHE_DIFF_RESOURCE_STATUSES.map((s) => [s, { type: "integer" }]),
+      ),
+      required: [...CACHE_DIFF_RESOURCE_STATUSES],
+    },
+    verdict: { type: "string", enum: ["in_sync", "drift", "incomplete", "no_cache"] },
+    results: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          resourceId: { type: "string" },
+          status: { type: "string", enum: [...CACHE_DIFF_RESOURCE_STATUSES] },
+          cachedAt: { type: ["string", "null"] },
+          fields: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                field: { type: "string", enum: ["price", "metadata", "listed", "creator", "tags"] },
+                status: {
+                  type: "string",
+                  enum: ["match", "mismatch", "missing_cache", "missing_onchain"],
+                },
+                cached: {},
+                onchain: {},
+              },
+              required: ["field", "status", "cached", "onchain"],
+            },
+          },
+          error: { type: ["string", "null"] },
+        },
+        required: ["resourceId", "status", "cachedAt", "fields", "error"],
+      },
+    },
+    nextSteps: { type: "array", items: { type: "string" } },
+  },
+  required: [
+    "context",
+    "cache",
+    "requested",
+    "compared",
+    "truncated",
+    "counts",
+    "verdict",
+    "results",
+    "nextSteps",
+  ],
+} as const;
+
+/** mindvault_upstream_health (#1205). Mirrors UpstreamProbeReport in upstreamProbe.ts. */
+const UPSTREAM_STATUSES = ["ok", "degraded", "down", "not_configured", "skipped"] as const;
+
+export const UPSTREAM_HEALTH_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    profile: { type: "string" },
+    expectedNetworkPassphrase: { type: "string" },
+    timeoutMs: { type: "integer" },
+    verdict: { type: "string", enum: ["healthy", "degraded", "unhealthy"] },
+    counts: {
+      type: "object",
+      properties: Object.fromEntries(UPSTREAM_STATUSES.map((s) => [s, { type: "integer" }])),
+      required: [...UPSTREAM_STATUSES],
+    },
+    upstreams: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string", enum: ["api", "horizon", "soroban_rpc", "sponsored_account"] },
+          name: { type: "string" },
+          url: { type: ["string", "null"] },
+          status: { type: "string", enum: [...UPSTREAM_STATUSES] },
+          httpStatus: { type: ["integer", "null"] },
+          latencyMs: { type: ["integer", "null"] },
+          networkPassphrase: { type: ["string", "null"] },
+          networkMatch: { type: ["boolean", "null"] },
+          error: { type: ["string", "null"] },
+          action: { type: ["string", "null"] },
+        },
+        required: [
+          "id",
+          "name",
+          "url",
+          "status",
+          "httpStatus",
+          "latencyMs",
+          "networkPassphrase",
+          "networkMatch",
+          "error",
+          "action",
+        ],
+      },
+    },
+    summary: { type: "string" },
+  },
+  required: [
+    "profile",
+    "expectedNetworkPassphrase",
+    "timeoutMs",
+    "verdict",
+    "counts",
+    "upstreams",
+    "summary",
+  ],
 } as const;
 
 export const METADATA_DIFF_OUTPUT_SCHEMA = {
@@ -1153,4 +1410,87 @@ export const REGISTRY_ERROR_EXPLANATION_OUTPUT_SCHEMA = {
     },
   },
   required: ["code", "name", "known", "description", "category", "retry", "nextSteps"],
+} as const;
+
+const RECEIPT_FIELD_VERIFICATION_SCHEMA = {
+  type: "object",
+  properties: {
+    field: {
+      type: "string",
+      enum: ["amount", "currency", "txHash", "network", "resourceId"],
+    },
+    outcome: { type: "string", enum: ["valid", "invalid", "indeterminate"] },
+    value: { type: ["string", "null"] },
+    expected: { type: ["string", "null"] },
+    code: {
+      type: "string",
+      enum: [
+        "ok",
+        "missing",
+        "malformed",
+        "malformed_receipt",
+        "non_positive",
+        "unsupported_currency",
+        "unknown_network",
+        "mismatch",
+      ],
+    },
+    message: { type: "string" },
+  },
+  required: ["field", "outcome", "value", "expected", "code", "message"],
+} as const;
+
+/**
+ * Output schema for `mindvault_verify_receipt`.
+ *
+ * Returns a typed, machine-readable verification result for receipt amount,
+ * currency, transaction hash, network, and resource identity.
+ */
+export const RECEIPT_VERIFICATION_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    schema: { type: "string", const: "mindvault.receipt-verification/v1" },
+    outcome: { type: "string", enum: ["valid", "invalid", "indeterminate"] },
+    valid: { type: "boolean" },
+    fields: {
+      type: "object",
+      properties: {
+        amount: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+        currency: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+        txHash: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+        network: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+        resourceId: RECEIPT_FIELD_VERIFICATION_SCHEMA,
+      },
+      required: ["amount", "currency", "txHash", "network", "resourceId"],
+    },
+    issues: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          field: {
+            type: "string",
+            enum: ["amount", "currency", "txHash", "network", "resourceId"],
+          },
+          outcome: { type: "string", enum: ["invalid", "indeterminate"] },
+          code: {
+            type: "string",
+            enum: [
+              "missing",
+              "malformed",
+              "malformed_receipt",
+              "non_positive",
+              "unsupported_currency",
+              "unknown_network",
+              "mismatch",
+            ],
+          },
+          message: { type: "string" },
+        },
+        required: ["field", "outcome", "code", "message"],
+      },
+    },
+    summary: { type: "string" },
+  },
+  required: ["schema", "outcome", "valid", "fields", "issues", "summary"],
 } as const;

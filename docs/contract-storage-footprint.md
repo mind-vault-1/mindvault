@@ -81,10 +81,15 @@ shared bounded view and is not included in the per-registration aggregate.
 - **`AnchorAttempts`** is written only when `attempt_anchor_purchase_receipt`
   rejects an anchor, holds two `u32`s, and is deleted as soon as an anchor is
   written for the pair, so it never outlives a successful settlement.
+- **Anchor hash index** adds one reverse entry per written anchor, keyed by the
+  receipt hash and holding its `(resource_id, buyer)` pair. It is updated in
+  `write_anchor` (including admin overrides), so conflicting retries cannot
+  rebind a hash that already anchors another purchase.
 - **`Lease (max-size)`** is one time-limited access lease keyed by
   `(resource_id, holder)`. The 128-byte `tx_hash` dominates the value; a
   holder holds at most one lease per resource, and a new purchase overwrites
-  an expired or revoked one rather than adding an entry.
+  an expired or revoked one rather than adding an entry. `extend_lease` updates
+  that same key in place, retaining the original holder and resource binding.
 
 - **`Resource`** dominates the per-registration cost, and `metadata` (up to 512
   bytes) dominates `Resource`. Storing a content pointer rather than content is
@@ -106,6 +111,11 @@ shared bounded view and is not included in the per-registration aggregate.
 - **`DataKey::DisputeFlag` is never written.** The dispute flag lives on the
   `Resource` struct (see `flag_resource`), so the key exists in the `DataKey`
   enum without a corresponding entry.
+- **`PaymentRecipient` snapshot** is one small persistent entry per payment
+  receipt, written by `record_payment` with the creator address paid at purchase
+  time. It is never rewritten by settlement or ownership transfer, and is only
+  TTL-bumped when the receipt settles. Like `PaymentTxHash`, it is a per-payment
+  secondary entry and is not listed as a separate row in the table above.
 - **Tombstoning** frees the `TagIndex` and `CreatorResources` membership for a
   resource (see the lifecycle section of
   [`contract/README.md`](../contract/README.md)), but deliberately leaves
@@ -122,10 +132,10 @@ quietly raising rent. When growth is intended:
 2. Raise the affected budget in `storage_footprint_report`.
 3. Update the tables in this document to match.
 
-Related: [`contract-storage-migration.md`](contract-storage-migration.md) for
-the safe way to introduce the storage-shape change in the first place,
-[`contract-upgrade-checklist.md`](contract-upgrade-checklist.md) for the
-deployment steps it implies, and the WASM size budget
+Related: [`contract-ttl-lifecycle.md`](contract-ttl-lifecycle.md) for how
+these entries stay live and how operators extend or restore them;
+[`contract-upgrade-checklist.md`](contract-upgrade-checklist.md) for
+the deployment steps a storage-shape change implies, and the WASM size budget
 in
 [`contract/contracts/vault-registry/Makefile`](../contract/contracts/vault-registry/Makefile),
 which covers code size rather than storage.

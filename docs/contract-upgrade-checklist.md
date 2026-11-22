@@ -405,10 +405,13 @@ pnpm --filter @mindvault/server reconcile
 
 ## Related docs
 
+- [Testnet Upgrade Rehearsal](./contract-upgrade-rehearsal-testnet.md) — end-to-end dry run of the WASM deploy before cutover
+- [Contract Method & Event Reference](./contract-method-event-reference.md) — current method signatures and event topics
 - [Deployment Runbook](./deployment-runbook.md) — full stack deploy (contract + server + frontend + MCP)
 - [Mainnet Deployment Checklist](./mainnet-deployment-checklist.md) — additional mainnet-specific steps
 - [Contract Storage Migration](./contract-storage-migration.md) — safe schema evolution, defaults, TTL renewal, and migration tests
 - [Registry Client Bindings](./registry-client-bindings.md) — how bindings are generated and kept fresh
+- [Regenerating Bindings](./regenerating-bindings.md) — step-by-step process for running, reviewing, and verifying bindings after a contract change
 - [Index Repair](./index-repair.md) — `repair_index` admin operation
 - [Reconciliation](./reconciliation.md) — drift detection between DB and on-chain registry
 - [Contract Registry Pause Decision](./contract-registry-pause-decision.md) — pause/unpause ADR

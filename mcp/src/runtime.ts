@@ -1,3 +1,4 @@
+import { limitPaymentPayload, limitUpstreamFetch } from "./upstreamConcurrency.js";
 import {
   networks as registryNetworks,
   normalizeX402Network,
@@ -20,6 +21,7 @@ import { signMutatingHeaders } from "./requestSignature.js";
 import { readBoundedResponse, resolveMaxResponseBytes } from "./responseSize.js";
 import { parseUpstreamErrorBody } from "./malformedResponse.js";
 import { type ResetScope } from "./resetGuard.js";
+import { type CatalogCacheContext } from "./catalogCache.js";
 import {
   DEFAULT_PROFILE,
   isValidProfileName,
@@ -91,9 +93,11 @@ function resolveAgentSecret(provided?: string): string | undefined {
   return provided ?? process.env.MINDVAULT_AGENT_SECRET;
 }
 
-const httpFetch: typeof fetch = MOCK
-  ? createMockFetch(() => currentWallet()?.publicKey)
-  : (input, init) => fetch(input as RequestInfo | URL, init);
+const httpFetch = limitUpstreamFetch(
+  MOCK
+    ? createMockFetch(() => currentWallet()?.publicKey)
+    : (input, init) => fetch(input as RequestInfo | URL, init),
+);
 
 const TIMEOUTS = resolveTimeouts(process.env);
 const RETRY_POLICY = retryPolicyFromEnv(process.env);
@@ -162,7 +166,7 @@ function resolveProfileName(name: unknown): string {
 export function _setAgentWallet(w: AgentWallet | null): void {
   if (w) {
     activeProfile().wallet = w;
-    activeProfile().network ??= NETWORK as "testnet" | "mainnet";
+    activeProfile().network ??= NETWORK;
   } else delete activeProfile().wallet;
 }
 export function _setAgentApiKey(k: string | null): void {
@@ -337,9 +341,18 @@ function requireApiKey(): string {
 
 function makePaidFetch(wallet: AgentWallet) {
   const signer = createEd25519Signer(wallet.secretKey, NETWORK);
-  const scheme = new ExactStellarScheme(signer);
+  const scheme = limitPaymentPayload(new ExactStellarScheme(signer));
   const client = new x402Client().register(NETWORK, scheme);
   return wrapFetchWithPayment(withTimeout(httpFetch, "payment", TIMEOUTS.payment), client);
+}
+
+function catalogCacheContext(): CatalogCacheContext {
+  return {
+    profile: activeProfileName,
+    network: STELLAR_NETWORK,
+    contractId: REGISTRY_CONTRACT_ID,
+    apiOrigin: new URL(BASE_URL).origin,
+  };
 }
 
 export {
@@ -386,4 +399,5 @@ export {
   publisherCredential,
   makePaidFetch,
   _isMock,
+  catalogCacheContext,
 };

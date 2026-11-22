@@ -19,8 +19,23 @@ export interface AgentWallet {
 export interface WalletProfile {
   wallet?: AgentWallet;
   apiKey?: string;
-  network?: "testnet" | "mainnet";
+  network?: ProfileNetwork;
   preferences?: ProfilePreferences;
+}
+
+export type ProfileNetwork = "testnet" | "mainnet" | "stellar:testnet" | "stellar:pubnet";
+
+export function isProfileNetwork(value: unknown): value is ProfileNetwork {
+  return (
+    value === "testnet" ||
+    value === "mainnet" ||
+    value === "stellar:testnet" ||
+    value === "stellar:pubnet"
+  );
+}
+
+export function profileNetworkName(value: ProfileNetwork): "testnet" | "mainnet" {
+  return value === "testnet" || value === "stellar:testnet" ? "testnet" : "mainnet";
 }
 
 /** User-facing profile metadata. Credentials are intentionally not representable here. */
@@ -83,7 +98,7 @@ export function normalizeProfiles(raw: unknown): Record<string, WalletProfile> {
     const profile: WalletProfile = {};
     if (isValidWallet(v.wallet)) profile.wallet = v.wallet;
     if (typeof v.apiKey === "string" && v.apiKey.length > 0) profile.apiKey = v.apiKey;
-    if (v.network === "testnet" || v.network === "mainnet") profile.network = v.network;
+    if (isProfileNetwork(v.network)) profile.network = v.network;
     const preferences = normalizePreferences(v.preferences);
     if (Object.keys(preferences).length > 0) profile.preferences = preferences;
     out[name] = profile;
@@ -184,8 +199,8 @@ export interface ProfileSetup {
 function exportProfileSetup(name: string, profile: WalletProfile): ProfileSetup {
   return {
     name,
-    ...(profile.network ? { network: profile.network } : {}),
-    preferences: { ...(profile.preferences ?? {}) },
+    ...(profile.network ? { network: profileNetworkName(profile.network) } : {}),
+    preferences: normalizePreferences(profile.preferences),
   };
 }
 
@@ -201,6 +216,42 @@ export function exportProfileState(state: ProfileState): ProfileExport {
   };
 }
 
+/**
+ * Network-identity problems in a profile-export payload, checked before any of
+ * it is merged (#1208). Returns one entry per offending profile, in payload
+ * order, and an empty list when the payload is safe to merge.
+ *
+ * - A `network` that is present but not `testnet`/`mainnet` used to be dropped
+ *   silently, so the agent believed a binding had been imported that had not.
+ * - A profile that already holds a wallet bound to one network must not be
+ *   rebound to the other by a metadata import: the same keypair would then be
+ *   used, and funded, on a network the operator never chose for it.
+ */
+export function validateProfileImportNetworks(state: ProfileState, input: unknown): string[] {
+  if (!input || typeof input !== "object") return [];
+  const raw = input as Record<string, unknown>;
+  if (!Array.isArray(raw.profiles)) return [];
+  const problems: string[] = [];
+  raw.profiles.forEach((value, index) => {
+    if (!value || typeof value !== "object") return;
+    const item = value as Record<string, unknown>;
+    if (!isValidProfileName(item.name) || item.network === undefined || item.network === null)
+      return;
+    const label = `profiles[${index}] ("${item.name}")`;
+    if (item.network !== "testnet" && item.network !== "mainnet") {
+      problems.push(`${label}: network must be "testnet" or "mainnet".`);
+      return;
+    }
+    const existing = state.profiles[item.name];
+    if (existing?.wallet && existing.network && existing.network !== item.network) {
+      problems.push(
+        `${label}: the local profile's wallet is bound to ${existing.network}; importing ${item.network} would rebind it. Import it under a new profile name instead.`,
+      );
+    }
+  });
+  return problems;
+}
+
 /** Merge imported metadata while preserving every existing credential field. */
 export function importProfileState(
   state: ProfileState,
@@ -212,6 +263,16 @@ export function importProfileState(
     throw new Error("Unsupported profile export schema or version.");
   }
   if (!Array.isArray(raw.profiles)) throw new Error("Invalid profile export profiles.");
+
+  const networkProblems = validateProfileImportNetworks(state, input);
+  if (networkProblems.length > 0) {
+    throw new Error(
+      [
+        "Profile import rejected; nothing was merged. Fix these network identities and retry:",
+        ...networkProblems.map((p) => `  • ${p}`),
+      ].join("\n"),
+    );
+  }
 
   const next: ProfileState = {
     version: STATE_VERSION,

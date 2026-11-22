@@ -64,6 +64,18 @@ need to worry about case or surrounding whitespace:
 When you read a resource back, `resource.tags` already holds the normalized
 values, so comparing them against your input string is safe.
 
+### Atomic tag replacement
+
+`set_tags` replaces a resource's tag set in one validated call. The whole
+requested set is normalized and checked against every rule above, together with
+the caller's authorization and the resource's lifecycle state, before the
+resource or its tag index is written; a rejected call leaves the resource, its
+`TagIndex` entries and every tag search unchanged. The index is then updated
+from the normalized difference in a single pass: the resource is removed only
+from tags it drops and added only to tags it gains, so a tag kept across the
+replacement keeps the resource's original position in `list_by_tag` insertion
+order. Tag popularity counters are not changed.
+
 ### Tag popularity
 
 `top_tags(limit)` returns `TagPopularity { tag, count }` entries sorted by
@@ -120,9 +132,13 @@ first day, any touch resets the entry to a full ~30 days.
   `set_tags`, `set_listed`, `transfer_ownership`, `record_payment` and the rest
   all extend the entries they write, so an actively-maintained resource is never
   archived.
-- **Reads bump too.** `get`, `get_owner`, `exists_many`, `list`, `list_by_tag`
-  and `get_payment_receipt` extend the entries they return. A resource that is
-  merely popular stays alive without its creator doing anything.
+- **Most reads bump too.** `get_many`, `get_owner_many`, `exists_many`,
+  `list`, `list_by_tag` and `get_payment_receipt` extend the entries they
+  return, so a resource that is merely popular stays alive without its creator
+  doing anything. Single-id `get` and `get_owner` do **not** bump, and the
+  list calls do not bump the `TagIndex` / `CreatorResources` entries they read
+  from — see [`docs/contract-ttl-lifecycle.md`](../../../docs/contract-ttl-lifecycle.md)
+  for the full table and the operator runbook.
 - **A cold resource has ~30 days.** An entry that is neither read nor written
   for `BUMP_AMOUNT` ledgers is archived and stops resolving.
 - **A creator can top up on demand.** `extend_resource_ttl(creator, id)` bumps a
@@ -173,12 +189,12 @@ The recorded schema changes are: **v2** added `tags`, **v4** added
 `royalty_recipient`. The changes behind v1, v3 and v5 were never written down.
 Any future bump should add a row here, naming the field that changed:
 
-| Schema version | Change                                                                  |
-| -------------- | ----------------------------------------------------------------------- |
-| 2              | Added `tags` — discovery labels, normalized to lowercase.               |
-| 4              | Added `dispute_flag` — moderator dispute state.                         |
-| 6              | Added `metadata_frozen_at` — ledger sequence of the metadata freeze.    |
-| 7              | Added `royalty_recipient`; current value of `RESOURCE_SCHEMA_VERSION`.  |
+| Schema version | Change                                                                 |
+| -------------- | ---------------------------------------------------------------------- |
+| 2              | Added `tags` — discovery labels, normalized to lowercase.              |
+| 4              | Added `dispute_flag` — moderator dispute state.                        |
+| 6              | Added `metadata_frozen_at` — ledger sequence of the metadata freeze.   |
+| 7              | Added `royalty_recipient`; current value of `RESOURCE_SCHEMA_VERSION`. |
 
 ### What is and is not a breaking change
 

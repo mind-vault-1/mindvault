@@ -182,30 +182,32 @@ Anything that can launch a stdio MCP server works with:
 ## Environment variables
 
 Every variable is optional: with none set, the server targets Stellar **testnet**
-and the hosted MindVault backend.
+and the hosted MindVault backend. The table covers common client settings. See
+the [MCP environment variables reference](mcp-env-variables.md) for the full list.
 
-| Variable                          | Default                                                | Description                                                                                                                 |
-| --------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| `MINDVAULT_URL`                   | `https://mindvault-hyr3.onrender.com`                  | MindVault API base URL                                                                                                      |
-| `SPONSORED_ACCOUNT_URL`           | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service                                                                                           |
-| `STELLAR_NETWORK`                 | `testnet`                                              | Deployment target: `testnet` or `mainnet` (`pubnet`/`public` also accepted)                                                 |
-| `NETWORK`                         | from `STELLAR_NETWORK`                                 | x402 network id (`stellar:testnet` / `stellar:pubnet`)                                                                      |
-| `SOROBAN_RPC_URL`                 | preset for the network                                 | Soroban RPC (tx status, contract reads)                                                                                     |
-| `HORIZON_URL`                     | preset for the network                                 | Horizon (balance checks)                                                                                                    |
-| `USDC_CONTRACT_ID`                | preset for the network                                 | USDC Stellar Asset Contract used by x402                                                                                    |
-| `VAULT_REGISTRY_CONTRACT_ID`      | testnet default; **required on mainnet**               | Deployed vault-registry contract                                                                                            |
-| `MINDVAULT_ALLOW_MAINNET`         | unset                                                  | Allows mainnet mutations without per-call confirmation. See [security notes](#security-notes)                               |
-| `MINDVAULT_METRICS`               | unset                                                  | Set `1` to collect opt-in tool metrics ([docs](mcp-metrics.md))                                                             |
-| `MINDVAULT_LOCAL_VALIDATION`      | unset                                                  | Set `1` to validate tool arguments and configuration locally without any outbound request ([docs](mcp-local-validation.md)) |
-| `MINDVAULT_MOCK`                  | unset                                                  | Set `1` for offline mock mode — no network, no funds, deterministic fixtures                                                |
-| `MINDVAULT_AUDIT_LOG`             | unset                                                  | Set `1` to log mutating tool calls to stderr (arguments and payloads are redacted)                                          |
-| `MINDVAULT_AGENT_SECRET`          | unset                                                  | Stellar secret key `mindvault_import_wallet` reads when none is passed. See [security notes](#security-notes)               |
-| `MINDVAULT_PURCHASES_FILE`        | `~/.mindvault/purchases.json`                          | Where purchase receipts are stored, read by `mindvault_purchase_history` and `mindvault_export_receipts`                    |
-| `MINDVAULT_RESOURCE_HISTORY_FILE` | `~/.mindvault/resource-history.jsonl`                  | Append-only audit path used by the resource provenance and change-log tools                                                 |
-| `MINDVAULT_MAX_AUTO_PAY_USDC`     | `10`                                                   | Ceiling on an x402 payment `mindvault_buy` will make without `maxAutoPayUsdc` ([docs](environment-variables.md))            |
-| `HTTP_PROXY`                      | unset                                                  | Proxy URL for `http:` requests. Credentials in the URL are redacted from logs and diagnostics                               |
-| `HTTPS_PROXY`                     | unset                                                  | Proxy URL for `https:` requests. Credentials in the URL are redacted from logs and diagnostics                              |
-| `NO_PROXY`                        | unset                                                  | Comma-separated hosts that bypass the proxy (`*`, `.domain`, `host:port`)                                                   |
+| Variable                                     | Default                                                | Description                                                                                                      |
+| -------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `MINDVAULT_URL`                              | `https://mindvault-hyr3.onrender.com`                  | MindVault API base URL                                                                                           |
+| `SPONSORED_ACCOUNT_URL`                      | `https://stellar-sponsored-agent-account.onrender.com` | Sponsored wallet creation service                                                                                |
+| `STELLAR_NETWORK`                            | `testnet`                                              | Deployment target: `testnet` or `mainnet` (`pubnet`/`public` also accepted)                                      |
+| `NETWORK`                                    | from `STELLAR_NETWORK`                                 | x402 network id (`stellar:testnet` / `stellar:pubnet`)                                                           |
+| `SOROBAN_RPC_URL`                            | preset for the network                                 | Soroban RPC (tx status, contract reads)                                                                          |
+| `HORIZON_URL`                                | preset for the network                                 | Horizon (balance checks)                                                                                         |
+| `USDC_CONTRACT_ID`                           | preset for the network                                 | USDC Stellar Asset Contract used by x402                                                                         |
+| `VAULT_REGISTRY_CONTRACT_ID`                 | testnet default; **required on mainnet**               | Deployed vault-registry contract                                                                                 |
+| `MINDVAULT_ALLOW_MAINNET`                    | unset                                                  | Allows mainnet mutations without per-call confirmation. See [security notes](#security-notes)                    |
+| `MINDVAULT_METRICS`                          | unset                                                  | Set `1` to collect opt-in tool metrics ([docs](mcp-metrics.md))                                                  |
+| `MINDVAULT_MAX_CONCURRENT_UPSTREAM_REQUESTS` | `8`                                                    | Maximum upstream requests active per MCP process                                                                 |
+| `MINDVAULT_TOOL_RETRY_BUDGET`                | `4`                                                    | Extra attempts available to eligible reads in one tool call. Set `0` to disable tool retries.                    |
+| `MINDVAULT_MOCK`                             | unset                                                  | Set `1` for offline mock mode — no network, no funds, deterministic fixtures                                     |
+| `MINDVAULT_AUDIT_LOG`                        | unset                                                  | Set `1` to log mutating tool calls to stderr (arguments and payloads are redacted)                               |
+| `MINDVAULT_AGENT_SECRET`                     | unset                                                  | Stellar secret key `mindvault_import_wallet` reads when none is passed. See [security notes](#security-notes)    |
+| `MINDVAULT_PURCHASES_FILE`                   | `~/.mindvault/purchases.json`                          | Where purchase receipts are stored, read by `mindvault_purchase_history` and `mindvault_export_receipts`         |
+| `MINDVAULT_RESOURCE_HISTORY_FILE`            | `~/.mindvault/resource-history.jsonl`                  | Append-only audit path used by the resource provenance and change-log tools                                      |
+| `MINDVAULT_MAX_AUTO_PAY_USDC`                | `10`                                                   | Ceiling on an x402 payment `mindvault_buy` will make without `maxAutoPayUsdc` ([docs](environment-variables.md)) |
+| `HTTP_PROXY`                                 | unset                                                  | Proxy URL for `http:` requests. Credentials in the URL are redacted from logs and diagnostics                    |
+| `HTTPS_PROXY`                                | unset                                                  | Proxy URL for `https:` requests. Credentials in the URL are redacted from logs and diagnostics                   |
+| `NO_PROXY`                                   | unset                                                  | Comma-separated hosts that bypass the proxy (`*`, `.domain`, `host:port`)                                        |
 
 Overriding a network value without changing `STELLAR_NETWORK` is a common
 mistake, so the server cross-checks them at startup and refuses to launch on a
@@ -348,6 +350,7 @@ server will read from. Run both after changing a config.
 
 ## Related
 
+- [Client compatibility matrix](mcp-client-compatibility.md) — which MCP features each client needs, and what still works without them
 - [MCP quickstart](mcp-quickstart.md) — full agent session, wallet through purchase
 - [Tool reference](mcp-tool-reference.md) — every tool with its description, grouped by function
 - [Tool argument validation](mcp-tool-arguments.md)

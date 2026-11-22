@@ -82,6 +82,88 @@ export function usdcToStroops(
   return negative ? -stroops : stroops;
 }
 
+/**
+ * The accepted format for a USDC amount typed into a tool (#1252), quoted in
+ * every rejection so the caller can see what to send instead.
+ */
+export const USDC_AMOUNT_FORMAT =
+  'a plain decimal USDC amount with at most 7 decimal places and no sign or exponent, e.g. "5", "0.50" or "0.0000001"';
+
+/**
+ * Largest amount the vault registry accepts, in stroops: the contract's
+ * `MAX_PRICE` (10^18 stroops = 100,000,000,000 USDC).
+ */
+export const MAX_USDC_AMOUNT_STROOPS = 1_000_000_000_000_000_000n;
+
+/** Why a typed amount was refused. */
+export type UsdcAmountProblem =
+  | "exponent"
+  | "negative"
+  | "excess_precision"
+  | "malformed"
+  | "zero"
+  | "too_large";
+
+export type UsdcAmountCheck =
+  | { ok: true; amount: string; stroops: bigint }
+  | { ok: false; problem: UsdcAmountProblem; message: string };
+
+/**
+ * Check a USDC amount a caller typed (a price to publish or set, a purchase
+ * ceiling) before anything uses it (#1252).
+ *
+ * Only {@link USDC_DECIMAL_PATTERN} is accepted. Exponent notation (`"1e-7"`,
+ * `"5E2"`), a sign, and more than 7 decimal places are refused outright
+ * rather than converted: `Number("1e-7")` is a valid number, and an extra
+ * decimal place would have to be rounded away, so either one would mean
+ * paying or charging an amount the caller never wrote. The message names
+ * the problem and the accepted format but never repeats the value.
+ *
+ * `positive` additionally refuses zero (prices must be above zero on-chain).
+ * Amounts above {@link MAX_USDC_AMOUNT_STROOPS} are refused as `too_large`.
+ */
+export function checkUsdcAmountInput(
+  value: string,
+  options: { positive?: boolean } = {},
+): UsdcAmountCheck {
+  const text = value.trim();
+  const refuse = (problem: UsdcAmountProblem, reason: string): UsdcAmountCheck => ({
+    ok: false,
+    problem,
+    message: `${reason} Use ${USDC_AMOUNT_FORMAT}.`,
+  });
+
+  if (/^[+-]?(?:\d+\.?\d*|\.\d+)[eE][+-]?\d+$/.test(text)) {
+    return refuse(
+      "exponent",
+      "Exponent notation is not accepted, because it would be silently converted to a different amount.",
+    );
+  }
+  if (/^-\s*(?:\d|\.\d)/.test(text)) {
+    return refuse("negative", "Negative amounts are not accepted.");
+  }
+  if (/^\d+\.\d{8,}$/.test(text)) {
+    return refuse(
+      "excess_precision",
+      `USDC has ${USDC_DECIMALS} decimal places, so more would have to be rounded away.`,
+    );
+  }
+  const stroops = usdcToStroops(text);
+  if (stroops === null) {
+    return refuse("malformed", "The amount is not a plain decimal number.");
+  }
+  if (options.positive && stroops === 0n) {
+    return refuse("zero", "The amount must be greater than zero.");
+  }
+  if (stroops > MAX_USDC_AMOUNT_STROOPS) {
+    return refuse(
+      "too_large",
+      `The amount is above the registry maximum of ${stroopsToUsdc(MAX_USDC_AMOUNT_STROOPS)} USDC.`,
+    );
+  }
+  return { ok: true, amount: text, stroops };
+}
+
 /** Whether a string is a well-formed non-negative USDC decimal amount. */
 export function isUsdcDecimal(value: unknown): value is string {
   return typeof value === "string" && USDC_DECIMAL_PATTERN.test(value.trim());

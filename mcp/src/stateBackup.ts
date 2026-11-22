@@ -27,7 +27,13 @@ import {
 } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
-import { STATE_VERSION, type ProfileState, type WalletProfile } from "./profiles.js";
+import {
+  isProfileNetwork,
+  profileNetworkName,
+  STATE_VERSION,
+  type ProfileState,
+  type WalletProfile,
+} from "./profiles.js";
 
 const STATE_DIR = join(homedir(), ".mindvault");
 const STATE_FILE = join(STATE_DIR, "state.json");
@@ -284,6 +290,106 @@ export function validateBackupProfiles(raw: unknown): BackupValidationResult {
   return { valid: errors.length === 0, errors };
 }
 
+/** Profile networks a backup may bind a profile to. */
+const PROFILE_NETWORKS = new Set(["testnet", "mainnet"]);
+
+/**
+ * Resolve a server network given as a deployment name (`testnet`/`mainnet`) or
+ * an x402 id (`stellar:testnet`, `stellar:pubnet`) to the deployment name that
+ * profiles store. Returns undefined for anything else.
+ */
+export function resolveProfileNetwork(
+  network: string | undefined,
+): "testnet" | "mainnet" | undefined {
+  if (!network) return undefined;
+  const trimmed = network.trim();
+  if (trimmed === "testnet" || trimmed === "mainnet") return trimmed;
+  return inferNetworkFromX402(trimmed);
+}
+
+/**
+ * Validate every network identity in a decrypted backup before it is merged
+ * into local state (#1208): each profile's network binding and each wallet's
+ * keypair. Errors are field-level and never echo key material.
+ *
+ * Checks, per profile:
+ * 1. `network`, when present, is `testnet` or `mainnet`. Anything else used to
+ *    be dropped silently, leaving the wallet unbound.
+ * 2. `network` matches the server's network, when one is expected. The server
+ *    reports its network as an x402 id; profiles store the deployment name, so
+ *    both are normalized before comparing.
+ * 3. A wallet's `publicKey` is a valid Stellar account id and its `secretKey`
+ *    a valid secret seed. Malformed wallets used to be dropped silently, which
+ *    lost the credential.
+ * 4. The secret key derives the stored public key. A mismatched pair would
+ *    sign as a different account than the profile reports.
+ */
+export function validateBackupNetworkIdentities(
+  raw: unknown,
+  options: RestoreStateOptions = {},
+): BackupValidationError[] {
+  const errors: BackupValidationError[] = [];
+  if (!raw || typeof raw !== "object") return errors;
+  const rawProfiles = (raw as { profiles?: unknown }).profiles;
+  if (!rawProfiles || typeof rawProfiles !== "object" || Array.isArray(rawProfiles)) return errors;
+
+  const expected = resolveProfileNetwork(options.expectedNetwork);
+  for (const [name, value] of Object.entries(rawProfiles as Record<string, unknown>).sort(
+    ([a], [b]) => a.localeCompare(b),
+  )) {
+    if (!value || typeof value !== "object") continue;
+    const profile = value as { network?: unknown; wallet?: unknown };
+    const field = `profiles.${name}`;
+
+    if (profile.network !== undefined && profile.network !== null) {
+      if (typeof profile.network !== "string" || !PROFILE_NETWORKS.has(profile.network)) {
+        errors.push({
+          field: `${field}.network`,
+          message: `Unknown network binding. Expected "testnet" or "mainnet".`,
+        });
+      } else if (expected && profile.network !== expected) {
+        errors.push({
+          field: `${field}.network`,
+          message: `Backup belongs to network "${profile.network}" but this server runs "${expected}". Restore it on a ${profile.network} server, or switch with mindvault_switch_network_profile first.`,
+        });
+      }
+    }
+
+    const wallet = profile.wallet;
+    if (wallet === undefined || wallet === null) continue;
+    if (typeof wallet !== "object") {
+      errors.push({
+        field: `${field}.wallet`,
+        message: "Wallet must be an object with publicKey and secretKey.",
+      });
+      continue;
+    }
+    const { publicKey, secretKey } = wallet as { publicKey?: unknown; secretKey?: unknown };
+    const publicOk = typeof publicKey === "string" && StrKey.isValidEd25519PublicKey(publicKey);
+    const secretOk = typeof secretKey === "string" && StrKey.isValidEd25519SecretSeed(secretKey);
+    if (!publicOk) {
+      errors.push({
+        field: `${field}.wallet.publicKey`,
+        message: "Not a valid Stellar account id (G...).",
+      });
+    }
+    if (!secretOk) {
+      errors.push({
+        field: `${field}.wallet.secretKey`,
+        message: "Not a valid Stellar secret seed (S...).",
+      });
+    }
+    if (publicOk && secretOk && Keypair.fromSecret(secretKey as string).publicKey() !== publicKey) {
+      errors.push({
+        field: `${field}.wallet`,
+        message:
+          "The secret key does not belong to the stored public key; this wallet would sign as a different account.",
+      });
+    }
+  }
+  return errors;
+}
+
 /**
  * Restore state from an encrypted backup string.
  *
@@ -354,15 +460,28 @@ export function restoreState(
     );
   }
 
+  // Validate network bindings and wallet identities before anything is merged (#1208).
+  const identityErrors = validateBackupNetworkIdentities(parsed, options);
+  if (identityErrors.length > 0) {
+    const fieldList = identityErrors.map((e) => `  • ${e.field}: ${e.message}`).join("\n");
+    throw new StateBackupError(
+      `Backup network identities failed validation; nothing was restored:\n${fieldList}`,
+    );
+  }
+
   let state: ProfileState;
   try {
     state = normalizePersisted(parsed);
   } catch {
     throw new StateBackupError("Backup contents are not valid state.");
   }
-  if (options.expectedNetwork) {
+  const expectedNetwork = options.expectedNetwork;
+  if (expectedNetwork) {
     const mismatched = Object.entries(state.profiles).find(
-      ([, profile]) => profile.network && profile.network !== options.expectedNetwork,
+      ([, profile]) =>
+        profile.network &&
+        (!isProfileNetwork(expectedNetwork) ||
+          profileNetworkName(profile.network) !== profileNetworkName(expectedNetwork)),
     );
     if (mismatched) {
       throw new StateBackupError(
@@ -417,7 +536,7 @@ function normalizePersisted(raw: unknown): ProfileState {
       }
     }
     if (typeof v.apiKey === "string" && v.apiKey.length > 0) profile.apiKey = v.apiKey;
-    if (v.network === "testnet" || v.network === "mainnet") profile.network = v.network;
+    if (isProfileNetwork(v.network)) profile.network = v.network;
     if (v.preferences && typeof v.preferences === "object" && !Array.isArray(v.preferences)) {
       profile.preferences = {};
       for (const [key, item] of Object.entries(v.preferences as Record<string, unknown>)) {
