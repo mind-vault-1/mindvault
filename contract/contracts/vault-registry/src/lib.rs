@@ -6688,6 +6688,12 @@ impl VaultRegistry {
         if lease.state != LeaseState::Pending {
             return Err(Error::InvalidPaymentTransition);
         }
+        // A resource can be retired after the pending lease was purchased.
+        // Never activate it unless the resource is still available for sale.
+        let resource = Self::load(&env, &resource_id)?;
+        if resource.state != ResourceState::Listed {
+            return Err(Error::ResourceNotMutable);
+        }
         lease.state = LeaseState::Active;
         env.storage().persistent().set(&key, &lease);
         Self::bump_persistent(&env, &key);
