@@ -17,14 +17,7 @@ const { publishStatus } = await import("./tools/wallet.js");
 type Reply = { status: number; body: unknown };
 
 function reply(status: number, body: unknown): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    statusText: status === 200 ? "OK" : "Error",
-    text: () => Promise.resolve(JSON.stringify(body)),
-    json: () => Promise.resolve(body),
-    headers: new Headers({ "content-type": "application/json" }),
-  } as Response;
+  return Response.json(body, { status, statusText: status === 200 ? "OK" : "Error" });
 }
 
 function meta(status: string): Reply {

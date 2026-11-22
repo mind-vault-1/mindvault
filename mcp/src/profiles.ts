@@ -19,8 +19,23 @@ export interface AgentWallet {
 export interface WalletProfile {
   wallet?: AgentWallet;
   apiKey?: string;
-  network?: "testnet" | "mainnet";
+  network?: ProfileNetwork;
   preferences?: ProfilePreferences;
+}
+
+export type ProfileNetwork = "testnet" | "mainnet" | "stellar:testnet" | "stellar:pubnet";
+
+export function isProfileNetwork(value: unknown): value is ProfileNetwork {
+  return (
+    value === "testnet" ||
+    value === "mainnet" ||
+    value === "stellar:testnet" ||
+    value === "stellar:pubnet"
+  );
+}
+
+export function profileNetworkName(value: ProfileNetwork): "testnet" | "mainnet" {
+  return value === "testnet" || value === "stellar:testnet" ? "testnet" : "mainnet";
 }
 
 /** User-facing profile metadata. Credentials are intentionally not representable here. */
@@ -83,7 +98,7 @@ export function normalizeProfiles(raw: unknown): Record<string, WalletProfile> {
     const profile: WalletProfile = {};
     if (isValidWallet(v.wallet)) profile.wallet = v.wallet;
     if (typeof v.apiKey === "string" && v.apiKey.length > 0) profile.apiKey = v.apiKey;
-    if (v.network === "testnet" || v.network === "mainnet") profile.network = v.network;
+    if (isProfileNetwork(v.network)) profile.network = v.network;
     const preferences = normalizePreferences(v.preferences);
     if (Object.keys(preferences).length > 0) profile.preferences = preferences;
     out[name] = profile;
@@ -184,8 +199,8 @@ export interface ProfileSetup {
 function exportProfileSetup(name: string, profile: WalletProfile): ProfileSetup {
   return {
     name,
-    ...(profile.network ? { network: profile.network } : {}),
-    preferences: { ...(profile.preferences ?? {}) },
+    ...(profile.network ? { network: profileNetworkName(profile.network) } : {}),
+    preferences: normalizePreferences(profile.preferences),
   };
 }
 

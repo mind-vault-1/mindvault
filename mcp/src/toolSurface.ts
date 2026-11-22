@@ -30,6 +30,7 @@
  */
 
 import { filterToolsForReadOnlyMode } from "./readOnlyMode.js";
+import { filterToolsForAllowlist } from "./toolAllowlist.js";
 import { TOOL_DEFINITIONS, type ToolDefinition } from "./tools.js";
 
 /**
@@ -70,7 +71,10 @@ export interface AdvertisedToolDescriptor {
  * `toolSchemaSnapshots.test.ts` pins the distinction.
  */
 export function advertisedTools(env: NodeJS.ProcessEnv = process.env): AdvertisedToolDescriptor[] {
-  return filterToolsForReadOnlyMode(servableToolDefinitions(), env).map((tool) => ({
+  return filterToolsForReadOnlyMode(
+    filterToolsForAllowlist(servableToolDefinitions(), env),
+    env,
+  ).map((tool) => ({
     name: tool.name,
     description: tool.description,
     inputSchema: tool.inputSchema,

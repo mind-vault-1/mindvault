@@ -420,6 +420,222 @@ fn lease_writes_respect_the_emergency_pause() {
     assert_eq!(client.lease_price(&id, &LeaseTier::Hour), 100i128);
 }
 
+// ─── Lease extension binding (#997) ─────────────────────────────────────────
+
+#[test]
+fn extend_lease_preserves_original_binding_after_ownership_transfer() {
+    let (env, creator, settler, holder, client) = lease_setup();
+    let new_owner = Address::generate(&env);
+    let other_holder = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "leasebind", 100i128);
+    let price = 100i128;
+    let hour_amount = LEASE_HOUR_MULTIPLIER * price;
+    let day_amount = LEASE_DAY_MULTIPLIER * price;
+    env.ledger().set_sequence_number(200);
+
+    let initial = client.record_lease(
+        &settler,
+        &holder,
+        &id,
+        &LeaseTier::Hour,
+        &hour_amount,
+        &String::from_str(&env, "tx1"),
+    );
+    assert_eq!(initial.holder, holder);
+    assert_eq!(initial.resource_id, id);
+
+    // A new creator must not inherit or rebind the holder's lease.
+    client.transfer_ownership(&id, &new_owner);
+    assert_eq!(client.get(&id).creator, new_owner);
+
+    env.ledger().set_sequence_number(300);
+    let extended = client.extend_lease(
+        &holder,
+        &id,
+        &LeaseTier::Day,
+        &day_amount,
+        &String::from_str(&env, "tx2"),
+    );
+    assert_eq!(extended.holder, holder);
+    assert_eq!(extended.resource_id, id);
+    assert_eq!(extended.tier, LeaseTier::Day);
+    assert_eq!(extended.start_ledger, initial.start_ledger);
+    assert_eq!(
+        extended.expiry_ledger,
+        initial.expiry_ledger + LEASE_DAY_LEDGERS
+    );
+    assert_eq!(extended.amount, hour_amount + day_amount);
+    assert_eq!(extended.tx_hash, String::from_str(&env, "tx2"));
+    assert_eq!(extended.state, LeaseState::Active);
+    assert_eq!(extended.recorded_at, 300);
+    assert_eq!(client.get_lease(&id, &holder), extended);
+    assert!(client.lease_is_active(&id, &holder));
+    assert_eq!(last_lease_event(&env, symbol_short!("lease"), &id), extended);
+
+    // A payment hash cannot be replayed for another extension.
+    assert_eq!(
+        client.try_extend_lease(
+            &holder,
+            &id,
+            &LeaseTier::Day,
+            &day_amount,
+            &String::from_str(&env, "tx2"),
+        ),
+        Err(Ok(Error::DuplicateTxHash))
+    );
+
+    // A different holder has no lease under its own key.
+    assert_eq!(
+        client.try_extend_lease(
+            &other_holder,
+            &id,
+            &LeaseTier::Hour,
+            &hour_amount,
+            &String::from_str(&env, "tx3"),
+        ),
+        Err(Ok(Error::NotFound))
+    );
+
+    // If storage itself is inconsistent, the write still refuses to rebind it.
+    env.as_contract(&client.address, || {
+        let key = DataKey::Lease(id.clone(), other_holder.clone());
+        let mismatched = Lease {
+            resource_id: id.clone(),
+            holder: holder.clone(),
+            tier: LeaseTier::Hour,
+            start_ledger: 200,
+            expiry_ledger: 900,
+            amount: hour_amount,
+            tx_hash: String::from_str(&env, "txbad"),
+            state: LeaseState::Active,
+            recorded_at: 200,
+        };
+        env.storage().persistent().set(&key, &mismatched);
+    });
+    assert_eq!(
+        client.try_extend_lease(
+            &other_holder,
+            &id,
+            &LeaseTier::Hour,
+            &hour_amount,
+            &String::from_str(&env, "tx4"),
+        ),
+        Err(Ok(Error::Unauthorized))
+    );
+}
+
+#[test]
+fn extend_lease_renews_expired_leases_but_not_pending_or_revoked_ones() {
+    let (env, creator, settler, holder, client) = lease_setup();
+    let id = register_priced(&env, &creator, &client, "leaseexp", 100i128);
+    let price = 100i128;
+    let hour_amount = LEASE_HOUR_MULTIPLIER * price;
+    let day_amount = LEASE_DAY_MULTIPLIER * price;
+    let week_amount = LEASE_WEEK_MULTIPLIER * price;
+
+    env.ledger().set_sequence_number(100);
+    let pending = client.buy_lease(
+        &holder,
+        &id,
+        &LeaseTier::Hour,
+        &hour_amount,
+        &String::from_str(&env, "tx1"),
+    );
+    assert_eq!(
+        client.try_extend_lease(
+            &holder,
+            &id,
+            &LeaseTier::Day,
+            &day_amount,
+            &String::from_str(&env, "tx-pending"),
+        ),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+
+    client.settle_lease(&settler, &id, &holder);
+    assert!(client.lease_is_active(&id, &holder));
+
+    // Expiry stops access but keeps the record, so the holder can renew it.
+    env.ledger().set_sequence_number(pending.expiry_ledger);
+    assert!(!client.lease_is_active(&id, &holder));
+    let renewed = client.extend_lease(
+        &holder,
+        &id,
+        &LeaseTier::Day,
+        &day_amount,
+        &String::from_str(&env, "tx-renew"),
+    );
+    assert_eq!(renewed.resource_id, id);
+    assert_eq!(renewed.holder, holder);
+    assert_eq!(renewed.start_ledger, pending.start_ledger);
+    assert_eq!(
+        renewed.expiry_ledger,
+        pending.expiry_ledger + LEASE_DAY_LEDGERS
+    );
+    assert_eq!(renewed.amount, hour_amount + day_amount);
+    assert_eq!(renewed.state, LeaseState::Active);
+    assert!(client.lease_is_active(&id, &holder));
+
+    // Revocation is terminal for extension, even though a fresh purchase is not.
+    let revoked = client.revoke_lease(&id, &holder);
+    assert_eq!(revoked.state, LeaseState::Revoked);
+    assert_eq!(
+        client.try_extend_lease(
+            &holder,
+            &id,
+            &LeaseTier::Week,
+            &week_amount,
+            &String::from_str(&env, "tx-after-revoke"),
+        ),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+    assert!(!client.lease_is_active(&id, &holder));
+}
+
+#[test]
+fn lease_renewal_writes_reject_a_stored_binding_mismatch() {
+    let (env, creator, settler, holder, client) = lease_setup();
+    let other_holder = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "leasewrong", 100i128);
+    let amount = LEASE_HOUR_MULTIPLIER * 100i128;
+    let tx = String::from_str(&env, "tx1");
+    env.ledger().set_sequence_number(10);
+
+    client.buy_lease(&holder, &id, &LeaseTier::Hour, &amount, &tx);
+
+    env.as_contract(&client.address, || {
+        let key = DataKey::Lease(id.clone(), holder.clone());
+        let mismatched = Lease {
+            resource_id: id.clone(),
+            holder: other_holder.clone(),
+            tier: LeaseTier::Hour,
+            start_ledger: 10,
+            expiry_ledger: 10 + LEASE_HOUR_LEDGERS,
+            amount,
+            tx_hash: tx.clone(),
+            state: LeaseState::Pending,
+            recorded_at: 10,
+        };
+        env.storage().persistent().set(&key, &mismatched);
+    });
+
+    assert_eq!(
+        client.try_settle_lease(&settler, &id, &holder),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_buy_lease(
+            &holder,
+            &id,
+            &LeaseTier::Hour,
+            &amount,
+            &String::from_str(&env, "tx2"),
+        ),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Pending);
+}
+
 // ─── Fee config protection for active leases (#991) ──────────────────────────
 
 #[test]

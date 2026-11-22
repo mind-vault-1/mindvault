@@ -29,6 +29,9 @@ import {
   TRANSPORT_TIMEOUT_MAX_ENV_VAR,
 } from "./toolTimeoutOverrides.js";
 
+import { RETRY_BUDGET_ENV, retryBudgetFromEnv } from "./retry.js";
+import { UPSTREAM_CONCURRENCY_ENV, upstreamConcurrencyFromEnv } from "./upstreamConcurrency.js";
+
 export type DiagnosticSeverity = "error" | "warning";
 
 export interface StartupDiagnostic {
@@ -83,6 +86,17 @@ export function collectStartupDiagnostics(
   hasGlobalFetch: boolean = typeof fetch === "function",
 ): StartupDiagnostic[] {
   const diagnostics: StartupDiagnostic[] = [];
+
+  for (const [variable, resolve] of [
+    [UPSTREAM_CONCURRENCY_ENV, upstreamConcurrencyFromEnv],
+    [RETRY_BUDGET_ENV, retryBudgetFromEnv],
+  ] as const) {
+    try {
+      resolve(env);
+    } catch (error) {
+      diagnostics.push({ variable, severity: "error", message: (error as Error).message });
+    }
+  }
 
   // Every outbound call (MindVault API, Horizon, Soroban RPC, x402 payments)
   // goes through the global `fetch`. Node <20, or an unusual runtime that never

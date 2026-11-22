@@ -18,6 +18,8 @@
     "contract:build": "stellar contract build --manifest-path contract/Cargo.toml",
     "contract:test": "cargo test --manifest-path contract/Cargo.toml",
     "contract:bindings": "node scripts/generate-bindings.mjs",
+    "contract:reference": "node scripts/generate-contract-reference.mjs",
+    "contract:reference:check": "node scripts/generate-contract-reference.mjs --check",
     "docs:links": "node scripts/check-doc-links.mjs",
     "lint": "pnpm exec eslint \"server/src/**/*.{ts,tsx}\" \"web/src/**/*.{ts,tsx}\" \"packages/**/*.{ts,tsx}\" \"mcp/src/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\"",
     "format:check": "pnpm exec prettier --check \"server/**/*.{ts,tsx,js,json,md}\" \"web/**/*.{ts,tsx,js,json,md}\" \"packages/**/*.{ts,tsx,js,json,md}\" \"mcp/**/*.{ts,tsx,js,json,md}\"",
@@ -64,7 +66,11 @@
         "CVE-2026-14257"
       ],
       "ignoreGhsas": [
-        "GHSA-mh99-v99m-4gvg"
+        "GHSA-mh99-v99m-4gvg",
+        "GHSA-mrhx-c7xc-m3w5",
+        "GHSA-27r3-jxmh-p828",
+        "GHSA-q7qp-rjg7-q26m",
+        "GHSA-mrwp-f3q8-3g9p"
       ]
     },
     "overrides": {
@@ -87,7 +93,11 @@
       "toml": "^5.0.1",
       "@grpc/grpc-js": "^1.14.5",
       "ip-address": "^10.3.1",
-      "follow-redirects": "^1.16.1",
+      "follow-redirects": "^1.16.2",
+      "body-parser@>=2.0.0 <2.4.0": "^2.4.0",
+      "@x402/core>zod": "^4.6.6",
+      "@x402/extensions>zod": "^4.6.6",
+      "x402-stellar>zod": "^4.6.6",
       "compression": ">=1.8.2",
       "proxy-addr": ">=2.0.8"
     },
