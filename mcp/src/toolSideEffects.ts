@@ -69,6 +69,7 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   // Replaces the target profile's wallet secret; the sponsor pays for the account.
   mindvault_setup_wallet: { local: "overwrite", remote: "api", payment: "none" },
   mindvault_wallet_info: READ,
+  mindvault_wallet_balances: READ,
   mindvault_wallet_allowance: READ,
   mindvault_wallet_balances: READ,
   // Replaces the target profile's wallet secret after a Horizon read.
@@ -90,6 +91,8 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_browse: READ,
   mindvault_search: READ,
   mindvault_preview: READ,
+  mindvault_batch_catalog_lookup: READ,
+  mindvault_preview_metadata_hash: READ,
   mindvault_prewarm_catalog: READ,
   // Returns guidance only; it invalidates nothing.
   mindvault_recover_catalog_cache: READ,
@@ -160,6 +163,9 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_client_config: READ,
   mindvault_mainnet_banner: READ,
   mindvault_verify_install: READ,
+  mindvault_server_endpoints: READ,
+  mindvault_migration_preview: READ,
+  mindvault_support_bundle: READ,
   mindvault_debug_bundle: READ,
   mindvault_support_bundle: READ,
 };

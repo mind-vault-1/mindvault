@@ -291,7 +291,7 @@ describe("GET /resources catalog API — sorting (#163)", () => {
   it.each(["newest", "price_asc", "price_desc", "title"])(
     "passes sort=%s through to listCatalog",
     async (sort) => {
-      await request(createTestApp()).get("/resources").query({ sort });
+      await request(createTestApp()).get("/resources").query({ sort }).expect(200);
 
       expect(mockListCatalog).toHaveBeenCalledWith(expect.objectContaining({ sort }));
     },
