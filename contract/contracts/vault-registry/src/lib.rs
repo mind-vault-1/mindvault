@@ -340,6 +340,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     // ── Fees ──────────────────────────────────────────────────────────────
     ("set_fee_config", "admin"),
     ("get_fee_config", "—"),
+    ("preview_fee_split", "—"),
     ("set_fee_recipient", "admin"),
     ("set_fee_destination", "admin"),
     ("get_fee_destination", "—"),
@@ -1418,6 +1419,35 @@ pub struct FeesClaimed {
     pub claimed_amount: i128,
     /// Accrued balance remaining after this claim (always 0 in v1).
     pub remaining_amount: i128,
+}
+
+/// Read-only preview of how a proposed sale amount would be split between the
+/// platform fee, the royalty recipient, and the resource creator.
+///
+/// Returned by [`VaultRegistry::preview_fee_split`]. All amounts are in USDC
+/// base units (stroops, 7 decimal places). The calculation uses the same
+/// integer arithmetic (truncation) as [`VaultRegistry::settle_payment`], so
+/// the preview is exact for any amount the settlement code would accept.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FeeSplitPreview {
+    /// The proposed sale amount that was passed to `preview_fee_split`.
+    pub amount: i128,
+    /// Platform fee in USDC base units (`amount * platform_fee_bps / 10_000`,
+    /// truncated). Zero when no fee config is set or `platform_fee_bps == 0`.
+    pub platform_fee: i128,
+    /// Royalty amount in USDC base units (`amount * royalty_bps / 10_000`,
+    /// truncated). Zero when no fee config is set or `royalty_bps == 0`.
+    pub royalty_amount: i128,
+    /// Creator remainder: `amount - platform_fee - royalty_amount`.
+    /// Always ≥ 1 stroop for any amount that passes price validation.
+    pub creator_amount: i128,
+    /// Basis points applied to calculate `platform_fee`.
+    /// Zero when no fee config is set.
+    pub platform_fee_bps: u32,
+    /// Basis points applied to calculate `royalty_amount`.
+    /// Zero when no fee config is set.
+    pub royalty_bps: u32,
 }
 
 /// On-chain record of a single x402/Soroban payment settlement for a resource.

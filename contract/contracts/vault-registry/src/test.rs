@@ -11990,3 +11990,4 @@ include!("test/tag_prefix_search.rs");
 include!("test/verifier_key_history.rs");
 include!("test/event_indexing_guide.rs");
 include!("test/pause_scope_matrix.rs");
+include!("test/fee_split_preview.rs");
