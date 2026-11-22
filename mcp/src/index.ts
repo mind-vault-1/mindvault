@@ -46,8 +46,10 @@ import {
 import { PROMPT_DEFINITIONS, getPrompt } from "./prompts.js";
 import {
   createProgressEmitter,
+  resolveProgressMinIntervalMs,
   scopeProgressToRequest,
   sequenceProgressNotifications,
+  throttleProgressEmitter,
 } from "./progress.js";
 import { truncateResponse } from "./truncation.js";
 import { applyPreviewLimits, serializePreview } from "./previewLimits.js";
@@ -5403,13 +5405,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   // notification for this call goes out ahead of it and none after (#841).
   const progress =
     progressToken != null
-      ? scopeProgressToRequest(
-          createProgressEmitter({
-            token: progressToken,
-            // Stamped with a replay-safe event id per notification (#1061).
-            send: sequenceProgressNotifications(extra.sendNotification),
-          }),
-        )
+      ? (() => {
+          const throttled = throttleProgressEmitter(
+            createProgressEmitter({
+              token: progressToken,
+              // Stamped with a replay-safe event id per notification (#1061).
+              send: sequenceProgressNotifications(extra.sendNotification),
+            }),
+            { minIntervalMs: resolveProgressMinIntervalMs(process.env) },
+          );
+          return scopeProgressToRequest(throttled.emit, { flush: throttled.flush });
+        })()
       : undefined;
   try {
     const result = await measureTool(metrics, name, () =>
