@@ -1,5 +1,5 @@
+import { createLimitedRegistryClient } from "../upstreamStellar.js";
 import { existsSync, unlinkSync } from "fs";
-import { createRegistryClient } from "@mindvault/registry-client";
 import {
   activeProfile,
   applyRestoredState,
@@ -133,7 +133,7 @@ export async function publisherTerms(
   confirmMainnet?: boolean,
 ): Promise<string> {
   const wallet = requireWallet();
-  const client = createRegistryClient({
+  const client = createLimitedRegistryClient({
     contractId: REGISTRY_CONTRACT_ID,
     networkPassphrase: REGISTRY_NETWORK_PASSPHRASE,
     rpcUrl: SOROBAN_RPC_URL,

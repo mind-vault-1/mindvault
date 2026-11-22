@@ -23,7 +23,16 @@
  * infrequent relative to the network calls they describe.
  */
 
-import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  readFileSync,
+} from "node:fs";
 import { dirname } from "node:path";
 
 /** Environment variables controlling the file sink. */

@@ -22,11 +22,13 @@
  *   - summary output shape
  */
 
+import { createRequire } from "node:module";
 import { describe, it, expect } from "vitest";
 import {
   verifyInstall,
   formatVerifyInstall,
   compareSemver,
+  readInstalledSdkVersion,
   MCP_SDK_MINIMUM,
 } from "./verifyInstall.js";
 
@@ -35,6 +37,17 @@ const CLEAN_ENV: NodeJS.ProcessEnv = {};
 const NODE_OK = "v20.11.0";
 /** A known-good SDK version that satisfies the minimum. */
 const SDK_OK = "1.29.0";
+
+describe("readInstalledSdkVersion", () => {
+  it("finds the SDK manifest when only the server entry is exported", () => {
+    const resolve = createRequire(import.meta.url).resolve;
+    const version = readInstalledSdkVersion((id) =>
+      id === "@modelcontextprotocol/sdk/server/index.js" ? resolve(id) : null,
+    );
+
+    expect(version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+});
 
 describe("verifyInstall", () => {
   it("returns ok:true for a clean default config", () => {
