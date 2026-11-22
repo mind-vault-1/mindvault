@@ -483,20 +483,6 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     cursor: { kind: "integer", min: 0 },
     limit: { kind: "integer", min: 1, max: REGISTRY_LIST_MAX_LIMIT },
   },
-  mindvault_batch_catalog_lookup: {
-    // `pattern` constrains each entry: ids are interpolated into API paths,
-    // so an entry must satisfy the same shape single-id tools enforce.
-    resourceIds: {
-      kind: "string_array",
-      required: true,
-      minLength: 1,
-      maxLength: BATCH_LOOKUP_MAX_IDS,
-      pattern: /^[A-Za-z0-9._-]+$/,
-      patternHint: "a resource id: letters, digits, dot, dash, or underscore (max 128 chars)",
-    },
-    refetch: { kind: "flag" },
-  },
-  mindvault_preview_metadata_hash: { resourceId: RESOURCE_ID },
   mindvault_tx_status: { txHash: { kind: "hash", required: true, bareHex: true } },
   // `confirm` is what resetGuard.isResetConfirmed reads. It was advertised in
   // ListTools and absent here, so every confirmed reset failed validation as an

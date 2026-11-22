@@ -2793,9 +2793,12 @@ export async function preview(resourceId: string, bypassCache = false): Promise<
   return serializePreview(applyPreviewLimits(out));
 }
 
-async function fetchPublishStatusData(resourceId: string): Promise<PublishStatusFetch> {
-  const metaRes = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`);
-  const verRes = await jsonFetch(`${BASE_URL}/resources/${resourceId}/verification`);
+async function fetchPublishStatusData(
+  resourceId: string,
+  signal?: AbortSignal,
+): Promise<PublishStatusFetch> {
+  const metaRes = await jsonFetch(`${BASE_URL}/resources/${resourceId}/meta`, { signal });
+  const verRes = await jsonFetch(`${BASE_URL}/resources/${resourceId}/verification`, { signal });
   return publishStatusFromResponses(resourceId, metaRes, verRes);
 }
 
@@ -2822,6 +2825,7 @@ export async function publishStatus(
     intervalMs?: unknown;
   },
   onProgress?: PublishProgressReporter,
+  signal?: AbortSignal,
 ): Promise<string> {
   const resourceId = publishStatusTarget(args, publishOperationScope());
 
@@ -2834,9 +2838,10 @@ export async function publishStatus(
     wait,
     timeoutMs,
     intervalMs,
-    fetchStatus: fetchPublishStatusData,
+    fetchStatus: (id) => fetchPublishStatusData(id, signal),
     onProgress,
     sleep: sleepMs,
+    signal,
   });
 
   const snapshot = buildPublishStatusSnapshot(resourceId, data, {
@@ -5172,14 +5177,18 @@ function dispatchToolOutcome(
   name: string,
   rawArgs: unknown,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
+  signal?: AbortSignal,
 ): Promise<ToolOutcome> {
-  return runWithRetryBudget(TOOL_RETRY_BUDGET, () => executeTool(name, rawArgs, onProgress));
+  return runWithRetryBudget(TOOL_RETRY_BUDGET, () =>
+    executeTool(name, rawArgs, onProgress, signal),
+  );
 }
 
 async function executeTool(
   name: string,
   rawArgs: unknown,
   onProgress?: (progress: number, total?: number, message?: string) => Promise<void>,
+  signal?: AbortSignal,
 ): Promise<ToolOutcome> {
   if (!isDispatchableTool(name)) {
     throw new UnknownToolError(name);
@@ -5278,7 +5287,7 @@ async function executeTool(
           dryRun: flag(dryRunArgs, "dryRun"),
         });
       case "mindvault_publish_status":
-        return publishStatus(rawRecord, onProgress);
+        return publishStatus(rawRecord, onProgress, signal);
       case "mindvault_publish_batch": {
         const batchItems = rawRecord.items;
         if (!Array.isArray(batchItems) || batchItems.length === 0) {
@@ -5329,6 +5338,7 @@ async function executeTool(
           args.timeoutMs,
           args.intervalMs,
           args.waitPolicy,
+          signal,
         );
       case "mindvault_buy_lease":
         return buyLease(requiredString(args, "resourceId"), requiredString(args, "tier"), {
@@ -5646,7 +5656,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             createProgressEmitter({
               token: progressToken,
               // Stamped with a replay-safe event id per notification (#1061).
-              send: sequenceProgressNotifications(extra.sendNotification),
+              send: sequenceProgressNotifications(extra.sendNotification, undefined, {
+                toolName: name,
+              }),
             }),
             { minIntervalMs: resolveProgressMinIntervalMs(process.env) },
           );
@@ -5661,7 +5673,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     : outputSchemaFor(name);
   try {
     const result = await measureTool(metrics, name, () =>
-      dispatchToolOutcome(name, args, progress?.emit),
+      dispatchToolOutcome(name, args, progress?.emit, extra?.signal),
     );
     // Opt-in structured telemetry stream (#891): one OTLP line to stderr per
     // tool call when MINDVAULT_METRICS_EXPORT_CONSOLE is set, so a log

@@ -5,7 +5,7 @@
 
 This file is a generated, human-readable summary of the MCP tool surface (ListTools). It is scoped to the `mcp/` package and intended as a quick reference for integrators and reviewers.
 
-Generated from `mcp/src/tools.ts` (74 tools).
+Generated from `mcp/src/tools.ts` (76 tools).
 
 ## Tools
 
@@ -28,6 +28,7 @@ Generated from `mcp/src/tools.ts` (74 tools).
 - `mindvault_buy_lease`: Buy a time-limited access lease on a resource instead of paying per request: pay the creator in USDC directly (hour, day, or week tier priced from the on-chain lease_price), then record the lease on the vault registry contract with the payment hash. The lease is Pending until a settler confirms the payment. Payments above MINDVAULT_MAX_AUTO_PAY_USDC require maxAutoPayUsdc. On mainnet, pass confirmMainnet: true (or set MINDVAULT_ALLOW_MAINNET=1). Pass dryRun: true to see the quote and steps without paying.
 - `mindvault_lease_status`: Read the access lease recorded on the vault registry contract for a resource and holder (defaults to the agent wallet): tier, state, start and expiry ledgers, and whether it currently grants access. Read-only; no payment.
 - `mindvault_export_receipts`: Export receipts for resources this agent has purchased as a schema-versioned document (JSON, RFC 4180 CSV in the envelope's csv field, or Newline-Delimited JSON in the envelope's ndjson field). Filter by resource, network, and date range. Reports a row count and the summed USDC total, so an agent can reconcile spend without re-reading each purchase.
+- `mindvault_verify_receipt`: Verify a payment receipt and return a machine-readable typed validation result for amount, currency, transaction hash, network, and resource identity. Reports valid, invalid, or indeterminate outcomes, handling partial and malformed receipts deterministically without network calls.
 - `mindvault_register_onchain`: Register an already-published, verified resource on the vault registry contract. Use this to retry on-chain registration after mindvault_publish reports the on-chain step failed. Prepares the unsigned transaction, signs it with the agent wallet (which must be the resource creator), submits it, and returns the registry status and on-chain tx hash.
 - `mindvault_agent_status`: Check the verification agent's earnings and activity. Returns total verifications, pass/fail counts, total USDC earned, average confidence score, and recent verification history with resource titles.
 - `mindvault_registry_info`: Return the on-chain vault-registry contract ID, network passphrase, RPC URL, resource fields, and schema version negotiation status. The schemaVersion field reports which resource schema versions this client supports, the current version it targets, and the version detected on the deployed contract (or null when the contract is unreachable). Use this to verify ownership, price, and listing state directly from Stellar, and to check schema compatibility before calling mutation tools.
