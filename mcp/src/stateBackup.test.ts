@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 import { createCipheriv, randomBytes, scryptSync } from "crypto";
 import * as fs from "fs";
 import {
@@ -22,27 +22,47 @@ import {
   checkStatePermissions,
   scanPersistedStateSecrets,
   quarantineStateFile,
+  resolveProfileNetwork,
+  validateBackupNetworkIdentities,
   preserveLegacyState,
   writeAtomically,
   validateBackupProfiles,
 } from "./stateBackup.js";
 import { STATE_VERSION, type ProfileState } from "./profiles.js";
+import { Keypair } from "@stellar/stellar-sdk";
+
+vi.mock("os", async (importOriginal) => {
+  const os = await importOriginal<typeof import("os")>();
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const home = mkdtempSync(join(os.tmpdir(), "mindvault-state-backup-test-"));
+  afterAll(() => rmSync(home, { recursive: true, force: true }));
+  return { ...os, homedir: () => home };
+});
 
 const STATE_DIR = join(homedir(), ".mindvault");
 const STATE_FILE = join(STATE_DIR, "state.json");
 const PASS = "test-passphrase-ok";
+
+// Real, deterministic keypairs: restore validates that each secret derives its public key (#1208).
+const PUBLISHER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 1));
+const BUYER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 2));
+const GPUB = PUBLISHER.publicKey();
+const SSECRET = PUBLISHER.secret();
+const GBUY = BUYER.publicKey();
+const SBUY = BUYER.secret();
 
 const sample: ProfileState = {
   version: STATE_VERSION,
   activeProfile: "publisher",
   profiles: {
     publisher: {
-      wallet: { publicKey: "GPUB", secretKey: "SSECRET" },
+      wallet: { publicKey: GPUB, secretKey: SSECRET },
       apiKey: "api-key-xyz",
-      network: "stellar:testnet",
+      network: "testnet",
     },
     buyer: {
-      wallet: { publicKey: "GBUY", secretKey: "SBUY" },
+      wallet: { publicKey: GBUY, secretKey: SBUY },
     },
   },
 };
@@ -80,10 +100,10 @@ describe("stateBackup", () => {
   it("exportState never leaks plaintext secrets", () => {
     const blob = exportState(PASS);
     expect(blob.startsWith("v1:")).toBe(true);
-    expect(blob).not.toContain("SSECRET");
-    expect(blob).not.toContain("SBUY");
+    expect(blob).not.toContain(SSECRET);
+    expect(blob).not.toContain(SBUY);
     expect(blob).not.toContain("api-key-xyz");
-    expect(blob).not.toContain("GPUB");
+    expect(blob).not.toContain(GPUB);
   });
 
   it("exports a private encrypted recovery file", () => {
@@ -92,7 +112,7 @@ describe("stateBackup", () => {
     const contents = readFileSync(path, "utf8");
     expect(path).toContain("state-2026-01-02T03-04-05-000Z.backup");
     expect(contents).toMatch(/^v1:/);
-    expect(contents).not.toContain("SSECRET");
+    expect(contents).not.toContain(SSECRET);
     expect(statSync(path).mode & 0o7777).toBe(0o600);
     rmSync(path);
   });
@@ -168,8 +188,8 @@ describe("stateBackup", () => {
   it("readPersistedState returns normalized profiles", () => {
     const state = readPersistedState();
     expect(state.activeProfile).toBe("publisher");
-    expect(state.profiles.publisher?.wallet?.secretKey).toBe("SSECRET");
-    expect(state.profiles.buyer?.wallet?.publicKey).toBe("GBUY");
+    expect(state.profiles.publisher?.wallet?.secretKey).toBe(SSECRET);
+    expect(state.profiles.buyer?.wallet?.publicKey).toBe(GBUY);
   });
 });
 
@@ -557,8 +577,8 @@ describe("restoreState rejects duplicate/conflicting profile identifiers (#1047)
       version: 1,
       activeProfile: "publisher",
       profiles: {
-        publisher: { wallet: { publicKey: "GPUB", secretKey: "SPUB" }, apiKey: "key-1" },
-        buyer: { wallet: { publicKey: "GBUY", secretKey: "SBUY" } },
+        publisher: { wallet: { publicKey: GPUB, secretKey: SSECRET }, apiKey: "key-1" },
+        buyer: { wallet: { publicKey: GBUY, secretKey: SBUY } },
         staging: { network: "testnet" },
       },
     });
@@ -570,5 +590,144 @@ describe("restoreState rejects duplicate/conflicting profile identifiers (#1047)
     expect(restored).not.toBeNull();
     expect(msg).toContain("3 profile");
     expect(msg).toContain("publisher");
+  });
+
+  // ── #1208: network identities are validated before anything is merged ──────
+
+  const restoreOrErrors = (payload: unknown, expectedNetwork?: string) => {
+    let restored: ProfileState | null = null;
+    let error: unknown = null;
+    try {
+      restoreState(
+        buildBlobFromPayload(payload),
+        PASS,
+        (state) => {
+          restored = state;
+        },
+        expectedNetwork ? { expectedNetwork } : {},
+      );
+    } catch (err) {
+      error = err;
+    }
+    return { restored: restored as ProfileState | null, error: error as Error | null };
+  };
+
+  it("accepts a testnet backup on a server that reports its network as an x402 id", () => {
+    // The server passes "stellar:testnet"; profiles store "testnet". Comparing the
+    // raw strings rejected every network-bound backup before #1208.
+    const { restored, error } = restoreOrErrors(
+      {
+        version: 1,
+        activeProfile: "publisher",
+        profiles: {
+          publisher: { wallet: { publicKey: GPUB, secretKey: SSECRET }, network: "testnet" },
+        },
+      },
+      "stellar:testnet",
+    );
+    expect(error).toBeNull();
+    expect(restored?.profiles.publisher?.network).toBe("testnet");
+  });
+
+  it("rejects a mainnet profile on a testnet server, naming the profile, and writes nothing", () => {
+    const { restored, error } = restoreOrErrors(
+      {
+        version: 1,
+        activeProfile: "prod",
+        profiles: { prod: { wallet: { publicKey: GPUB, secretKey: SSECRET }, network: "mainnet" } },
+      },
+      "stellar:testnet",
+    );
+    expect(restored).toBeNull();
+    expect(error).toBeInstanceOf(StateBackupError);
+    expect(error?.message).toContain("profiles.prod.network");
+    expect(error?.message).toMatch(/belongs to network "mainnet" but this server runs "testnet"/);
+  });
+
+  it("treats stellar:pubnet and stellar:mainnet as mainnet", () => {
+    const payload = {
+      version: 1,
+      activeProfile: "prod",
+      profiles: { prod: { network: "mainnet" } },
+    };
+    expect(restoreOrErrors(payload, "stellar:pubnet").error).toBeNull();
+    expect(restoreOrErrors(payload, "stellar:mainnet").error).toBeNull();
+    expect(restoreOrErrors(payload, "mainnet").error).toBeNull();
+  });
+
+  it("rejects an unknown network binding instead of silently dropping it", () => {
+    const { restored, error } = restoreOrErrors({
+      version: 1,
+      activeProfile: "x",
+      profiles: { x: { network: "futurenet" } },
+    });
+    expect(restored).toBeNull();
+    expect(error?.message).toContain("profiles.x.network");
+    expect(error?.message).toContain('Expected "testnet" or "mainnet"');
+  });
+
+  it("rejects a secret key that does not belong to the stored public key", () => {
+    const { restored, error } = restoreOrErrors({
+      version: 1,
+      activeProfile: "swapped",
+      profiles: { swapped: { wallet: { publicKey: GPUB, secretKey: SBUY } } },
+    });
+    expect(restored).toBeNull();
+    expect(error?.message).toContain("profiles.swapped.wallet");
+    expect(error?.message).toContain("does not belong to the stored public key");
+  });
+
+  it("rejects malformed wallet keys without echoing them", () => {
+    const { error } = restoreOrErrors({
+      version: 1,
+      activeProfile: "bad",
+      profiles: { bad: { wallet: { publicKey: "GNOTAKEY", secretKey: "SNOTASEED-do-not-echo" } } },
+    });
+    expect(error?.message).toContain("profiles.bad.wallet.publicKey");
+    expect(error?.message).toContain("profiles.bad.wallet.secretKey");
+    expect(error?.message).not.toContain("SNOTASEED-do-not-echo");
+    expect(error?.message).not.toContain("GNOTAKEY");
+  });
+
+  it("reports every invalid identity in one deterministic, sorted list", () => {
+    const payload = {
+      version: 1,
+      activeProfile: "a",
+      profiles: {
+        zeta: { network: "devnet" },
+        alpha: { wallet: { publicKey: GPUB, secretKey: SBUY }, network: "mainnet" },
+      },
+    };
+    const first = restoreOrErrors(payload, "stellar:testnet").error?.message;
+    const second = restoreOrErrors(payload, "stellar:testnet").error?.message;
+    expect(first).toBe(second);
+    const fields = [...(first ?? "").matchAll(/• (profiles\.[\w.]+):/g)].map((m) => m[1]);
+    expect(fields).toEqual([
+      "profiles.alpha.network",
+      "profiles.alpha.wallet",
+      "profiles.zeta.network",
+    ]);
+  });
+
+  it("validateBackupNetworkIdentities returns no errors for a clean backup", () => {
+    expect(
+      validateBackupNetworkIdentities(
+        {
+          profiles: {
+            a: { wallet: { publicKey: GPUB, secretKey: SSECRET }, network: "testnet" },
+            b: {},
+          },
+        },
+        { expectedNetwork: "stellar:testnet" },
+      ),
+    ).toEqual([]);
+  });
+
+  it("resolveProfileNetwork normalizes deployment names and x402 ids", () => {
+    expect(resolveProfileNetwork("testnet")).toBe("testnet");
+    expect(resolveProfileNetwork("stellar:testnet")).toBe("testnet");
+    expect(resolveProfileNetwork("stellar:pubnet")).toBe("mainnet");
+    expect(resolveProfileNetwork("stellar:futurenet")).toBeUndefined();
+    expect(resolveProfileNetwork(undefined)).toBeUndefined();
   });
 });

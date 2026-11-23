@@ -22,6 +22,23 @@ is a separate Rust/Cargo workspace managed with the Stellar CLI.
 
 ## Prerequisites
 
+The repository contains two workspaces: `contract/` is a standalone Rust/Cargo
+workspace, and the rest is a pnpm workspace. You only need the tooling for the
+part you are changing.
+
+### Contract-only contributors
+
+- **Rust** (stable toolchain) and **cargo**
+- **Stellar CLI** — follow the
+  [Stellar smart contract setup guide](https://developers.stellar.org/docs/build/smart-contracts/getting-started/setup)
+- **Node.js 20+** and **pnpm** (`npm i -g pnpm`) only if you run the root
+  `pnpm contract:*` scripts or regenerate TypeScript bindings
+
+You do **not** need Supabase, a web app, or funded wallets to build and test the
+contract.
+
+### Full-stack contributors
+
 - **Node.js 20+** and **pnpm** (`npm i -g pnpm`)
 - **Rust** + the **Stellar CLI** for contract work — see
   [Stellar setup](https://developers.stellar.org/docs/build/smart-contracts/getting-started/setup)
@@ -31,6 +48,75 @@ is a separate Rust/Cargo workspace managed with the Stellar CLI.
 ## Local setup
 
 See the complete **[Local Setup Guide](docs/local-setup.md)** to get from a fresh clone to a running server and web app.
+
+### First contribution: contract-only
+
+You can go from a fresh clone to a focused PR without setting up Supabase, the
+web app, or wallets. The example below changes only the `vault-registry` crate;
+the helper functions and test layout are described in
+[`contract/README.md`](contract/README.md).
+
+1. Fork the repository, clone your fork, and enter the Rust workspace:
+
+   ```bash
+   git clone https://github.com/<your-account>/mindvault.git
+   cd mindvault/contract
+   ```
+
+2. Run the contract tests. This uses Cargo directly, so no root `pnpm install`
+   is needed:
+
+   ```bash
+   cargo test --manifest-path Cargo.toml
+   # equivalent root script, if you do have pnpm installed:
+   # pnpm contract:test
+   ```
+
+3. Make a focused change. For example, add a `#[test]` to
+   [`src/test/payment_ownership_binding.rs`](contract/contracts/vault-registry/src/test/payment_ownership_binding.rs)
+   that records a payment, transfers the resource, and asserts that
+   `try_settle_payment` returns `Err(Ok(Error::Unauthorized))`. The existing
+   tests in that file show the `setup_with_settler`, `register_default`, and
+   `String::from_str` patterns to follow. Tests written in that directory are
+   picked up through the `include!` list at the bottom of `src/test.rs`.
+
+4. Check formatting and the full local contract gate:
+
+   ```bash
+   cd contracts/vault-registry
+   cargo fmt --all -- --check
+   make preflight
+   ```
+
+   `make preflight` runs the tests, an optimized build, and the WASM size guard.
+   `make footprint` prints the storage-byte report; if your change widens a
+   stored struct, follow
+   [docs/contract-storage-migration.md](docs/contract-storage-migration.md) and
+   update [docs/contract-storage-footprint.md](docs/contract-storage-footprint.md).
+
+5. If the on-chain ABI changed (new method, changed argument, or changed
+   returned struct), Node.js and pnpm become required to regenerate the client
+   bindings:
+
+   ```bash
+   cd ../..
+   CONTRACT_WASM=contract/target/wasm32v1-none/release/vault_registry.wasm \
+     pnpm contract:bindings
+   ```
+
+   See [docs/registry-client-bindings.md](docs/registry-client-bindings.md) for
+   which generated files to commit. A test-only or doc-only change does not
+   need this step.
+
+**Compatibility and operational implications.** `contract/` has its own
+`Cargo.toml` and is not part of the pnpm workspace, so Cargo commands work
+without installing JavaScript dependencies. Conversely, the root
+`pnpm contract:*` scripts and binding generation do require pnpm and the
+Stellar CLI. CI runs Rust formatting, clippy, tests, and the footprint report
+alongside the JavaScript checks, so a contract-only PR still needs the full
+`make preflight` gate. Build output under `contract/target/` is ignored and
+must not be committed. Before proposing an upgrade, read the
+[contract upgrade checklist](docs/contract-upgrade-checklist.md).
 
 ## Smart contract development
 
@@ -173,12 +259,19 @@ MindVault uses automated releases powered by [release-please](https://github.com
 - **chore:** and other types do not trigger version bumps
 
 The release workflow:
+
 1. Detects new commits on `main`
 2. Determines the next semantic version based on commit types
 3. Creates a git tag and GitHub release
 4. Generates/updates `CHANGELOG.md` with release notes
 
 No manual release steps are required—just follow the Conventional Commits format for your PR titles and commit messages.
+
+For changes to the MCP tools, prompts, resources, schemas, annotations, or
+transport behavior, follow the [MCP protocol change policy](docs/mcp-protocol-change-policy.md)
+and [MCP package publish checklist](docs/mcp-publish-checklist.md). The latter
+distinguishes the repository's GitHub release workflow from optional npm
+publishing of `@mindvault/mcp`.
 
 ## Security
 

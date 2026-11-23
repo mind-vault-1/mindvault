@@ -22,11 +22,13 @@
  *   - summary output shape
  */
 
+import { createRequire } from "node:module";
 import { describe, it, expect } from "vitest";
 import {
   verifyInstall,
   formatVerifyInstall,
   compareSemver,
+  readInstalledSdkVersion,
   MCP_SDK_MINIMUM,
 } from "./verifyInstall.js";
 
@@ -35,6 +37,17 @@ const CLEAN_ENV: NodeJS.ProcessEnv = {};
 const NODE_OK = "v20.11.0";
 /** A known-good SDK version that satisfies the minimum. */
 const SDK_OK = "1.29.0";
+
+describe("readInstalledSdkVersion", () => {
+  it("finds the SDK manifest when only the server entry is exported", () => {
+    const resolve = createRequire(import.meta.url).resolve;
+    const version = readInstalledSdkVersion((id) =>
+      id === "@modelcontextprotocol/sdk/server/index.js" ? resolve(id) : null,
+    );
+
+    expect(version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+});
 
 describe("verifyInstall", () => {
   it("returns ok:true for a clean default config", () => {
@@ -202,6 +215,74 @@ describe("verifyInstall", () => {
       expect(check.detail).toMatch(/http\(s\)/);
     },
   );
+
+  it.each(["HORIZON_URL", "SOROBAN_RPC_URL"] as const)(
+    "rejects embedded credentials in %s and does not echo them",
+    (variable) => {
+      // Use a testnet hostname so verifyInstall's credential check is the only
+      // failure, not a cross-network mismatch from validateNetworkConfig.
+      const url =
+        variable === "SOROBAN_RPC_URL"
+          ? "https://user:s3cr3t@soroban-testnet.example.com"
+          : "https://user:s3cr3t@horizon-testnet.example.com";
+      const result = verifyInstall({ [variable]: url }, NODE_OK, SDK_OK);
+      expect(result.ok).toBe(false);
+      const check = result.checks.find((c) => c.name === variable)!;
+      expect(check.ok).toBe(false);
+      expect(check.detail).toMatch(/embedded credentials/);
+      // The plaintext password and username must never appear in the output.
+      expect(check.detail).not.toContain("s3cr3t");
+      expect(check.detail).not.toContain("user:s3cr3t");
+    },
+  );
+
+  it("rejects embedded credentials in MINDVAULT_URL and does not echo them", () => {
+    const result = verifyInstall(
+      { MINDVAULT_URL: "https://admin:topsecret@mindvault.example.com" },
+      NODE_OK,
+      SDK_OK,
+    );
+    expect(result.ok).toBe(false);
+    const check = result.checks.find((c) => c.name === "MINDVAULT_URL")!;
+    expect(check.ok).toBe(false);
+    expect(check.detail).toMatch(/embedded credentials/);
+    expect(check.detail).not.toContain("topsecret");
+    expect(check.detail).not.toContain("admin:topsecret");
+  });
+
+  it("rejects embedded credentials in SPONSORED_ACCOUNT_URL and does not echo them", () => {
+    const result = verifyInstall(
+      { SPONSORED_ACCOUNT_URL: "https://user:pw@sponsor.example.com" },
+      NODE_OK,
+      SDK_OK,
+    );
+    expect(result.ok).toBe(false);
+    const check = result.checks.find((c) => c.name === "SPONSORED_ACCOUNT_URL")!;
+    expect(check.ok).toBe(false);
+    expect(check.detail).toMatch(/embedded credentials/);
+    expect(check.detail).not.toContain(":pw@");
+  });
+
+  it("distinguishes unsupported scheme from embedded credentials in SOROBAN_RPC_URL", () => {
+    const schemeResult = verifyInstall(
+      { SOROBAN_RPC_URL: "ws://rpc.example.com" },
+      NODE_OK,
+      SDK_OK,
+    );
+    const credResult = verifyInstall(
+      { SOROBAN_RPC_URL: "https://user:pass@soroban-testnet.example.com" },
+      NODE_OK,
+      SDK_OK,
+    );
+
+    const schemeCheck = schemeResult.checks.find((c) => c.name === "SOROBAN_RPC_URL")!;
+    const credCheck = credResult.checks.find((c) => c.name === "SOROBAN_RPC_URL")!;
+
+    expect(schemeCheck.detail).toMatch(/unsupported scheme/i);
+    expect(credCheck.detail).toMatch(/embedded credentials/i);
+    expect(schemeCheck.detail).not.toMatch(/embedded credentials/i);
+    expect(credCheck.detail).not.toMatch(/unsupported scheme/i);
+  });
 
   it("fails when mainnet is set but VAULT_REGISTRY_CONTRACT_ID is absent", () => {
     const result = verifyInstall({ STELLAR_NETWORK: "mainnet" }, NODE_OK, SDK_OK);

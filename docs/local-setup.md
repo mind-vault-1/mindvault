@@ -106,3 +106,4 @@ You're all set!
 
 - **Wallet Connection Issues**: See [Wallet Connection Troubleshooting](wallet-connection-troubleshooting.md).
 - **x402 Payment/Sign Failures**: See [x402 Payment Troubleshooting](x402-payment-troubleshooting.md).
+- **Starting fresh**: See [Local Testnet Reset](local-testnet-reset.md) to wipe the catalog, storage, and optionally your wallets, then reseed.

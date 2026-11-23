@@ -1257,6 +1257,154 @@ fn register_with_hash_immutably_binds_metadata_pointer() {
 }
 
 #[test]
+fn content_and_attestation_hashes_normalize_consistently_across_methods() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+    let expected = String::from_str(&env, "sha256:abcd1234ef56");
+    let metadata = String::from_str(&env, "ipfs://QmNormalize");
+
+    // Every accepted spelling of the same digest must land on one canonical
+    // value, whether it arrives through register_with_hash, register_with_memo,
+    // register_batch, or set_verification_status.
+    let variants = [
+        "  SHA256:AbCd1234Ef56  ",
+        "SHA-256:0xABCD1234EF56",
+        "0xAbCd1234Ef56",
+        "  abcd1234ef56\t\n",
+    ];
+    for (index, raw_hash) in variants.iter().enumerate() {
+        let id = String::from_str(&env, &alloc::format!("normhash{index}"));
+        let input = String::from_str(&env, raw_hash);
+        if index == 1 {
+            client.register_with_memo(
+                &creator,
+                &id,
+                &100i128,
+                &metadata,
+                &empty_tags(&env),
+                &Some(input.clone()),
+                &Some(BytesN::from_array(&env, &[index as u8; 32])),
+            );
+        } else {
+            client.register_with_hash(
+                &creator,
+                &id,
+                &100i128,
+                &metadata,
+                &empty_tags(&env),
+                &Some(input.clone()),
+            );
+        }
+        assert_eq!(client.get(&id).content_hash, Some(expected.clone()));
+
+        client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &Some(input));
+        assert_eq!(client.get_attestation_hash(&id), Some(expected.clone()));
+    }
+
+    let mut items = Vec::new(&env);
+    items.push_back(BatchRegisterItem {
+        id: String::from_str(&env, "normbatch"),
+        price: 100i128,
+        metadata: metadata.clone(),
+        tags: empty_tags(&env),
+        content_hash: Some(String::from_str(&env, "  SHA-256:0xABCD1234EF56\n")),
+    });
+    let result = client.register_batch(&creator, &items);
+    assert_eq!(result.succeeded.len(), 1);
+    assert_eq!(result.failed.len(), 0);
+    assert_eq!(
+        client
+            .get(&String::from_str(&env, "normbatch"))
+            .content_hash,
+        Some(expected.clone())
+    );
+
+    // Malformed encodings are rejected with the field's existing error.
+    let bad_hashes = ["   \t ", "sha256:ab cd", "0x", "sha/256:abcd"];
+    for (index, raw_hash) in bad_hashes.iter().enumerate() {
+        let id = String::from_str(&env, &alloc::format!("normbad{index}"));
+        assert_eq!(
+            client.try_register_with_hash(
+                &creator,
+                &id,
+                &100i128,
+                &metadata,
+                &empty_tags(&env),
+                &Some(String::from_str(&env, raw_hash)),
+            ),
+            Err(Ok(Error::ContentHashTooLong))
+        );
+    }
+
+    // The same malformed inputs cannot change an already-verified resource.
+    let verified_id = String::from_str(&env, "normhash0");
+    for raw_hash in bad_hashes {
+        assert_eq!(
+            client.try_set_verification_status(
+                &verified_id,
+                &verifier,
+                &VerificationStatus::Rejected,
+                &Some(String::from_str(&env, raw_hash)),
+            ),
+            Err(Ok(Error::AttestationHashTooLong))
+        );
+    }
+    assert_eq!(
+        client.get(&verified_id).verified,
+        VerificationStatus::Verified
+    );
+    assert_eq!(client.get_attestation_hash(&verified_id), Some(expected));
+}
+
+#[test]
+fn verify_attestation_hash_accepts_equivalent_and_legacy_encodings() {
+    fn uppercase_variant(env: &Env, canonical: &String) -> String {
+        let mut bytes = alloc::vec![0u8; canonical.len() as usize];
+        canonical.copy_into_slice(&mut bytes);
+        let mut variant: alloc::vec::Vec<u8> = alloc::vec![];
+        variant.extend_from_slice(b"  SHA-256:0x");
+        for &byte in &bytes[b"sha256:".len()..] {
+            variant.push(byte.to_ascii_uppercase());
+        }
+        variant.extend_from_slice(b"\n");
+        String::from_bytes(env, &variant)
+    }
+
+    let (env, creator, _admin, client) = setup_with_admin();
+    let id = register_default(&env, &creator, &client, "vnorm1");
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+    let document_hash = BytesN::from_array(&env, &[7u8; 32]);
+    let verified_expected =
+        client.compute_attestation_hash(&id, &VerificationStatus::Verified, &document_hash);
+
+    // A legacy mixed-case record written before canonical storage still
+    // verifies, without a storage migration.
+    client.set_verification_status(&id, &verifier, &VerificationStatus::Verified, &None);
+    let legacy = uppercase_variant(&env, &verified_expected);
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::AttestationHash(id.clone()), &legacy);
+    });
+    assert!(client.verify_attestation_hash(&id, &VerificationStatus::Verified, &document_hash));
+
+    // New writes canonicalize the mixed-case spelling on the way in.
+    let rejected_expected =
+        client.compute_attestation_hash(&id, &VerificationStatus::Rejected, &document_hash);
+    let rejected_variant = uppercase_variant(&env, &rejected_expected);
+    client.set_verification_status(
+        &id,
+        &verifier,
+        &VerificationStatus::Rejected,
+        &Some(rejected_variant),
+    );
+    assert_eq!(client.get_attestation_hash(&id), Some(rejected_expected));
+    assert!(client.verify_attestation_hash(&id, &VerificationStatus::Rejected, &document_hash));
+}
+
+#[test]
 fn register_with_hash_without_content_hash_keeps_metadata_mutable() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "hashoptional");
@@ -4854,6 +5002,13 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.accept_admin(&admin2);
     record(&env, &client, &mut observed);
 
+    // Nominate then cancel a pending admin nomination (#980) -> "nomcncl".
+    let canceled = Address::generate(&env);
+    client.nominate_new_admin(&canceled);
+    record(&env, &client, &mut observed);
+    client.cancel_admin_nomination(&admin2);
+    record(&env, &client, &mut observed);
+
     client.set_registry_terms_hash(&String::from_str(&env, "regterms")); // -> "setregt"
     record(&env, &client, &mut observed);
 
@@ -4867,8 +5022,8 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.set_verification_status(&r2, &verifier, &VerificationStatus::Verified, &None); // -> "verify"
     record(&env, &client, &mut observed);
     client.set_fee_config(&FeeConfig {
-        platform_fee_bps: 100,
-        royalty_bps: 100,
+        platform_fee_bps: 60,
+        royalty_bps: 30,
         fee_recipient: Some(admin2.clone()),
     }); // -> "setfee"
     record(&env, &client, &mut observed);
@@ -4949,6 +5104,15 @@ fn full_workflow_emits_exactly_the_documented_events() {
     // Payments require a listed resource; r0 was delisted above.
     client.set_listed(&r0, &true); // -> "setlisted"
     record(&env, &client, &mut observed);
+    client.simulate_record_payment(
+        &settler,
+        &workflow_receipt,
+        &r0,
+        &payer,
+        &200i128,
+        &String::from_str(&env, "txhash123"),
+    ); // -> "simvalid"
+    record(&env, &client, &mut observed);
     client.record_payment(
         &settler,
         &workflow_receipt,
@@ -4959,6 +5123,28 @@ fn full_workflow_emits_exactly_the_documented_events() {
     ); // -> "payment"
     record(&env, &client, &mut observed);
     client.settle_payment(&settler, &workflow_receipt); // -> "settle"
+    record(&env, &client, &mut observed);
+    client.simulate_record_payment(
+        &settler,
+        &String::from_str(&env, "wfrcpt2"),
+        &r0,
+        &payer,
+        &200i128,
+        &String::from_str(&env, "txhash124"),
+    ); // -> "simvalid"
+    record(&env, &client, &mut observed);
+    client.claim_fees(); // -> "claimfee"
+    record(&env, &client, &mut observed);
+    client.set_refund_window(&admin2, &(DAY_IN_LEDGERS * 2)); // -> "refwin"
+    record(&env, &client, &mut observed);
+    client.record_admin_refund(
+        &admin2,
+        &String::from_str(&env, "wfrefund1"),
+        &workflow_receipt,
+        &payer,
+        &50i128,
+        &String::from_str(&env, "refundtx1"),
+    ); // -> "refund"
     record(&env, &client, &mut observed);
     // Time-limited access leases: buy (pending), settle, revoke.
     let lease_amount = client.lease_price(&r0, &LeaseTier::Hour);
@@ -4983,6 +5169,14 @@ fn full_workflow_emits_exactly_the_documented_events() {
     record(&env, &client, &mut observed);
     client.set_paused(&admin2, &false);
     record(&env, &client, &mut observed);
+    client.set_payment_paused(&admin2, &true); // -> "payment_pause"
+    record(&env, &client, &mut observed);
+    client.set_payment_paused_until(&admin2, &200); // -> "payment_pause", "payment_pause_until"
+    record(&env, &client, &mut observed);
+    client.set_payment_paused(&admin2, &false);
+    record(&env, &client, &mut observed);
+    client.set_maintenance_status(&admin2, &MaintenanceKind::Scheduled, &1u32); // -> "mntstat"
+    record(&env, &client, &mut observed);
 
     // Network bootstrap and the creator reactivation path round out the
     // documented event schema (`netinit` was already observed above, so this
@@ -4996,11 +5190,26 @@ fn full_workflow_emits_exactly_the_documented_events() {
     let moderator = Address::generate(&env);
     client.add_moderator(&moderator); // -> "addmod"
     record(&env, &client, &mut observed);
+    client.set_flag_resolution_window(&10); // -> "flagwin"
+    record(&env, &client, &mut observed);
     client.flag_resource(&r0, &moderator, &FlagReason::Spam); // -> "flag"
     record(&env, &client, &mut observed);
     client.set_flag_reason_hash(&r0, &moderator, &String::from_str(&env, "reasonhash")); // -> "flagrsn"
     record(&env, &client, &mut observed);
     client.unflag_resource(&r0, &moderator); // -> "unflag"
+    record(&env, &client, &mut observed);
+    assert_eq!(client.get_flag_deadline(&r0), None);
+    client.flag_resource(&r0, &moderator, &FlagReason::Spam);
+    let deadline = client.get_flag_deadline(&r0).expect("flag has a deadline");
+    env.ledger().set_sequence_number(deadline);
+    assert!(!client.is_flag_overdue(&r0));
+    assert_eq!(
+        client.try_force_resolve_flag(&r0, &admin2),
+        Err(Ok(Error::FlagNotOverdue)),
+    );
+    env.ledger().set_sequence_number(deadline + 1);
+    assert!(client.is_flag_overdue(&r0));
+    client.force_resolve_flag(&r0, &admin2); // -> "flagfrc", "unflag"
     record(&env, &client, &mut observed);
     client.remove_moderator(&moderator); // -> "rmmod"
     record(&env, &client, &mut observed);
@@ -5031,8 +5240,14 @@ fn full_workflow_emits_exactly_the_documented_events() {
 
 // ── Fee configuration and basis-point calculation ───────────────────────────
 
+/// Preview helper under test. Tests deliberately call the same private
+/// helpers that `settle_payment` uses so a rounding change cannot drift.
 fn fee_amount(amount: i128, fee_bps: u32) -> i128 {
-    amount * i128::from(fee_bps) / i128::from(FEE_BPS_DENOM)
+    VaultRegistry::fee_amount_from_bps(amount, fee_bps)
+}
+
+fn fee_destination_amount(platform_amount: i128, destination_bps: u32) -> i128 {
+    VaultRegistry::fee_destination_amount(platform_amount, destination_bps)
 }
 
 #[test]
@@ -5052,6 +5267,51 @@ fn fee_amount_calculation_truncates_fractional_stroops() {
 fn fee_amount_calculation_handles_maximum_rate_and_large_amount() {
     assert_eq!(fee_amount(1_000_000, MAX_FEE_BPS), 500_000);
     assert_eq!(fee_amount(MAX_PRICE, MAX_FEE_BPS), 500_000_000_000_000_000);
+}
+
+#[test]
+fn fee_preview_floor_matches_accrued_fee_at_truncation_boundaries() {
+    let (env, creator, admin, settler, client) = setup_with_settler();
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 100,
+        royalty_bps: 0,
+        fee_recipient: Some(admin.clone()),
+    });
+    let destination = FeeDestinationConfig {
+        bps: 5_000,
+        destination: FeeDestination::Burn,
+    };
+    client.set_fee_destination(&destination);
+
+    // 1 base unit of fee sits exactly on the floor boundary; 99 units are
+    // rounded away. Both must agree with the persisted accrued fee.
+    for (index, (price, expected_fee)) in [(101i128, 1i128), (99i128, 0i128)]
+        .into_iter()
+        .enumerate()
+    {
+        let id = if index == 0 { "feebnd01" } else { "feebnd02" };
+        let id = register_priced(&env, &creator, &client, id, price);
+        let receipt_id = String::from_str(&env, if index == 0 { "feebndr1" } else { "feebndr2" });
+        let payer = Address::generate(&env);
+        let preview = fee_amount(price, 100);
+        assert_eq!(preview, expected_fee);
+        let destination_share = fee_destination_amount(preview, destination.bps);
+        assert_eq!(destination_share + (preview - destination_share), preview);
+
+        client.record_payment(
+            &settler,
+            &receipt_id,
+            &id,
+            &payer,
+            &price,
+            &String::from_str(&env, if index == 0 { "feebndx1" } else { "feebndx2" }),
+        );
+        client.settle_payment(&settler, &receipt_id);
+
+        assert_eq!(client.get_payment(&receipt_id).amount, price);
+        assert_eq!(client.get_accrued_fees(), preview);
+        client.claim_fees();
+    }
 }
 
 proptest! {
@@ -5100,6 +5360,63 @@ proptest! {
         );
         prop_assert!(client.get_refunded_amount(&payment_id) <= payment_amount);
         prop_assert_eq!(client.get_refunded_amount(&payment_id), first_refund);
+    }
+
+    /// A quote produced from fee basis points must equal the fee persisted by
+    /// settlement for every fee/price boundary, including tiny amounts where
+    /// integer division drops the whole fee.
+    #[test]
+    fn fee_preview_matches_persisted_receipt_across_fee_and_price_boundaries(
+        price in 1i128..=20_000i128,
+        platform_fee_bps in 0u32..=MAX_FEE_BPS,
+        royalty_bps in 0u32..=MAX_FEE_BPS,
+        destination_bps in 1u32..=FEE_BPS_DENOM,
+    ) {
+        let combined_bps = platform_fee_bps + royalty_bps;
+        prop_assume!(combined_bps <= MAX_FEE_BPS);
+        prop_assume!(price > i128::from(combined_bps));
+
+        let (env, creator, admin, settler, client) = setup_with_settler();
+        client.set_fee_config(&FeeConfig {
+            platform_fee_bps,
+            royalty_bps,
+            fee_recipient: Some(admin),
+        });
+        let destination = if platform_fee_bps == 0 {
+            FeeDestinationConfig {
+                bps: 0,
+                destination: FeeDestination::None,
+            }
+        } else {
+            let config = FeeDestinationConfig {
+                bps: destination_bps,
+                destination: FeeDestination::Burn,
+            };
+            client.set_fee_destination(&config);
+            config
+        };
+
+        let id = register_priced(&env, &creator, &client, "feeprop1", price);
+        let receipt_id = String::from_str(&env, "feeprop01");
+        let payer = Address::generate(&env);
+        let preview = fee_amount(price, platform_fee_bps);
+        let destination_share = fee_destination_amount(preview, destination.bps);
+
+        prop_assert_eq!(destination_share + (preview - destination_share), preview);
+        prop_assert!(preview <= price);
+
+        client.record_payment(
+            &settler,
+            &receipt_id,
+            &id,
+            &payer,
+            &price,
+            &String::from_str(&env, "feeproptx01"),
+        );
+        client.settle_payment(&settler, &receipt_id);
+
+        prop_assert_eq!(client.get_payment(&receipt_id).amount, price);
+        prop_assert_eq!(client.get_accrued_fees(), preview);
     }
 }
 
@@ -5700,7 +6017,7 @@ fn remove_verifier_revokes_verification_ability() {
 
 #[test]
 fn admin_can_rotate_verifier_with_audit_event() {
-    let (env, _creator, _admin, client) = setup_with_admin();
+    let (env, _creator, admin, client) = setup_with_admin();
     let old_verifier = Address::generate(&env);
     let new_verifier = Address::generate(&env);
 
@@ -5729,6 +6046,7 @@ fn admin_can_rotate_verifier_with_audit_event() {
         assert_eq!(
             payload,
             VerifierRotation {
+                admin: admin.clone(),
                 old_verifier: old_verifier.clone(),
                 new_verifier: new_verifier.clone(),
                 ledger,
@@ -10063,13 +10381,14 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 48] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 59] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
         (DataKey::Resource(id.clone()), "Resource", 2),
         (DataKey::Count, "Count", 1),
         (DataKey::Index(0), "Index", 2),
+        (DataKey::IndexRepairProgress, "IndexRepairProgress", 1),
         (DataKey::Admin, "Admin", 1),
         (DataKey::PendingAdmin, "PendingAdmin", 1),
         (DataKey::CreatorTerms(who.clone()), "CreatorTerms", 2),
@@ -10143,6 +10462,20 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 48] {
         (DataKey::MetadataPointers(id.clone()), "MetadataPointers", 2),
         (DataKey::RecoveryAdmin, "RecoveryAdmin", 1),
         (DataKey::Revision(id.clone()), "Revision", 2),
+        (DataKey::MaintenanceStatus, "MaintenanceStatus", 1),
+        (
+            DataKey::RevocationReasonHash(id.clone()),
+            "RevocationReasonHash",
+            2,
+        ),
+        (DataKey::AccruedFees, "AccruedFees", 1),
+        (DataKey::PaymentMemo(id.clone()), "PaymentMemo", 2),
+        (DataKey::FlagResolutionWindow, "FlagResolutionWindow", 1),
+        (DataKey::FlagDeadline(id.clone()), "FlagDeadline", 2),
+        (DataKey::ActiveLeasePriceFloor, "ActiveLeasePriceFloor", 1),
+        (DataKey::RoleHolders(RoleKind::Verifier), "RoleHolders", 2),
+        (DataKey::PaymentPaused, "PaymentPaused", 1),
+        (DataKey::PaymentPauseUntil, "PaymentPauseUntil", 1),
     ]
 }
 
@@ -10167,7 +10500,7 @@ fn storage_key_arity_is_stable() {
     for (key, name, arity) in storage_key_wire_contract(&env).iter() {
         let parts = storage_key_parts(&env, key);
         assert_eq!(
-            parts.len() as u32,
+            parts.len(),
             *arity,
             "DataKey::{name} encodes with arity {arity}. Changing the arity of a \
              storage key variant changes its on-chain address and strands every \
@@ -10182,7 +10515,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        48,
+        59,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -10191,6 +10524,7 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::Resource(_) => "Resource",
             DataKey::Count => "Count",
             DataKey::Index(_) => "Index",
+            DataKey::IndexRepairProgress => "IndexRepairProgress",
             DataKey::Admin => "Admin",
             DataKey::PendingAdmin => "PendingAdmin",
             DataKey::CreatorTerms(_) => "CreatorTerms",
@@ -10236,6 +10570,16 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::MetadataPointers(_) => "MetadataPointers",
             DataKey::RecoveryAdmin => "RecoveryAdmin",
             DataKey::Revision(_) => "Revision",
+            DataKey::MaintenanceStatus => "MaintenanceStatus",
+            DataKey::RevocationReasonHash(_) => "RevocationReasonHash",
+            DataKey::AccruedFees => "AccruedFees",
+            DataKey::PaymentMemo(_) => "PaymentMemo",
+            DataKey::FlagResolutionWindow => "FlagResolutionWindow",
+            DataKey::FlagDeadline(_) => "FlagDeadline",
+            DataKey::ActiveLeasePriceFloor => "ActiveLeasePriceFloor",
+            DataKey::RoleHolders(_) => "RoleHolders",
+            DataKey::PaymentPaused => "PaymentPaused",
+            DataKey::PaymentPauseUntil => "PaymentPauseUntil",
         };
         assert_eq!(
             matched, *name,
@@ -11781,6 +12125,161 @@ fn differently_cased_tags_indexed_under_same_normalized_tag() {
     assert_eq!(results.len(), 2);
 }
 
+// ── Issue #994: bounded holder lease listing ───────────────────────────────
+
+#[test]
+fn list_holder_leases_pages_deterministically_across_holders_and_resources() {
+    let (env, creator, _admin, settler, client) = setup_with_settler();
+    let holder_a = Address::generate(&env);
+    let holder_b = Address::generate(&env);
+
+    let a1 = register_priced(&env, &creator, &client, "leasea01", 100);
+    let a2 = register_priced(&env, &creator, &client, "leasea02", 100);
+    let a3 = register_priced(&env, &creator, &client, "leasea03", 100);
+    let b1 = register_priced(&env, &creator, &client, "leaseb01", 100);
+
+    client.record_lease(
+        &settler,
+        &holder_a,
+        &a1,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leaseha1"),
+    );
+    client.record_lease(
+        &settler,
+        &holder_a,
+        &a2,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leaseha2"),
+    );
+    client.record_lease(
+        &settler,
+        &holder_a,
+        &a3,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leaseha3"),
+    );
+    client.record_lease(
+        &settler,
+        &holder_b,
+        &b1,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leasehb1"),
+    );
+
+    let page1 = client.list_holder_leases(&holder_a, &None::<u32>, &2u32);
+    assert_eq!(page1.items.len(), 2);
+    assert_eq!(page1.items.get(0).unwrap().resource_id, a1);
+    assert_eq!(page1.items.get(1).unwrap().resource_id, a2);
+    assert_eq!(page1.next_cursor, Some(2));
+
+    let page2 = client.list_holder_leases(&holder_a, &page1.next_cursor, &2u32);
+    assert_eq!(page2.items.len(), 1);
+    assert_eq!(page2.items.get(0).unwrap().resource_id, a3);
+    assert_eq!(page2.next_cursor, None);
+
+    let other = client.list_holder_leases(&holder_b, &None::<u32>, &20u32);
+    assert_eq!(other.items.len(), 1);
+    assert_eq!(other.items.get(0).unwrap().resource_id, b1);
+    assert_eq!(other.next_cursor, None);
+
+    let unknown = client.list_holder_leases(&Address::generate(&env), &None::<u32>, &20u32);
+    assert_eq!(unknown.items.len(), 0);
+    assert_eq!(unknown.next_cursor, None);
+}
+
+#[test]
+fn list_holder_leases_clamps_limit_and_skips_non_active_records() {
+    let (env, creator, _admin, settler, client) = setup_with_settler();
+    let holder = Address::generate(&env);
+
+    // 21 active leases for one holder: an oversized limit must still be
+    // capped at LIST_PAGE_CAP and leave a next cursor.
+    for index in 0..21 {
+        let id = format!("lease{:02}", index);
+        let resource = register_priced(&env, &creator, &client, &id, 100);
+        let tx = format!("leasetx{:02}", index);
+        client.record_lease(
+            &settler,
+            &holder,
+            &resource,
+            &LeaseTier::Hour,
+            &100i128,
+            &String::from_str(&env, &tx),
+        );
+    }
+    let capped = client.list_holder_leases(&holder, &None::<u32>, &u32::MAX);
+    assert_eq!(capped.items.len(), LIST_PAGE_CAP as usize);
+    assert_eq!(capped.next_cursor, Some(LIST_PAGE_CAP));
+
+    let tail = client.list_holder_leases(&holder, &capped.next_cursor, &20u32);
+    assert_eq!(tail.items.len(), 1);
+    assert_eq!(tail.next_cursor, None);
+
+    // Pending, revoked, and expired records are skipped with the same
+    // predicate as lease_is_active, while the cursor still advances.
+    let pending_id = register_priced(&env, &creator, &client, "leasepend", 100);
+    client.buy_lease(
+        &holder,
+        &pending_id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leasependtx"),
+    );
+    let revoked_id = register_priced(&env, &creator, &client, "leaservok", 100);
+    client.record_lease(
+        &settler,
+        &holder,
+        &revoked_id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leaservoktx"),
+    );
+    client.revoke_lease(&revoked_id, &holder);
+    let expired_id = register_priced(&env, &creator, &client, "leaseexpr", 100);
+    client.record_lease(
+        &settler,
+        &holder,
+        &expired_id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "leaseexprtx"),
+    );
+    env.ledger().set_sequence_number(LEASE_HOUR_LEDGERS + 1);
+
+    // Re-record the 21 leases at the new ledger so they are active again;
+    // their original entries have expired and are replaced in place.
+    for index in 0..21 {
+        let id = format!("lease{:02}", index);
+        let tx = format!("leasernew{:02}", index);
+        client.record_lease(
+            &settler,
+            &holder,
+            &String::from_str(&env, &id),
+            &LeaseTier::Hour,
+            &100i128,
+            &String::from_str(&env, &tx),
+        );
+    }
+
+    let filtered = client.list_holder_leases(&holder, &None::<u32>, &LIST_PAGE_CAP);
+    assert_eq!(filtered.items.len(), LIST_PAGE_CAP as usize);
+    for lease in filtered.items.iter() {
+        assert!(client.lease_is_active(&lease.resource_id, &holder));
+    }
+
+    let remainder = client.list_holder_leases(&holder, &filtered.next_cursor, &LIST_PAGE_CAP);
+    assert_eq!(remainder.items.len(), 1);
+    assert_eq!(remainder.next_cursor, None);
+    assert!(!client.lease_is_active(&pending_id, &holder));
+    assert!(!client.lease_is_active(&revoked_id, &holder));
+    assert!(!client.lease_is_active(&expired_id, &holder));
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 
@@ -11788,10 +12287,19 @@ include!("test/auth_fixtures.rs");
 include!("test/tombstone_read.rs");
 include!("test/listed_count_matrix.rs");
 include!("test/creator_listed_count.rs");
+include!("test/creator_index_transfer.rs");
 include!("test/memo_hash.rs");
 include!("test/flag_details.rs");
 include!("test/payment_idempotency.rs");
+include!("test/payment_pause_scope.rs");
+include!("test/simulation_mutation_validation.rs");
 include!("test/stellar_wave_804_805_806_808.rs");
 include!("test/stellar_wave_970_971_975_976.rs");
+include!("test/stellar_wave_981_982_983_984.rs");
+include!("test/stellar_wave_977_978_979_980.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
+include!("test/verifier_key_history.rs");
+include!("test/event_indexing_guide.rs");
+include!("test/pause_scope_matrix.rs");
+include!("test/fee_split_preview.rs");

@@ -402,6 +402,44 @@ describe("withRetry — beforeAttempt coordination", () => {
 
     expect(fn).not.toHaveBeenCalled();
   });
+
+  it("stops immediately without invoking fn when signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("pre-aborted"));
+    const fn = vi.fn().mockResolvedValue("ok");
+
+    await expect(
+      withRetry(fn, {
+        policy,
+        label: "GET /x",
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("pre-aborted");
+
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("stops retry loop and aborts during backoff sleep when signal aborts", async () => {
+    const controller = new AbortController();
+    const fn = vi.fn().mockRejectedValue(new Error("fetch failed"));
+
+    const sleep = vi.fn().mockImplementation(async () => {
+      // simulate delay where abort occurs
+      controller.abort(new Error("cancelled while sleeping"));
+    });
+
+    await expect(
+      withRetry(fn, {
+        policy,
+        label: "GET /x",
+        sleep,
+        random: () => 1,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("cancelled while sleeping");
+
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("observability", () => {

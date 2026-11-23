@@ -16,6 +16,7 @@
  * `isError` result that still validates.
  */
 import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -23,6 +24,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { debugBundleTool } from "./debugBundle.js";
+import {
+  DEFAULT_DEPLOYMENT_MANIFESTS,
+  buildDeploymentVerificationReport,
+} from "./deploymentVerification.js";
 import { onchainPreflightTool } from "./onchainPreflight.js";
 import { migrationPreviewTool } from "./stateMigrationPreview.js";
 import { supportBundleTool } from "./supportBundle.js";
@@ -150,6 +155,60 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
   mindvault_metrics: () => json(createMetricsRecorder(true, 1000).snapshot()),
   mindvault_debug_bundle: () => debugBundleTool({}, new Date(0)),
   mindvault_onchain_preflight: () => onchainPreflightTool({}),
+  mindvault_explain_error_code: () =>
+    json({
+      code: 999,
+      name: null,
+      known: false,
+      description: null,
+      category: null,
+      retry: null,
+      nextSteps: "Check the deployed registry version.",
+      knownCodes: [],
+    }),
+  mindvault_rpc_health: () =>
+    json({
+      profile: "testnet",
+      horizonUrl: "https://horizon-testnet.stellar.org",
+      sorobanRpcUrl: "https://soroban-testnet.stellar.org",
+      allOk: true,
+      endpoints: [
+        {
+          name: "horizon",
+          url: "https://horizon-testnet.stellar.org",
+          ok: true,
+          latencyMs: 10,
+          networkId: null,
+          message: "Healthy",
+        },
+      ],
+      summary: "RPC endpoints are healthy.",
+    }),
+  mindvault_verify_deployment: () => {
+    const manifest = DEFAULT_DEPLOYMENT_MANIFESTS.testnet!;
+    const passphrase = "Test SDF Network ; September 2015";
+    return json(
+      buildDeploymentVerificationReport({
+        configured: {
+          network: manifest.network,
+          contractId: manifest.contractId,
+          rpcUrl: "https://soroban-testnet.stellar.org",
+          networkPassphrase: passphrase,
+        },
+        expected: manifest,
+        observed: {
+          contractId: manifest.contractId,
+          networkPassphrase: passphrase,
+          networkId: createHash("sha256").update(passphrase).digest("hex"),
+          registryName: "mindvault-vault-registry",
+          crateVersion: manifest.crateVersion,
+          resourceSchemaVersion: manifest.resourceSchemaVersion,
+          wasmHash: manifest.wasmHash,
+        },
+        mode: "mock",
+      }),
+    );
+  },
   mindvault_migration_preview: () => migrationPreviewTool({}),
   mindvault_support_bundle: () =>
     supportBundleTool({ incidentId: "mv-01hq7x9k2m4p6r8t0v2w4y6a8c", auditLines: 25 }),
@@ -168,6 +227,93 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
       usdcStatus: "trustline",
       publisherRegistered: false,
       note: null,
+    }),
+  mindvault_wallet_allowance: () =>
+    json({
+      profile: "default",
+      address: ADDRESS,
+      network: NETWORK,
+      networkPassphrase: "Test SDF Network ; September 2015",
+      asset: {
+        code: "USDC",
+        issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+        contractId: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+        decimals: 7,
+      },
+      balance: {
+        amount: "5.0000000",
+        asset: {
+          code: "USDC",
+          issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+          contractId: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+          decimals: 7,
+        },
+        network: NETWORK,
+        estimate: false,
+        label: "current USDC balance",
+        status: "funded",
+        source: "horizon",
+      },
+      estimatedPendingSpend: {
+        amount: "1.5000000",
+        asset: {
+          code: "USDC",
+          issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+          contractId: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+          decimals: 7,
+        },
+        network: NETWORK,
+        estimate: true,
+        label: "estimated pending spend",
+        count: 1,
+        purchases: [
+          {
+            resourceId: "mock-1",
+            amount: "1.5",
+            asset: {
+              code: "USDC",
+              issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+              contractId: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+              decimals: 7,
+            },
+            network: NETWORK,
+            timestamp: "1970-01-01T00:00:00.000Z",
+            receiptRef: null,
+            estimate: true,
+            status: "pending",
+          },
+        ],
+      },
+      paymentCeiling: {
+        amount: "10",
+        asset: {
+          code: "USDC",
+          issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+          contractId: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+          decimals: 7,
+        },
+        network: NETWORK,
+        estimate: false,
+        label: "configured automatic payment ceiling",
+        source: "default",
+        configured: false,
+      },
+      estimatedRemainingAllowance: {
+        amount: "3.5000000",
+        asset: {
+          code: "USDC",
+          issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+          contractId: "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA",
+          decimals: 7,
+        },
+        network: NETWORK,
+        estimate: true,
+        label: "estimated remaining automatic payment allowance",
+        basis: "min(configured payment ceiling, balance minus estimated pending spend)",
+      },
+      notes: ["Pending spend is estimated from local receipts."],
+      readOnly: true,
+      message: "USDC balance 5 on stellar:testnet.",
     }),
   mindvault_wallet_balances: () =>
     json({
@@ -239,9 +385,37 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
         },
       ],
       notice: null,
+      cacheStatus: "live",
+      nextCursor: null,
       truncated: false,
     }),
-  mindvault_search: () => json({ items: [], notice: null, truncated: false }),
+  mindvault_search: () =>
+    json({ items: [], notice: null, cacheStatus: "live", nextCursor: null, truncated: false }),
+  mindvault_batch_catalog_lookup: () =>
+    json({
+      items: [
+        {
+          id: "mock-1",
+          found: true,
+          title: "Intro",
+          price: "1.5",
+          verificationStatus: "verified",
+          resourceType: "link",
+          accessUrl: null,
+        },
+      ],
+      requested: 1,
+      foundCount: 1,
+      missing: [],
+      notice: null,
+      truncated: false,
+    }),
+  mindvault_preview_metadata_hash: () =>
+    json({
+      resourceId: "mock-1",
+      pointer: { source: null, present: false },
+      report: { present: false, valid: false, canonical: null, algorithm: null, reason: "missing" },
+    }),
   mindvault_preview: () =>
     json({
       id: "mock-1",
@@ -251,6 +425,7 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
       type: "link",
       verificationStatus: "verified",
       accessUrl: null,
+      cacheStatus: "live",
     }),
   mindvault_agent_status: () => json({ status: "ok" }),
   mindvault_registry_info: () =>
@@ -262,6 +437,12 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
       x402Network: NETWORK,
       resourceFields: ["id", "creator", "price", "metadata", "listed"],
       mainnetDiagnostics: "not on mainnet",
+      schemaVersion: {
+        detected: 7,
+        supported: [6, 7],
+        current: 7,
+        status: "supported",
+      },
     }),
   mindvault_network_profile: () =>
     json({

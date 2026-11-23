@@ -1,3 +1,4 @@
+import { limitPaymentPayload, limitUpstreamFetch } from "./upstreamConcurrency.js";
 import {
   networks as registryNetworks,
   normalizeX402Network,
@@ -18,7 +19,9 @@ import { initAuditLogging } from "./auditLog.js";
 import { safeErrorMessage } from "./redaction.js";
 import { signMutatingHeaders } from "./requestSignature.js";
 import { readBoundedResponse, resolveMaxResponseBytes } from "./responseSize.js";
+import { parseUpstreamErrorBody } from "./malformedResponse.js";
 import { type ResetScope } from "./resetGuard.js";
+import { type CatalogCacheContext } from "./catalogCache.js";
 import {
   DEFAULT_PROFILE,
   isValidProfileName,
@@ -90,9 +93,11 @@ function resolveAgentSecret(provided?: string): string | undefined {
   return provided ?? process.env.MINDVAULT_AGENT_SECRET;
 }
 
-const httpFetch: typeof fetch = MOCK
-  ? createMockFetch(() => currentWallet()?.publicKey)
-  : (input, init) => fetch(input as RequestInfo | URL, init);
+const httpFetch = limitUpstreamFetch(
+  MOCK
+    ? createMockFetch(() => currentWallet()?.publicKey)
+    : (input, init) => fetch(input as RequestInfo | URL, init),
+);
 
 const TIMEOUTS = resolveTimeouts(process.env);
 const RETRY_POLICY = retryPolicyFromEnv(process.env);
@@ -102,10 +107,11 @@ const logRetry = process.env.VITEST
   ? undefined
   : (info: RetryAttemptInfo) => console.error(`MindVault MCP: ${formatRetryLog(info)}`);
 
-function httpRetryOptions(label: string) {
+function httpRetryOptions(label: string, signal?: AbortSignal) {
   return {
     policy: RETRY_POLICY,
     label,
+    signal,
     shouldRetryResult: (res: Response) => isRetryableStatus(res.status),
     describeResult: (res: Response) => `HTTP ${res.status}`,
     delayFromResult: (res: Response) =>
@@ -121,7 +127,7 @@ function sorobanRpcFetch(init: RequestInit, label: string): Promise<Response> {
   };
   return withRetry(
     () => fetchWithTimeout(httpFetch, SOROBAN_RPC_URL, initWithUA, "soroban", TIMEOUTS.soroban),
-    httpRetryOptions(label),
+    httpRetryOptions(label, init.signal as AbortSignal | undefined),
   );
 }
 
@@ -161,7 +167,7 @@ function resolveProfileName(name: unknown): string {
 export function _setAgentWallet(w: AgentWallet | null): void {
   if (w) {
     activeProfile().wallet = w;
-    activeProfile().network ??= NETWORK as "testnet" | "mainnet";
+    activeProfile().network ??= NETWORK;
   } else delete activeProfile().wallet;
 }
 export function _setAgentApiKey(k: string | null): void {
@@ -280,7 +286,13 @@ async function jsonFetch(
         TIMEOUTS[service],
       );
     res = isIdempotentMethod(method)
-      ? await withRetry(call, httpRetryOptions(`${method} ${new URL(url).pathname}`))
+      ? await withRetry(
+          call,
+          httpRetryOptions(
+            `${method} ${new URL(url).pathname}`,
+            init?.signal as AbortSignal | undefined,
+          ),
+        )
       : await call();
   } catch (err) {
     const source = sourceForUrl(url);
@@ -292,6 +304,17 @@ async function jsonFetch(
     responseHeaders[key.toLowerCase()] = value;
   });
   const text = await readBoundedResponse(res, resolveMaxResponseBytes());
+  // A failure body that is not JSON becomes a typed marker instead of a wall
+  // of markup: the status and the upstream's request id survive, and the raw
+  // body does not travel any further (#1019).
+  if (!res.ok) {
+    return {
+      ok: res.ok,
+      status: res.status,
+      data: parseUpstreamErrorBody({ status: res.status, headers: responseHeaders, body: text }),
+      headers: responseHeaders,
+    };
+  }
   try {
     return { ok: res.ok, status: res.status, data: JSON.parse(text), headers: responseHeaders };
   } catch {
@@ -325,9 +348,18 @@ function requireApiKey(): string {
 
 function makePaidFetch(wallet: AgentWallet) {
   const signer = createEd25519Signer(wallet.secretKey, NETWORK);
-  const scheme = new ExactStellarScheme(signer);
+  const scheme = limitPaymentPayload(new ExactStellarScheme(signer));
   const client = new x402Client().register(NETWORK, scheme);
   return wrapFetchWithPayment(withTimeout(httpFetch, "payment", TIMEOUTS.payment), client);
+}
+
+function catalogCacheContext(): CatalogCacheContext {
+  return {
+    profile: activeProfileName,
+    network: STELLAR_NETWORK,
+    contractId: REGISTRY_CONTRACT_ID,
+    apiOrigin: new URL(BASE_URL).origin,
+  };
 }
 
 export {
@@ -374,4 +406,5 @@ export {
   publisherCredential,
   makePaidFetch,
   _isMock,
+  catalogCacheContext,
 };

@@ -88,6 +88,7 @@ export interface ServerBehaviour {
     name: string,
     args: Record<string, unknown>,
     onProgress?: ProgressEmitter,
+    signal?: AbortSignal,
   ) => Promise<string>;
   /** Prompts to advertise. Omit for a server with none. */
   listPrompts?: () => AdvertisedPrompt[];
@@ -156,9 +157,9 @@ export function createMindVaultServer(
         ? scopeProgressToRequest(
             behaviour.createProgressEmitter(
               token,
-              sequenceProgressNotifications(extra.sendNotification) as (
-                notification: unknown,
-              ) => Promise<void>,
+              sequenceProgressNotifications(extra.sendNotification, undefined, {
+                toolName: name,
+              }) as (notification: unknown) => Promise<void>,
             ),
           )
         : undefined;
@@ -171,7 +172,7 @@ export function createMindVaultServer(
 
     return withNewCorrelationId(async (correlationId) => {
       try {
-        const text = await behaviour.dispatchTool(name, args, progress?.emit);
+        const text = await behaviour.dispatchTool(name, args, progress?.emit, extra?.signal);
         const structured = behaviour.structuredResult?.(name, text);
         return attachCorrelationId(
           enforceOutputContract(

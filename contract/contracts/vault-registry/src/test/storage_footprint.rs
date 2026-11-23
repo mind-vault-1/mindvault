@@ -126,8 +126,8 @@ fn storage_footprint_report() {
         &String::from_str(&env, &"t".repeat(MAX_TERMS_HASH_LEN as usize)),
     );
     client.set_fee_config(&FeeConfig {
-        platform_fee_bps: 100,
-        royalty_bps: 250,
+        platform_fee_bps: 60,
+        royalty_bps: 30,
         fee_recipient: Some(admin.clone()),
     });
     client.set_fee_destination(&FeeDestinationConfig {
@@ -385,12 +385,12 @@ fn storage_footprint_report() {
 
     assert!(
         per_resource <= 1_900,
-        "a max-size registration now writes {per_resource} XDR bytes across its \
-         four entry classes, over the 1900-byte budget"
+        "operation `register_with_hash` exceeds its 1900-byte budget: {per_resource} \
+         XDR bytes across key types Resource, Index, TagIndex, and TagCount"
     );
     assert!(
         per_payment <= 850,
-        "a payment now writes {per_payment} XDR bytes across its two entry \
-         classes, over the 850-byte budget"
+        "operation `record_payment` exceeds its 850-byte budget: {per_payment} \
+         XDR bytes across key types PaymentReceipt and PaymentIndex"
     );
 }

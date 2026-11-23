@@ -194,6 +194,12 @@ exports[`tool schema snapshots > mindvault_accept_transfer > output schema 1`] =
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -273,6 +279,12 @@ exports[`tool schema snapshots > mindvault_agent_status > output schema 1`] = `
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -342,6 +354,197 @@ exports[`tool schema snapshots > mindvault_backup_state > input schema 1`] = `
 
 exports[`tool schema snapshots > mindvault_backup_state > output schema 1`] = `null`;
 
+exports[`tool schema snapshots > mindvault_batch_catalog_lookup > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Batch Catalog Lookup",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_batch_catalog_lookup > input schema 1`] = `
+{
+  "properties": {
+    "refetch": {
+      "description": "When true, skip the offline cache fallback and fail if the catalog API is unreachable. Default false (serve a labelled cached snapshot when offline).",
+      "type": "boolean",
+    },
+    "resourceIds": {
+      "description": "1–25 resource ids, from mindvault_browse or mindvault_search. A comma-separated string is also accepted. Duplicates are looked up once each.",
+      "examples": [
+        [
+          "cm7x8y9z",
+          "res-001",
+        ],
+      ],
+      "items": {
+        "type": "string",
+      },
+      "maxItems": 25,
+      "minItems": 1,
+      "type": "array",
+    },
+  },
+  "required": [
+    "resourceIds",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_batch_catalog_lookup > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "foundCount": {
+          "type": "integer",
+        },
+        "items": {
+          "items": {
+            "properties": {
+              "accessUrl": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "found": {
+                "type": "boolean",
+              },
+              "id": {
+                "type": "string",
+              },
+              "price": {
+                "type": [
+                  "string",
+                  "number",
+                  "null",
+                ],
+              },
+              "resourceType": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "verificationStatus": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+            },
+            "required": [
+              "id",
+              "found",
+              "title",
+              "price",
+              "verificationStatus",
+              "resourceType",
+              "accessUrl",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "missing": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "notice": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "requested": {
+          "type": "integer",
+        },
+        "truncated": {
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "items",
+        "requested",
+        "foundCount",
+        "missing",
+        "notice",
+        "truncated",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_browse > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -354,6 +557,14 @@ exports[`tool schema snapshots > mindvault_browse > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_browse > input schema 1`] = `
 {
   "properties": {
+    "bypassCache": {
+      "description": "Fetch a fresh page for this call and report cacheStatus=bypassed. This does not disable or clear shared caching.",
+      "type": "boolean",
+    },
+    "cursor": {
+      "description": "Opaque cursor returned as nextCursor. It is valid only with the same profile, network, API origin, and filters; discard it after switching profiles or changing filters.",
+      "type": "string",
+    },
     "limit": {
       "description": "Max number of resources to return (1–100, server default 20).",
       "examples": [
@@ -476,6 +687,14 @@ exports[`tool schema snapshots > mindvault_browse > output schema 1`] = `
   "anyOf": [
     {
       "properties": {
+        "cacheStatus": {
+          "enum": [
+            "live",
+            "bypassed",
+            "offline",
+          ],
+          "type": "string",
+        },
         "items": {
           "items": {
             "properties": {
@@ -529,6 +748,12 @@ exports[`tool schema snapshots > mindvault_browse > output schema 1`] = `
           },
           "type": "array",
         },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
         "notice": {
           "type": [
             "string",
@@ -542,6 +767,8 @@ exports[`tool schema snapshots > mindvault_browse > output schema 1`] = `
       "required": [
         "items",
         "notice",
+        "cacheStatus",
+        "nextCursor",
         "truncated",
       ],
       "type": "object",
@@ -557,6 +784,12 @@ exports[`tool schema snapshots > mindvault_browse > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -850,6 +1083,12 @@ exports[`tool schema snapshots > mindvault_buy > output schema 1`] = `
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -1127,6 +1366,324 @@ exports[`tool schema snapshots > mindvault_buy_lease > output schema 1`] = `
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_cache_chain_diff > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Cache vs Chain Diff",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_cache_chain_diff > input schema 1`] = `
+{
+  "properties": {
+    "limit": {
+      "description": "How many cached resources to compare when resourceIds is omitted (default 20).",
+      "maximum": 50,
+      "minimum": 1,
+      "type": "integer",
+    },
+    "resourceIds": {
+      "description": "Compare exactly these resource ids, cached or not. Omit to compare cached resources in id order.",
+      "items": {
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9._-]+$",
+        "type": "string",
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "type": "array",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_cache_chain_diff > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "cache": {
+          "properties": {
+            "cachedResourceCount": {
+              "type": "integer",
+            },
+            "newestSnapshotAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "oldestSnapshotAt": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "snapshotCount": {
+              "type": "integer",
+            },
+          },
+          "required": [
+            "snapshotCount",
+            "cachedResourceCount",
+            "oldestSnapshotAt",
+            "newestSnapshotAt",
+          ],
+          "type": "object",
+        },
+        "compared": {
+          "type": "integer",
+        },
+        "context": {
+          "properties": {
+            "apiOrigin": {
+              "type": "string",
+            },
+            "contractId": {
+              "type": "string",
+            },
+            "network": {
+              "type": "string",
+            },
+            "profile": {
+              "type": "string",
+            },
+            "rpcUrl": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "profile",
+            "network",
+            "contractId",
+            "apiOrigin",
+            "rpcUrl",
+          ],
+          "type": "object",
+        },
+        "counts": {
+          "properties": {
+            "drift": {
+              "type": "integer",
+            },
+            "in_sync": {
+              "type": "integer",
+            },
+            "lookup_failed": {
+              "type": "integer",
+            },
+            "missing_in_cache": {
+              "type": "integer",
+            },
+            "missing_onchain": {
+              "type": "integer",
+            },
+            "not_found": {
+              "type": "integer",
+            },
+          },
+          "required": [
+            "in_sync",
+            "drift",
+            "missing_onchain",
+            "missing_in_cache",
+            "not_found",
+            "lookup_failed",
+          ],
+          "type": "object",
+        },
+        "nextSteps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "requested": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "results": {
+          "items": {
+            "properties": {
+              "cachedAt": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "fields": {
+                "items": {
+                  "properties": {
+                    "cached": {},
+                    "field": {
+                      "enum": [
+                        "price",
+                        "metadata",
+                        "listed",
+                        "creator",
+                        "tags",
+                      ],
+                      "type": "string",
+                    },
+                    "onchain": {},
+                    "status": {
+                      "enum": [
+                        "match",
+                        "mismatch",
+                        "missing_cache",
+                        "missing_onchain",
+                      ],
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "field",
+                    "status",
+                    "cached",
+                    "onchain",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
+              "resourceId": {
+                "type": "string",
+              },
+              "status": {
+                "enum": [
+                  "in_sync",
+                  "drift",
+                  "missing_onchain",
+                  "missing_in_cache",
+                  "not_found",
+                  "lookup_failed",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "resourceId",
+              "status",
+              "cachedAt",
+              "fields",
+              "error",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "truncated": {
+          "type": "boolean",
+        },
+        "verdict": {
+          "enum": [
+            "in_sync",
+            "drift",
+            "incomplete",
+            "no_cache",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "context",
+        "cache",
+        "requested",
+        "compared",
+        "truncated",
+        "counts",
+        "verdict",
+        "results",
+        "nextSteps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -1360,6 +1917,12 @@ exports[`tool schema snapshots > mindvault_cancel_transfer > output schema 1`] =
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -1510,6 +2073,12 @@ exports[`tool schema snapshots > mindvault_check_consistency > output schema 1`]
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -2063,6 +2632,194 @@ exports[`tool schema snapshots > mindvault_debug_bundle > output schema 1`] = `
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_explain_error_code > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Explain Error Code",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_explain_error_code > input schema 1`] = `
+{
+  "properties": {
+    "code": {
+      "description": "The on-chain error discriminant, e.g. 2 for NotFound or 40 for ContractPaused.",
+      "examples": [
+        2,
+        40,
+      ],
+      "type": "integer",
+    },
+    "name": {
+      "description": "The contract error name instead of its code, e.g. "NotFound" or "ContractPaused".",
+      "examples": [
+        "NotFound",
+        "ContractPaused",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_explain_error_code > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "category": {
+          "enum": [
+            "registration",
+            "validation",
+            "authorization",
+            "admin",
+            "payment",
+            "moderation",
+            "network",
+            null,
+          ],
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "code": {
+          "type": [
+            "integer",
+            "null",
+          ],
+        },
+        "description": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "known": {
+          "type": "boolean",
+        },
+        "knownCodes": {
+          "items": {
+            "properties": {
+              "code": {
+                "type": "integer",
+              },
+              "name": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "code",
+              "name",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "name": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "nextSteps": {
+          "type": "string",
+        },
+        "retry": {
+          "enum": [
+            "safe",
+            "unsafe",
+            "conditional",
+            null,
+          ],
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+      },
+      "required": [
+        "code",
+        "name",
+        "known",
+        "description",
+        "category",
+        "retry",
+        "nextSteps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -2192,6 +2949,12 @@ exports[`tool schema snapshots > mindvault_export_profiles > output schema 1`] =
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -2594,6 +3357,12 @@ exports[`tool schema snapshots > mindvault_export_receipts > output schema 1`] =
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -2707,6 +3476,12 @@ exports[`tool schema snapshots > mindvault_fee_config > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -2953,6 +3728,12 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -2994,8 +3775,8 @@ exports[`tool schema snapshots > mindvault_freeze > output schema 1`] = `
 
 exports[`tool schema snapshots > mindvault_import_profiles > annotations 1`] = `
 {
-  "destructiveHint": true,
-  "idempotentHint": false,
+  "destructiveHint": false,
+  "idempotentHint": true,
   "readOnlyHint": false,
   "title": "Import Profile Setup",
 }
@@ -3004,30 +3785,8 @@ exports[`tool schema snapshots > mindvault_import_profiles > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_import_profiles > input schema 1`] = `
 {
   "properties": {
-    "confirm": {
-      "description": "Must be true to persist the wallet. Without it the tool derives and displays the address but writes nothing, so the agent can verify the address before committing.",
-      "examples": [
-        true,
-      ],
-      "type": "boolean",
-    },
-    "confirmMainnet": {
-      "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
-      "type": "boolean",
-    },
-    "profile": {
-      "description": "Optional profile name to import into. Defaults to the active profile.",
-      "examples": [
-        "testnet",
-        "mainnet-publisher",
-      ],
-      "type": "string",
-    },
-    "secretKey": {
-      "description": "Stellar secret key (S… , 56 chars) to import. If omitted, reads from MINDVAULT_AGENT_SECRET env var.",
-      "examples": [
-        "SCHZPJ...",
-      ],
+    "data": {
+      "description": "JSON profile-export payload.",
       "type": "string",
     },
   },
@@ -3066,6 +3825,12 @@ exports[`tool schema snapshots > mindvault_import_profiles > output schema 1`] =
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -3112,7 +3877,7 @@ exports[`tool schema snapshots > mindvault_import_profiles > output schema 1`] =
 
 exports[`tool schema snapshots > mindvault_import_wallet > annotations 1`] = `
 {
-  "destructiveHint": false,
+  "destructiveHint": true,
   "idempotentHint": false,
   "readOnlyHint": false,
   "title": "Import Wallet",
@@ -3122,16 +3887,15 @@ exports[`tool schema snapshots > mindvault_import_wallet > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_import_wallet > input schema 1`] = `
 {
   "properties": {
-    "confirmMainnet": {
-      "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
-      "type": "boolean",
-    },
-    "persist": {
-      "description": "When true (default), save the imported wallet to the state file. When false, validate only and return the public key without writing to disk.",
+    "confirm": {
+      "description": "Must be true to persist the wallet. Without it the tool derives and displays the address but writes nothing, so the agent can verify the address before committing.",
       "examples": [
         true,
-        false,
       ],
+      "type": "boolean",
+    },
+    "confirmMainnet": {
+      "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
       "type": "boolean",
     },
     "profile": {
@@ -3188,6 +3952,12 @@ exports[`tool schema snapshots > mindvault_import_wallet > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -3369,6 +4139,12 @@ exports[`tool schema snapshots > mindvault_lease_status > output schema 1`] = `
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -3480,6 +4256,12 @@ exports[`tool schema snapshots > mindvault_list_profiles > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -3672,6 +4454,12 @@ exports[`tool schema snapshots > mindvault_metadata_diff > output schema 1`] = `
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -3811,6 +4599,12 @@ exports[`tool schema snapshots > mindvault_metrics > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -3985,6 +4779,12 @@ exports[`tool schema snapshots > mindvault_migration_preview > output schema 1`]
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -4093,6 +4893,12 @@ exports[`tool schema snapshots > mindvault_network_profile > output schema 1`] =
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -4317,6 +5123,12 @@ exports[`tool schema snapshots > mindvault_onchain_preflight > output schema 1`]
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -4428,6 +5240,12 @@ exports[`tool schema snapshots > mindvault_pending_transfer > output schema 1`] 
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -4479,6 +5297,10 @@ exports[`tool schema snapshots > mindvault_preview > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_preview > input schema 1`] = `
 {
   "properties": {
+    "bypassCache": {
+      "description": "Fetch fresh metadata for this call and report cacheStatus=bypassed without changing shared cache policy.",
+      "type": "boolean",
+    },
     "resourceId": {
       "description": "The unique resource identifier from mindvault_browse or mindvault_search. Example: 'cm7x8y9z'",
       "examples": [
@@ -4502,6 +5324,14 @@ exports[`tool schema snapshots > mindvault_preview > output schema 1`] = `
     {
       "properties": {
         "accessUrl": {},
+        "cacheStatus": {
+          "enum": [
+            "live",
+            "bypassed",
+            "offline",
+          ],
+          "type": "string",
+        },
         "description": {},
         "id": {},
         "offlineCache": {
@@ -4520,6 +5350,7 @@ exports[`tool schema snapshots > mindvault_preview > output schema 1`] = `
         "type",
         "verificationStatus",
         "accessUrl",
+        "cacheStatus",
       ],
       "type": "object",
     },
@@ -4534,6 +5365,171 @@ exports[`tool schema snapshots > mindvault_preview > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_preview_metadata_hash > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Preview Metadata Hash",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_preview_metadata_hash > input schema 1`] = `
+{
+  "properties": {
+    "resourceId": {
+      "description": "The on-chain resource id to read (from mindvault_browse, mindvault_registry_list, or mindvault_publish). Letters, digits, dot, dash, or underscore.",
+      "examples": [
+        "cm7x8y9z",
+        "res-001",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [
+    "resourceId",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_preview_metadata_hash > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "pointer": {
+          "properties": {
+            "present": {
+              "type": "boolean",
+            },
+            "source": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "source",
+            "present",
+          ],
+          "type": "object",
+        },
+        "report": {
+          "properties": {
+            "algorithm": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "canonical": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "present": {
+              "type": "boolean",
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "valid": {
+              "type": "boolean",
+            },
+          },
+          "required": [
+            "present",
+            "valid",
+            "canonical",
+            "algorithm",
+            "reason",
+          ],
+          "type": "object",
+        },
+        "resourceId": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "resourceId",
+        "pointer",
+        "report",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -4760,6 +5756,12 @@ exports[`tool schema snapshots > mindvault_publish > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -5008,6 +6010,12 @@ exports[`tool schema snapshots > mindvault_publish_batch > output schema 1`] = `
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -5068,8 +6076,15 @@ exports[`tool schema snapshots > mindvault_publish_status > input schema 1`] = `
       ],
       "type": "number",
     },
+    "operationId": {
+      "description": "The operationId returned by mindvault_publish or a previous mindvault_publish_status call. Resolves to the same resource on the network and API it was issued for; refused on any other. Does not expire. Use instead of resourceId to resume polling.",
+      "examples": [
+        "pubop1.Y203eDh5OXo.b31b1f387d53f169",
+      ],
+      "type": "string",
+    },
     "resourceId": {
-      "description": "The resource ID from mindvault_publish (or browse/search). Example: 'cm7x8y9z'",
+      "description": "The resource ID from mindvault_publish (or browse/search). Required unless operationId is given. Example: 'cm7x8y9z'",
       "examples": [
         "cm7x8y9z",
         "res-001",
@@ -5091,9 +6106,7 @@ exports[`tool schema snapshots > mindvault_publish_status > input schema 1`] = `
       "type": "boolean",
     },
   },
-  "required": [
-    "resourceId",
-  ],
+  "required": [],
   "type": "object",
 }
 `;
@@ -5139,6 +6152,12 @@ exports[`tool schema snapshots > mindvault_publish_status > output schema 1`] = 
             "null",
           ],
         },
+        "operationId": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
         "polled": {
           "type": "boolean",
         },
@@ -5169,6 +6188,7 @@ exports[`tool schema snapshots > mindvault_publish_status > output schema 1`] = 
       },
       "required": [
         "resourceId",
+        "operationId",
         "title",
         "verificationStatus",
         "listed",
@@ -5196,6 +6216,12 @@ exports[`tool schema snapshots > mindvault_publish_status > output schema 1`] = 
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -5252,6 +6278,13 @@ exports[`tool schema snapshots > mindvault_purchase_history > annotations 1`] = 
 exports[`tool schema snapshots > mindvault_purchase_history > input schema 1`] = `
 {
   "properties": {
+    "idempotencyKey": {
+      "description": "Optional. Client idempotency key sent with mindvault_buy to resolve a purchase whose response was lost before a receipt arrived. Profile-scoped.",
+      "examples": [
+        "buy:cm7x8y9z:9f3b...",
+      ],
+      "type": "string",
+    },
     "network": {
       "description": "Optional. Only return receipts recorded on this x402 network id. Example: 'stellar:testnet'",
       "examples": [
@@ -5299,6 +6332,9 @@ exports[`tool schema snapshots > mindvault_purchase_history > output schema 1`] 
               "amount": {
                 "type": "string",
               },
+              "clientIdempotencyKey": {
+                "type": "string",
+              },
               "explorerUrl": {
                 "type": [
                   "string",
@@ -5318,6 +6354,14 @@ exports[`tool schema snapshots > mindvault_purchase_history > output schema 1`] 
                 ],
               },
               "resourceId": {
+                "type": "string",
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "settled",
+                  "failed",
+                ],
                 "type": "string",
               },
               "timestamp": {
@@ -5341,6 +6385,7 @@ exports[`tool schema snapshots > mindvault_purchase_history > output schema 1`] 
               "timestamp",
               "receiptRef",
               "explorerUrl",
+              "status",
             ],
             "type": "object",
           },
@@ -5364,6 +6409,12 @@ exports[`tool schema snapshots > mindvault_purchase_history > output schema 1`] 
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -5458,6 +6509,12 @@ exports[`tool schema snapshots > mindvault_recover_catalog_cache > output schema
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -5690,6 +6747,12 @@ exports[`tool schema snapshots > mindvault_register_onchain > output schema 1`] 
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -5797,6 +6860,12 @@ exports[`tool schema snapshots > mindvault_registry_count > output schema 1`] = 
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -5964,6 +7033,12 @@ exports[`tool schema snapshots > mindvault_registry_creator_page > output schema
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -6091,6 +7166,12 @@ exports[`tool schema snapshots > mindvault_registry_info > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -6225,6 +7306,12 @@ exports[`tool schema snapshots > mindvault_registry_list > output schema 1`] = `
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -6341,6 +7428,12 @@ exports[`tool schema snapshots > mindvault_registry_lookup > output schema 1`] =
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -6494,6 +7587,12 @@ exports[`tool schema snapshots > mindvault_registry_tag_search > output schema 1
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -6936,6 +8035,160 @@ exports[`tool schema snapshots > mindvault_royalty > output schema 1`] = `
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_rpc_health > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "RPC Health",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_rpc_health > input schema 1`] = `
+{
+  "properties": {},
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_rpc_health > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "allOk": {
+          "type": "boolean",
+        },
+        "endpoints": {
+          "items": {
+            "properties": {
+              "latencyMs": {
+                "type": [
+                  "integer",
+                  "null",
+                ],
+              },
+              "message": {
+                "type": "string",
+              },
+              "name": {
+                "type": "string",
+              },
+              "networkId": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "ok": {
+                "type": "boolean",
+              },
+              "url": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "name",
+              "url",
+              "ok",
+              "latencyMs",
+              "message",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "horizonUrl": {
+          "type": "string",
+        },
+        "profile": {
+          "type": "string",
+        },
+        "sorobanRpcUrl": {
+          "type": "string",
+        },
+        "summary": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "profile",
+        "horizonUrl",
+        "sorobanRpcUrl",
+        "allOk",
+        "endpoints",
+        "summary",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -6987,6 +8240,14 @@ exports[`tool schema snapshots > mindvault_search > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_search > input schema 1`] = `
 {
   "properties": {
+    "bypassCache": {
+      "description": "Fetch a fresh page for this call and report cacheStatus=bypassed. This does not disable or clear shared caching.",
+      "type": "boolean",
+    },
+    "cursor": {
+      "description": "Opaque cursor returned as nextCursor. It is valid only with the same profile, network, API origin, and filters; discard it after switching profiles or changing filters.",
+      "type": "string",
+    },
     "limit": {
       "description": "Max number of resources to return (1–100, server default 20).",
       "examples": [
@@ -7109,6 +8370,14 @@ exports[`tool schema snapshots > mindvault_search > output schema 1`] = `
   "anyOf": [
     {
       "properties": {
+        "cacheStatus": {
+          "enum": [
+            "live",
+            "bypassed",
+            "offline",
+          ],
+          "type": "string",
+        },
         "items": {
           "items": {
             "properties": {
@@ -7162,6 +8431,12 @@ exports[`tool schema snapshots > mindvault_search > output schema 1`] = `
           },
           "type": "array",
         },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
         "notice": {
           "type": [
             "string",
@@ -7175,6 +8450,8 @@ exports[`tool schema snapshots > mindvault_search > output schema 1`] = `
       "required": [
         "items",
         "notice",
+        "cacheStatus",
+        "nextCursor",
         "truncated",
       ],
       "type": "object",
@@ -7190,6 +8467,12 @@ exports[`tool schema snapshots > mindvault_search > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -7349,6 +8632,12 @@ exports[`tool schema snapshots > mindvault_server_endpoints > output schema 1`] 
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -7591,6 +8880,12 @@ exports[`tool schema snapshots > mindvault_set_listed > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -7839,6 +9134,12 @@ exports[`tool schema snapshots > mindvault_set_price > output schema 1`] = `
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -7999,6 +9300,196 @@ exports[`tool schema snapshots > mindvault_setup_wallet > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_state_diagnostics > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "State File Diagnostics",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_state_diagnostics > input schema 1`] = `
+{
+  "properties": {},
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_state_diagnostics > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "backups": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "detectedAt": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "nextSteps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "position": {
+          "anyOf": [
+            {
+              "properties": {
+                "column": {
+                  "type": "integer",
+                },
+                "line": {
+                  "type": "integer",
+                },
+              },
+              "required": [
+                "line",
+                "column",
+              ],
+              "type": "object",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "quarantinePath": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "quarantinedFiles": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "reason": {
+          "enum": [
+            "unreadable",
+            "invalid_json",
+            "no_profiles",
+            null,
+          ],
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "stateFile": {
+          "type": "string",
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "missing",
+            "recovered",
+            "unrecovered",
+          ],
+          "type": "string",
+        },
+        "writesBlocked": {
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "status",
+        "stateFile",
+        "reason",
+        "detail",
+        "position",
+        "quarantinePath",
+        "writesBlocked",
+        "detectedAt",
+        "backups",
+        "quarantinedFiles",
+        "nextSteps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -8291,6 +9782,12 @@ exports[`tool schema snapshots > mindvault_support_bundle > output schema 1`] = 
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -8621,6 +10118,12 @@ exports[`tool schema snapshots > mindvault_transfer_ownership > output schema 1`
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -8755,6 +10258,12 @@ exports[`tool schema snapshots > mindvault_tx_status > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -9002,6 +10511,260 @@ exports[`tool schema snapshots > mindvault_update_metadata > output schema 1`] =
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_upstream_health > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Upstream Health Probe",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_upstream_health > input schema 1`] = `
+{
+  "properties": {
+    "timeoutMs": {
+      "description": "Per-upstream timeout in milliseconds (default 5000).",
+      "maximum": 30000,
+      "minimum": 100,
+      "type": "integer",
+    },
+    "upstreams": {
+      "description": "Probe only these upstreams. Omit to probe all of them.",
+      "items": {
+        "enum": [
+          "api",
+          "horizon",
+          "soroban_rpc",
+          "sponsored_account",
+        ],
+        "type": "string",
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "type": "array",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_upstream_health > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "counts": {
+          "properties": {
+            "degraded": {
+              "type": "integer",
+            },
+            "down": {
+              "type": "integer",
+            },
+            "not_configured": {
+              "type": "integer",
+            },
+            "ok": {
+              "type": "integer",
+            },
+            "skipped": {
+              "type": "integer",
+            },
+          },
+          "required": [
+            "ok",
+            "degraded",
+            "down",
+            "not_configured",
+            "skipped",
+          ],
+          "type": "object",
+        },
+        "expectedNetworkPassphrase": {
+          "type": "string",
+        },
+        "profile": {
+          "type": "string",
+        },
+        "summary": {
+          "type": "string",
+        },
+        "timeoutMs": {
+          "type": "integer",
+        },
+        "upstreams": {
+          "items": {
+            "properties": {
+              "action": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "httpStatus": {
+                "type": [
+                  "integer",
+                  "null",
+                ],
+              },
+              "id": {
+                "enum": [
+                  "api",
+                  "horizon",
+                  "soroban_rpc",
+                  "sponsored_account",
+                ],
+                "type": "string",
+              },
+              "latencyMs": {
+                "type": [
+                  "integer",
+                  "null",
+                ],
+              },
+              "name": {
+                "type": "string",
+              },
+              "networkMatch": {
+                "type": [
+                  "boolean",
+                  "null",
+                ],
+              },
+              "networkPassphrase": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "status": {
+                "enum": [
+                  "ok",
+                  "degraded",
+                  "down",
+                  "not_configured",
+                  "skipped",
+                ],
+                "type": "string",
+              },
+              "url": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+            },
+            "required": [
+              "id",
+              "name",
+              "url",
+              "status",
+              "httpStatus",
+              "latencyMs",
+              "networkPassphrase",
+              "networkMatch",
+              "error",
+              "action",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "verdict": {
+          "enum": [
+            "healthy",
+            "degraded",
+            "unhealthy",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "profile",
+        "expectedNetworkPassphrase",
+        "timeoutMs",
+        "verdict",
+        "counts",
+        "upstreams",
+        "summary",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -9109,6 +10872,12 @@ exports[`tool schema snapshots > mindvault_use_profile > output schema 1`] = `
               "type": "string",
             },
             "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
               "type": [
                 "string",
                 "null",
@@ -9266,6 +11035,391 @@ exports[`tool schema snapshots > mindvault_verify_attestation > output schema 1`
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_verify_deployment > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Verify Registry Deployment",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_verify_deployment > input schema 1`] = `
+{
+  "properties": {
+    "manifest": {
+      "additionalProperties": false,
+      "description": "Expected deployment manifest to compare against. Omit to use the built-in manifest for the configured network (canonical testnet only).",
+      "properties": {
+        "contractId": {
+          "description": "Expected vault-registry contract ID (C followed by 55 base32 chars).",
+          "type": "string",
+        },
+        "crateVersion": {
+          "description": "Expected contract crate version (CARGO_PKG_VERSION at build time).",
+          "type": "string",
+        },
+        "network": {
+          "enum": [
+            "testnet",
+            "mainnet",
+            "pubnet",
+            "public",
+          ],
+          "type": "string",
+        },
+        "resourceSchemaVersion": {
+          "description": "Expected on-chain Resource schema version (RESOURCE_SCHEMA_VERSION).",
+          "minimum": 0,
+          "type": "integer",
+        },
+        "schema": {
+          "const": "mindvault.deployment-manifest/v1",
+          "type": "string",
+        },
+        "wasmHash": {
+          "description": "Expected deployed WASM hash: 64 lowercase hex characters.",
+          "type": "string",
+        },
+      },
+      "required": [
+        "network",
+        "contractId",
+        "wasmHash",
+        "crateVersion",
+        "resourceSchemaVersion",
+      ],
+      "type": "object",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_verify_deployment > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "checks": {
+          "items": {
+            "properties": {
+              "actual": {
+                "type": [
+                  "string",
+                  "number",
+                  "null",
+                ],
+              },
+              "detail": {
+                "type": "string",
+              },
+              "expected": {
+                "type": [
+                  "string",
+                  "number",
+                  "null",
+                ],
+              },
+              "field": {
+                "type": "string",
+              },
+              "remediation": {
+                "type": "string",
+              },
+              "status": {
+                "enum": [
+                  "pass",
+                  "mismatch",
+                  "unavailable",
+                  "skipped",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "field",
+              "status",
+              "expected",
+              "actual",
+              "detail",
+              "remediation",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "configured": {
+          "properties": {
+            "contractId": {
+              "type": "string",
+            },
+            "network": {
+              "type": "string",
+            },
+            "networkPassphrase": {
+              "type": "string",
+            },
+            "rpcUrl": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "network",
+            "contractId",
+            "rpcUrl",
+            "networkPassphrase",
+          ],
+          "type": "object",
+        },
+        "errors": {
+          "items": {
+            "properties": {
+              "code": {
+                "type": "string",
+              },
+              "message": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "code",
+              "message",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "expected": {
+          "properties": {
+            "contractId": {
+              "type": "string",
+            },
+            "crateVersion": {
+              "type": "string",
+            },
+            "network": {
+              "type": "string",
+            },
+            "resourceSchemaVersion": {
+              "type": "integer",
+            },
+            "schema": {
+              "type": "string",
+            },
+            "wasmHash": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "network",
+            "contractId",
+            "wasmHash",
+            "crateVersion",
+            "resourceSchemaVersion",
+          ],
+          "type": [
+            "object",
+            "null",
+          ],
+        },
+        "mismatches": {
+          "items": {
+            "properties": {
+              "actual": {
+                "type": [
+                  "string",
+                  "number",
+                  "null",
+                ],
+              },
+              "detail": {
+                "type": "string",
+              },
+              "expected": {
+                "type": [
+                  "string",
+                  "number",
+                  "null",
+                ],
+              },
+              "field": {
+                "type": "string",
+              },
+              "remediation": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "field",
+              "expected",
+              "actual",
+              "detail",
+              "remediation",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "mode": {
+          "enum": [
+            "live",
+            "mock",
+          ],
+          "type": "string",
+        },
+        "observed": {
+          "properties": {
+            "contractId": {
+              "type": "string",
+            },
+            "crateVersion": {
+              "type": "string",
+            },
+            "networkId": {
+              "type": "string",
+            },
+            "networkPassphrase": {
+              "type": "string",
+            },
+            "registryName": {
+              "type": "string",
+            },
+            "resourceSchemaVersion": {
+              "type": "integer",
+            },
+            "wasmHash": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "contractId",
+            "networkPassphrase",
+            "networkId",
+            "registryName",
+            "crateVersion",
+            "resourceSchemaVersion",
+            "wasmHash",
+          ],
+          "type": [
+            "object",
+            "null",
+          ],
+        },
+        "ok": {
+          "type": "boolean",
+        },
+        "readOnly": {
+          "const": true,
+          "type": "boolean",
+        },
+        "schema": {
+          "const": "mindvault.deployment-verification/v1",
+          "type": "string",
+        },
+        "signing": {
+          "const": "none",
+          "type": "string",
+        },
+        "status": {
+          "enum": [
+            "match",
+            "mismatch",
+            "unreachable",
+            "invalid_manifest",
+          ],
+          "type": "string",
+        },
+        "summary": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "schema",
+        "ok",
+        "status",
+        "readOnly",
+        "signing",
+        "mode",
+        "configured",
+        "expected",
+        "observed",
+        "checks",
+        "mismatches",
+        "errors",
+        "summary",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -9323,6 +11477,939 @@ exports[`tool schema snapshots > mindvault_verify_install > input schema 1`] = `
 `;
 
 exports[`tool schema snapshots > mindvault_verify_install > output schema 1`] = `null`;
+
+exports[`tool schema snapshots > mindvault_verify_receipt > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Verify Payment Receipt",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_verify_receipt > input schema 1`] = `
+{
+  "properties": {
+    "expected": {
+      "description": "Optional expected field values to match against (amount, currency, txHash, network, resourceId).",
+      "properties": {
+        "amount": {
+          "description": "Expected positive decimal USDC amount.",
+          "type": "string",
+        },
+        "currency": {
+          "description": "Expected currency code (e.g. USDC).",
+          "type": "string",
+        },
+        "network": {
+          "description": "Expected network identifier (e.g. stellar:testnet or stellar:pubnet).",
+          "type": "string",
+        },
+        "resourceId": {
+          "description": "Expected resource identifier.",
+          "type": "string",
+        },
+        "txHash": {
+          "description": "Expected 64-character hexadecimal transaction hash.",
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "receipt": {
+      "description": "Payment receipt object to verify (expected fields: amount, currency, txHash, network, resourceId).",
+      "type": "object",
+    },
+  },
+  "required": [
+    "receipt",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_verify_receipt > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "fields": {
+          "properties": {
+            "amount": {
+              "properties": {
+                "code": {
+                  "enum": [
+                    "ok",
+                    "missing",
+                    "malformed",
+                    "malformed_receipt",
+                    "non_positive",
+                    "unsupported_currency",
+                    "unknown_network",
+                    "mismatch",
+                  ],
+                  "type": "string",
+                },
+                "expected": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "field": {
+                  "enum": [
+                    "amount",
+                    "currency",
+                    "txHash",
+                    "network",
+                    "resourceId",
+                  ],
+                  "type": "string",
+                },
+                "message": {
+                  "type": "string",
+                },
+                "outcome": {
+                  "enum": [
+                    "valid",
+                    "invalid",
+                    "indeterminate",
+                  ],
+                  "type": "string",
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+              },
+              "required": [
+                "field",
+                "outcome",
+                "value",
+                "expected",
+                "code",
+                "message",
+              ],
+              "type": "object",
+            },
+            "currency": {
+              "properties": {
+                "code": {
+                  "enum": [
+                    "ok",
+                    "missing",
+                    "malformed",
+                    "malformed_receipt",
+                    "non_positive",
+                    "unsupported_currency",
+                    "unknown_network",
+                    "mismatch",
+                  ],
+                  "type": "string",
+                },
+                "expected": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "field": {
+                  "enum": [
+                    "amount",
+                    "currency",
+                    "txHash",
+                    "network",
+                    "resourceId",
+                  ],
+                  "type": "string",
+                },
+                "message": {
+                  "type": "string",
+                },
+                "outcome": {
+                  "enum": [
+                    "valid",
+                    "invalid",
+                    "indeterminate",
+                  ],
+                  "type": "string",
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+              },
+              "required": [
+                "field",
+                "outcome",
+                "value",
+                "expected",
+                "code",
+                "message",
+              ],
+              "type": "object",
+            },
+            "network": {
+              "properties": {
+                "code": {
+                  "enum": [
+                    "ok",
+                    "missing",
+                    "malformed",
+                    "malformed_receipt",
+                    "non_positive",
+                    "unsupported_currency",
+                    "unknown_network",
+                    "mismatch",
+                  ],
+                  "type": "string",
+                },
+                "expected": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "field": {
+                  "enum": [
+                    "amount",
+                    "currency",
+                    "txHash",
+                    "network",
+                    "resourceId",
+                  ],
+                  "type": "string",
+                },
+                "message": {
+                  "type": "string",
+                },
+                "outcome": {
+                  "enum": [
+                    "valid",
+                    "invalid",
+                    "indeterminate",
+                  ],
+                  "type": "string",
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+              },
+              "required": [
+                "field",
+                "outcome",
+                "value",
+                "expected",
+                "code",
+                "message",
+              ],
+              "type": "object",
+            },
+            "resourceId": {
+              "properties": {
+                "code": {
+                  "enum": [
+                    "ok",
+                    "missing",
+                    "malformed",
+                    "malformed_receipt",
+                    "non_positive",
+                    "unsupported_currency",
+                    "unknown_network",
+                    "mismatch",
+                  ],
+                  "type": "string",
+                },
+                "expected": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "field": {
+                  "enum": [
+                    "amount",
+                    "currency",
+                    "txHash",
+                    "network",
+                    "resourceId",
+                  ],
+                  "type": "string",
+                },
+                "message": {
+                  "type": "string",
+                },
+                "outcome": {
+                  "enum": [
+                    "valid",
+                    "invalid",
+                    "indeterminate",
+                  ],
+                  "type": "string",
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+              },
+              "required": [
+                "field",
+                "outcome",
+                "value",
+                "expected",
+                "code",
+                "message",
+              ],
+              "type": "object",
+            },
+            "txHash": {
+              "properties": {
+                "code": {
+                  "enum": [
+                    "ok",
+                    "missing",
+                    "malformed",
+                    "malformed_receipt",
+                    "non_positive",
+                    "unsupported_currency",
+                    "unknown_network",
+                    "mismatch",
+                  ],
+                  "type": "string",
+                },
+                "expected": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+                "field": {
+                  "enum": [
+                    "amount",
+                    "currency",
+                    "txHash",
+                    "network",
+                    "resourceId",
+                  ],
+                  "type": "string",
+                },
+                "message": {
+                  "type": "string",
+                },
+                "outcome": {
+                  "enum": [
+                    "valid",
+                    "invalid",
+                    "indeterminate",
+                  ],
+                  "type": "string",
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "null",
+                  ],
+                },
+              },
+              "required": [
+                "field",
+                "outcome",
+                "value",
+                "expected",
+                "code",
+                "message",
+              ],
+              "type": "object",
+            },
+          },
+          "required": [
+            "amount",
+            "currency",
+            "txHash",
+            "network",
+            "resourceId",
+          ],
+          "type": "object",
+        },
+        "issues": {
+          "items": {
+            "properties": {
+              "code": {
+                "enum": [
+                  "missing",
+                  "malformed",
+                  "malformed_receipt",
+                  "non_positive",
+                  "unsupported_currency",
+                  "unknown_network",
+                  "mismatch",
+                ],
+                "type": "string",
+              },
+              "field": {
+                "enum": [
+                  "amount",
+                  "currency",
+                  "txHash",
+                  "network",
+                  "resourceId",
+                ],
+                "type": "string",
+              },
+              "message": {
+                "type": "string",
+              },
+              "outcome": {
+                "enum": [
+                  "invalid",
+                  "indeterminate",
+                ],
+                "type": "string",
+              },
+            },
+            "required": [
+              "field",
+              "outcome",
+              "code",
+              "message",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "outcome": {
+          "enum": [
+            "valid",
+            "invalid",
+            "indeterminate",
+          ],
+          "type": "string",
+        },
+        "schema": {
+          "const": "mindvault.receipt-verification/v1",
+          "type": "string",
+        },
+        "summary": {
+          "type": "string",
+        },
+        "valid": {
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "schema",
+        "outcome",
+        "valid",
+        "fields",
+        "issues",
+        "summary",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_wallet_allowance > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Wallet Allowance",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_wallet_allowance > input schema 1`] = `
+{
+  "properties": {},
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_wallet_allowance > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "address": {
+          "type": "string",
+        },
+        "asset": {
+          "properties": {
+            "code": {
+              "const": "USDC",
+              "type": "string",
+            },
+            "contractId": {
+              "type": "string",
+            },
+            "decimals": {
+              "type": "integer",
+            },
+            "issuer": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "code",
+            "issuer",
+            "contractId",
+            "decimals",
+          ],
+          "type": "object",
+        },
+        "balance": {
+          "properties": {
+            "amount": {
+              "type": "string",
+            },
+            "asset": {
+              "properties": {
+                "code": {
+                  "const": "USDC",
+                  "type": "string",
+                },
+                "contractId": {
+                  "type": "string",
+                },
+                "decimals": {
+                  "type": "integer",
+                },
+                "issuer": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "code",
+                "issuer",
+                "contractId",
+                "decimals",
+              ],
+              "type": "object",
+            },
+            "estimate": {
+              "type": "boolean",
+            },
+            "label": {
+              "type": "string",
+            },
+            "network": {
+              "type": "string",
+            },
+            "source": {
+              "const": "horizon",
+              "type": "string",
+            },
+            "status": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "amount",
+            "asset",
+            "network",
+            "estimate",
+            "label",
+            "status",
+            "source",
+          ],
+          "type": "object",
+        },
+        "estimatedPendingSpend": {
+          "properties": {
+            "amount": {
+              "type": "string",
+            },
+            "asset": {
+              "properties": {
+                "code": {
+                  "const": "USDC",
+                  "type": "string",
+                },
+                "contractId": {
+                  "type": "string",
+                },
+                "decimals": {
+                  "type": "integer",
+                },
+                "issuer": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "code",
+                "issuer",
+                "contractId",
+                "decimals",
+              ],
+              "type": "object",
+            },
+            "count": {
+              "type": "integer",
+            },
+            "estimate": {
+              "type": "boolean",
+            },
+            "label": {
+              "type": "string",
+            },
+            "network": {
+              "type": "string",
+            },
+            "purchases": {
+              "items": {
+                "properties": {
+                  "amount": {
+                    "type": "string",
+                  },
+                  "asset": {
+                    "properties": {
+                      "code": {
+                        "const": "USDC",
+                        "type": "string",
+                      },
+                      "contractId": {
+                        "type": "string",
+                      },
+                      "decimals": {
+                        "type": "integer",
+                      },
+                      "issuer": {
+                        "type": "string",
+                      },
+                    },
+                    "required": [
+                      "code",
+                      "issuer",
+                      "contractId",
+                      "decimals",
+                    ],
+                    "type": "object",
+                  },
+                  "estimate": {
+                    "const": true,
+                    "type": "boolean",
+                  },
+                  "network": {
+                    "type": "string",
+                  },
+                  "receiptRef": {
+                    "type": [
+                      "string",
+                      "null",
+                    ],
+                  },
+                  "resourceId": {
+                    "type": "string",
+                  },
+                  "status": {
+                    "const": "pending",
+                    "type": "string",
+                  },
+                  "timestamp": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "resourceId",
+                  "amount",
+                  "asset",
+                  "network",
+                  "timestamp",
+                  "receiptRef",
+                  "estimate",
+                  "status",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
+          },
+          "required": [
+            "amount",
+            "asset",
+            "network",
+            "estimate",
+            "label",
+            "count",
+            "purchases",
+          ],
+          "type": "object",
+        },
+        "estimatedRemainingAllowance": {
+          "properties": {
+            "amount": {
+              "type": "string",
+            },
+            "asset": {
+              "properties": {
+                "code": {
+                  "const": "USDC",
+                  "type": "string",
+                },
+                "contractId": {
+                  "type": "string",
+                },
+                "decimals": {
+                  "type": "integer",
+                },
+                "issuer": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "code",
+                "issuer",
+                "contractId",
+                "decimals",
+              ],
+              "type": "object",
+            },
+            "basis": {
+              "type": "string",
+            },
+            "estimate": {
+              "type": "boolean",
+            },
+            "label": {
+              "type": "string",
+            },
+            "network": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "amount",
+            "asset",
+            "network",
+            "estimate",
+            "label",
+            "basis",
+          ],
+          "type": "object",
+        },
+        "message": {
+          "type": "string",
+        },
+        "network": {
+          "type": "string",
+        },
+        "networkPassphrase": {
+          "type": "string",
+        },
+        "notes": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "paymentCeiling": {
+          "properties": {
+            "amount": {
+              "type": "string",
+            },
+            "asset": {
+              "properties": {
+                "code": {
+                  "const": "USDC",
+                  "type": "string",
+                },
+                "contractId": {
+                  "type": "string",
+                },
+                "decimals": {
+                  "type": "integer",
+                },
+                "issuer": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "code",
+                "issuer",
+                "contractId",
+                "decimals",
+              ],
+              "type": "object",
+            },
+            "configured": {
+              "type": "boolean",
+            },
+            "estimate": {
+              "type": "boolean",
+            },
+            "label": {
+              "type": "string",
+            },
+            "network": {
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "amount",
+            "asset",
+            "network",
+            "estimate",
+            "label",
+            "source",
+            "configured",
+          ],
+          "type": "object",
+        },
+        "profile": {
+          "type": "string",
+        },
+        "readOnly": {
+          "const": true,
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "profile",
+        "address",
+        "network",
+        "networkPassphrase",
+        "asset",
+        "balance",
+        "estimatedPendingSpend",
+        "paymentCeiling",
+        "estimatedRemainingAllowance",
+        "notes",
+        "readOnly",
+        "message",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_wallet_balances > annotations 1`] = `
 {
@@ -9559,6 +12646,12 @@ exports[`tool schema snapshots > mindvault_wallet_balances > output schema 1`] =
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -9680,6 +12773,12 @@ exports[`tool schema snapshots > mindvault_wallet_info > output schema 1`] = `
                 "null",
               ],
             },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
             "schema": {
               "const": "mindvault.troubleshooting/v1",
               "type": "string",
@@ -9724,9 +12823,11 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_accept_transfer",
   "mindvault_agent_status",
   "mindvault_backup_state",
+  "mindvault_batch_catalog_lookup",
   "mindvault_browse",
   "mindvault_buy",
   "mindvault_buy_lease",
+  "mindvault_cache_chain_diff",
   "mindvault_cancel_transfer",
   "mindvault_check_bindings",
   "mindvault_check_consistency",
@@ -9734,6 +12835,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_client_config",
   "mindvault_compare_state_backup",
   "mindvault_debug_bundle",
+  "mindvault_explain_error_code",
   "mindvault_export_profiles",
   "mindvault_export_receipts",
   "mindvault_fee_config",
@@ -9750,6 +12852,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_onchain_preflight",
   "mindvault_pending_transfer",
   "mindvault_preview",
+  "mindvault_preview_metadata_hash",
   "mindvault_prewarm_catalog",
   "mindvault_publish",
   "mindvault_publish_batch",
@@ -9772,21 +12875,27 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_restore_state",
   "mindvault_rotate_publisher_key",
   "mindvault_royalty",
+  "mindvault_rpc_health",
   "mindvault_search",
   "mindvault_server_endpoints",
   "mindvault_set_listed",
   "mindvault_set_price",
   "mindvault_set_tags",
   "mindvault_setup_wallet",
+  "mindvault_state_diagnostics",
   "mindvault_support_bundle",
   "mindvault_switch_network_profile",
   "mindvault_terms",
   "mindvault_transfer_ownership",
   "mindvault_tx_status",
   "mindvault_update_metadata",
+  "mindvault_upstream_health",
   "mindvault_use_profile",
   "mindvault_verify_attestation",
+  "mindvault_verify_deployment",
   "mindvault_verify_install",
+  "mindvault_verify_receipt",
+  "mindvault_wallet_allowance",
   "mindvault_wallet_balances",
   "mindvault_wallet_info",
 ]

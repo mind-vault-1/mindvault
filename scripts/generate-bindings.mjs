@@ -12,7 +12,7 @@
 //   CONTRACT_WASM=contract/target/wasm32v1-none/release/vault_registry.wasm  pnpm contract:bindings
 
 import { execSync } from "node:child_process";
-import { existsSync, rmSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, rmSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -44,13 +44,15 @@ execSync(bindingsCmd, { stdio: "inherit" });
 
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
-renameSync(path.join(tmpDir, "src/index.ts"), path.join(outDir, "index.ts"));
+const generated = path.join(outDir, "index.ts");
+renameSync(path.join(tmpDir, "src/index.ts"), generated);
+writeFileSync(generated, readFileSync(generated, "utf8").replace(/[ \t]+$/gm, ""));
 rmSync(tmpDir, { recursive: true, force: true });
 
 // The Stellar CLI emits its own formatting, which `pnpm format:check` (and CI)
 // then rejects. Format on generation so a regenerated binding never lands the
 // repo in a failing state.
-execSync(`pnpm exec prettier --write "${path.join(outDir, "index.ts")}"`, {
+execSync(`pnpm exec prettier --write "${generated}"`, {
   cwd: root,
   stdio: "inherit",
 });

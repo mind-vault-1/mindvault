@@ -8,8 +8,43 @@ import { config } from "../config.js";
 import { getLogger } from "../lib/logger.js";
 import { saveResourceTags } from "../services/resourceService.js";
 
-const POLL_INTERVAL_MS = 30_000;
-const EVENT_PAGE_LIMIT = 100;
+export const POLL_INTERVAL_MS = 30_000;
+export const EVENT_PAGE_LIMIT = 100;
+export const MAX_PAGES_PER_POLL = 10;
+
+export interface EventPaginationGapInfo {
+  hasRetentionGap: boolean;
+  hasTruncationGap: boolean;
+  oldestLedger?: number;
+  latestLedger?: number;
+  lastLedger: number;
+  eventsCount: number;
+  gapLedgers?: number;
+}
+
+export function detectEventPaginationGaps(
+  events: SorobanEvent[],
+  lastLedger: number,
+  options?: { latestLedger?: number; oldestLedger?: number; limit?: number },
+): EventPaginationGapInfo {
+  const limit = options?.limit ?? EVENT_PAGE_LIMIT;
+  const oldestLedger = options?.oldestLedger;
+  const latestLedger = options?.latestLedger;
+
+  const hasRetentionGap =
+    oldestLedger !== undefined && oldestLedger > 0 && lastLedger < oldestLedger;
+  const hasTruncationGap = events.length >= limit;
+
+  return {
+    hasRetentionGap,
+    hasTruncationGap,
+    oldestLedger,
+    latestLedger,
+    lastLedger,
+    eventsCount: events.length,
+    gapLedgers: hasRetentionGap ? oldestLedger! - lastLedger : undefined,
+  };
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const LEDGER_TRACKER_PATH = join(__dirname, "..", "..", "last-processed-ledger.json");
@@ -263,70 +298,135 @@ async function handleSetListedEvent(event: SorobanEvent): Promise<void> {
   }
 }
 
-async function pollEvents(): Promise<void> {
-  const lastLedger = loadLastLedger();
+export async function pollEvents(rpcServer?: any): Promise<void> {
+  let lastLedger = loadLastLedger();
   if (lastLedger === 0) {
     saveLastLedger(1);
     return;
   }
 
   try {
-    const { rpc: StellarRpc } = await import("@stellar/stellar-sdk");
-    const server = new StellarRpc.Server(config.SOROBAN_RPC_URL);
+    let server = rpcServer;
+    if (!server) {
+      const { rpc: StellarRpc } = await import("@stellar/stellar-sdk");
+      server = new StellarRpc.Server(config.SOROBAN_RPC_URL);
+    }
 
-    const response: any = await server.getEvents({
-      startLedger: lastLedger,
-      filters: [
-        {
-          type: "contract",
-          contractIds: [CONTRACT_ID],
-        },
-      ],
-      limit: EVENT_PAGE_LIMIT,
-    });
-
-    const events: SorobanEvent[] = response?.events ?? [];
-
-    if (events.length === 0) return;
-
+    let cursor: string | undefined = undefined;
+    let page = 0;
     let maxLedger = lastLedger;
 
-    for (const event of events) {
-      if (event.ledger > maxLedger) maxLedger = event.ledger;
+    while (page < MAX_PAGES_PER_POLL) {
+      page++;
+      const requestParams: any = {
+        filters: [
+          {
+            type: "contract",
+            contractIds: [CONTRACT_ID],
+          },
+        ],
+        limit: EVENT_PAGE_LIMIT,
+      };
 
-      const eventType = extractTopicSymbol(event.topic);
+      if (cursor) {
+        requestParams.cursor = cursor;
+      } else {
+        requestParams.startLedger = lastLedger;
+      }
 
-      try {
-        switch (eventType) {
-          case EVENT_REGISTER:
-            await handleRegisterEvent(event);
-            break;
-          case EVENT_SET_PRICE:
-            await handleSetPriceEvent(event);
-            break;
-          case EVENT_UPD_META:
-            break;
-          case EVENT_SET_TAGS:
-            await handleSetTagsEvent(event);
-            break;
-          case EVENT_TRANSFER:
-            await handleTransferEvent(event);
-            break;
-          case EVENT_SET_LISTED:
-            await handleSetListedEvent(event);
-            break;
-          default:
-            getLogger().debug({ eventType }, "unknown event type from registry");
-        }
-      } catch (err) {
-        getLogger().warn(
-          { event: "event_handler_error", eventType, eventId: event.id, err },
-          "failed to process event",
+      const response: any = await server.getEvents(requestParams);
+      const events: SorobanEvent[] = response?.events ?? [];
+
+      const gaps = detectEventPaginationGaps(events, lastLedger, {
+        latestLedger: response?.latestLedger,
+        oldestLedger: response?.oldestLedger,
+        limit: EVENT_PAGE_LIMIT,
+      });
+
+      if (gaps.hasRetentionGap && gaps.oldestLedger) {
+        getLogger().error(
+          {
+            event: "event_pagination_gap",
+            lastLedger,
+            oldestLedger: gaps.oldestLedger,
+            skippedLedgers: gaps.gapLedgers,
+          },
+          `Soroban RPC event retention gap detected: last processed ledger ${lastLedger} is older than oldest ledger ${gaps.oldestLedger}. Advancing to ${gaps.oldestLedger}.`,
         );
+        lastLedger = gaps.oldestLedger;
+        maxLedger = Math.max(maxLedger, gaps.oldestLedger);
+        saveLastLedger(lastLedger);
+        cursor = undefined;
+        continue;
+      }
+
+      if (events.length === 0) {
+        if (maxLedger > lastLedger) {
+          saveLastLedger(maxLedger + 1);
+        }
+        break;
+      }
+
+      for (const event of events) {
+        if (event.ledger > maxLedger) maxLedger = event.ledger;
+
+        const eventType = extractTopicSymbol(event.topic);
+
+        try {
+          switch (eventType) {
+            case EVENT_REGISTER:
+              await handleRegisterEvent(event);
+              break;
+            case EVENT_SET_PRICE:
+              await handleSetPriceEvent(event);
+              break;
+            case EVENT_UPD_META:
+              break;
+            case EVENT_SET_TAGS:
+              await handleSetTagsEvent(event);
+              break;
+            case EVENT_TRANSFER:
+              await handleTransferEvent(event);
+              break;
+            case EVENT_SET_LISTED:
+              await handleSetListedEvent(event);
+              break;
+            default:
+              getLogger().debug({ eventType }, "unknown event type from registry");
+          }
+        } catch (err) {
+          getLogger().warn(
+            { event: "event_handler_error", eventType, eventId: event.id, err },
+            "failed to process event",
+          );
+        }
+      }
+
+      const lastEvent = events[events.length - 1];
+      if (events.length >= EVENT_PAGE_LIMIT && lastEvent?.pagingToken) {
+        getLogger().info(
+          {
+            event: "event_pagination_page",
+            page,
+            eventsCount: events.length,
+            cursor: lastEvent.pagingToken,
+          },
+          "Fetched full page of events, continuing with cursor pagination",
+        );
+        cursor = lastEvent.pagingToken;
+      } else {
+        saveLastLedger(maxLedger + 1);
+        break;
       }
     }
 
-    saveLastLedger(maxLedger + 1);
+    if (page >= MAX_PAGES_PER_POLL) {
+      getLogger().warn(
+        { event: "event_pagination_max_pages_reached", maxPages: MAX_PAGES_PER_POLL, maxLedger },
+        "Reached maximum event pages per poll cycle",
+      );
+      saveLastLedger(maxLedger + 1);
+    }
   } catch (err) {
     getLogger().error({ event: "event_listener_poll_error", err }, "event polling failed");
   }

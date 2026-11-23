@@ -6,6 +6,8 @@
  * coupling this lifecycle logic to a transport.
  */
 
+import { abortableSleep } from "./retry.js";
+
 export interface PendingTransactionSnapshot {
   status: string;
   [key: string]: unknown;
@@ -88,7 +90,21 @@ export async function watchPendingTransaction<T extends PendingTransactionSnapsh
         await emit("terminal", snapshot, true);
         return { snapshot, attempts, timedOut: true, cancelled: false };
       }
-      await sleep(Math.min(options.intervalMs, Math.max(0, deadline - now())));
+      if (options.signal) {
+        try {
+          await abortableSleep(
+            sleep,
+            Math.min(options.intervalMs, Math.max(0, deadline - now())),
+            options.signal,
+          );
+        } catch {
+          if (options.signal.aborted) {
+            return { snapshot, attempts, timedOut: false, cancelled: true };
+          }
+        }
+      } else {
+        await sleep(Math.min(options.intervalMs, Math.max(0, deadline - now())));
+      }
       if (options.signal?.aborted) {
         return { snapshot, attempts, timedOut: false, cancelled: true };
       }

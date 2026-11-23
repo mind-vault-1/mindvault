@@ -7,6 +7,8 @@
  * verification settles.
  */
 
+import { abortableSleep } from "./retry.js";
+
 export const VERIFICATION_STATUSES = ["pending", "verified", "rejected", "skipped"] as const;
 
 export type VerificationStatus = (typeof VERIFICATION_STATUSES)[number];
@@ -29,6 +31,12 @@ export const MIN_POLL_INTERVAL_MS = 200;
 
 export type PublishStatusSnapshot = {
   resourceId: string;
+  /**
+   * Stable handle for this publish (#1250, see publishOperation.ts): pass it
+   * back as `operationId` to resume polling after a reconnect or restart.
+   * Null when the caller did not supply a scope to derive it from.
+   */
+  operationId: string | null;
   title: string | null;
   verificationStatus: VerificationStatus | string;
   listed: boolean | null;
@@ -178,7 +186,7 @@ export function normalizeWaitFlag(raw: unknown): boolean {
 export function buildPublishStatusSnapshot(
   resourceId: string,
   data: PublishStatusFetch,
-  opts: { polled: boolean; attempts: number; timedOut: boolean },
+  opts: { polled: boolean; attempts: number; timedOut: boolean; operationId?: string | null },
 ): PublishStatusSnapshot {
   const meta = data.meta;
   const ver = data.verification;
@@ -213,6 +221,7 @@ export function buildPublishStatusSnapshot(
 
   return {
     resourceId,
+    operationId: opts.operationId ?? null,
     title: ver?.title ?? meta?.title ?? null,
     verificationStatus,
     listed: ver?.listed ?? meta?.listed ?? null,
@@ -286,12 +295,14 @@ export type PollPublishStatusOptions = {
   onProgress?: PublishProgressReporter;
   sleep: (ms: number) => Promise<void>;
   now?: () => number;
+  signal?: AbortSignal;
 };
 
 export type PollPublishStatusResult = {
   data: PublishStatusFetch;
   attempts: number;
   timedOut: boolean;
+  cancelled?: boolean;
 };
 
 /**
@@ -305,6 +316,13 @@ export type PollPublishStatusResult = {
 export async function pollPublishStatus(
   opts: PollPublishStatusOptions,
 ): Promise<PollPublishStatusResult> {
+  const checkAbort = () => {
+    if (opts.signal?.aborted) {
+      throw opts.signal.reason ?? new DOMException("This operation was aborted", "AbortError");
+    }
+  };
+
+  checkAbort();
   const now = opts.now ?? Date.now;
   const deadline = now() + (opts.wait ? opts.timeoutMs : 0);
 
@@ -324,20 +342,25 @@ export async function pollPublishStatus(
   };
 
   // Always fetch at least once, even when not waiting.
+  checkAbort();
   let data = await opts.fetchStatus(opts.resourceId);
+  checkAbort();
   attempts += 1;
   let status = currentVerificationStatus(data);
   await report(status, isVerificationSettled(status));
 
   while (opts.wait) {
+    checkAbort();
     if (isVerificationSettled(status)) break;
     if (now() >= deadline) {
       timedOut = true;
       await report(status, false);
       break;
     }
-    await sleepUntilNextPoll(opts.sleep, opts.intervalMs, deadline - now());
+    await sleepUntilNextPoll(opts.sleep, opts.intervalMs, deadline - now(), opts.signal);
+    checkAbort();
     data = await opts.fetchStatus(opts.resourceId);
+    checkAbort();
     attempts += 1;
     status = currentVerificationStatus(data);
     const settled = isVerificationSettled(status);
@@ -353,6 +376,7 @@ function sleepUntilNextPoll(
   sleep: (ms: number) => Promise<void>,
   intervalMs: number,
   remainingMs: number,
+  signal?: AbortSignal,
 ): Promise<void> {
-  return sleep(Math.min(intervalMs, Math.max(0, remainingMs)));
+  return abortableSleep(sleep, Math.min(intervalMs, Math.max(0, remainingMs)), signal);
 }
