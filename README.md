@@ -6,7 +6,7 @@ MindVault is a payment-protected vault for digital resources built on Stellar. C
 
 Creators produce valuable digital work every day — datasets, research, code, prompts, trained models. But there is no simple way to protect and monetize this work for both human and machine consumers.
 
-Traditional paywalls require accounts, logins, and subscriptions. That works fine for humans. It does not work for AI agents. An agent cannot sign up for an account, manage a subscription, or navigate an auth flow. But it can make an HTTP request, and it can sign a payment on a blockchain. That should be enough.
+Traditional paywalls rely on accounts, logins, and subscriptions. While this works well for humans, it doesn’t work for AI agents. An agent can’t easily create an account, manage subscriptions, or go through authentication flows. But it can send HTTP requests and sign blockchain payments. That should be all it needs.
 
 ## What MindVault Does
 
