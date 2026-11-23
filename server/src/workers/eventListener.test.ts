@@ -31,7 +31,13 @@ vi.mock("../lib/logger.js", () => ({
   getLogger: () => mocks.logger,
 }));
 
-import { extractNextTags, handleSetTagsEvent, type SorobanEvent } from "./eventListener.js";
+import {
+  detectEventPaginationGaps,
+  extractNextTags,
+  handleSetTagsEvent,
+  pollEvents,
+  type SorobanEvent,
+} from "./eventListener.js";
 
 function makeEvent(nextTags: string[] | null, id = "res-1"): SorobanEvent {
   return {
@@ -134,6 +140,104 @@ describe("settags event handling", () => {
     expect(mocks.logger.warn).toHaveBeenCalledWith(
       { event: "event_settags_invalid", eventId: "event-1", resourceId: "res-1" },
       "settags event has an invalid payload",
+    );
+  });
+});
+
+describe("Soroban RPC event pagination gaps (#1209)", () => {
+  it("detects retention gaps when lastLedger is older than oldestLedger", () => {
+    const gaps = detectEventPaginationGaps([], 100, { oldestLedger: 250, latestLedger: 500 });
+    expect(gaps.hasRetentionGap).toBe(true);
+    expect(gaps.gapLedgers).toBe(150);
+    expect(gaps.oldestLedger).toBe(250);
+  });
+
+  it("detects no retention gap when lastLedger is within retention window", () => {
+    const gaps = detectEventPaginationGaps([], 300, { oldestLedger: 250, latestLedger: 500 });
+    expect(gaps.hasRetentionGap).toBe(false);
+    expect(gaps.gapLedgers).toBeUndefined();
+  });
+
+  it("detects truncation gap when events count equals or exceeds page limit", () => {
+    const events = Array(100).fill(makeEvent(["tag"]));
+    const gaps = detectEventPaginationGaps(events, 100, { limit: 100 });
+    expect(gaps.hasTruncationGap).toBe(true);
+    expect(gaps.eventsCount).toBe(100);
+  });
+
+  it("detects no truncation gap when events count is below page limit", () => {
+    const events = Array(50).fill(makeEvent(["tag"]));
+    const gaps = detectEventPaginationGaps(events, 100, { limit: 100 });
+    expect(gaps.hasTruncationGap).toBe(false);
+    expect(gaps.eventsCount).toBe(50);
+  });
+
+  it("handles retention gap during pollEvents by logging actionable error and fast-forwarding", async () => {
+    const mockRpc = {
+      getEvents: vi
+        .fn()
+        .mockResolvedValueOnce({
+          events: [],
+          oldestLedger: 500,
+          latestLedger: 600,
+        })
+        .mockResolvedValueOnce({
+          events: [],
+          oldestLedger: 500,
+          latestLedger: 600,
+        }),
+    };
+
+    await pollEvents(mockRpc);
+
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "event_pagination_gap",
+        oldestLedger: 500,
+      }),
+      expect.stringContaining("retention gap detected"),
+    );
+  });
+
+  it("paginates using cursor when a full page of events is returned", async () => {
+    const firstBatch: SorobanEvent[] = Array.from({ length: 100 }, (_, i) => ({
+      ...makeEvent(["tag"]),
+      id: `evt-${i}`,
+      pagingToken: `token-${i}`,
+      ledger: 100,
+    }));
+    const secondBatch: SorobanEvent[] = [
+      {
+        ...makeEvent(["final"]),
+        id: "evt-final",
+        pagingToken: "token-final",
+        ledger: 101,
+      },
+    ];
+
+    const mockRpc = {
+      getEvents: vi
+        .fn()
+        .mockResolvedValueOnce({
+          events: firstBatch,
+          oldestLedger: 50,
+          latestLedger: 200,
+        })
+        .mockResolvedValueOnce({
+          events: secondBatch,
+          oldestLedger: 50,
+          latestLedger: 200,
+        }),
+    };
+
+    await pollEvents(mockRpc);
+
+    expect(mockRpc.getEvents).toHaveBeenCalledTimes(2);
+    expect(mockRpc.getEvents).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        cursor: "token-99",
+      }),
     );
   });
 });

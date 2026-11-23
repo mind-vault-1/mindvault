@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { type Server } from "@modelcontextprotocol/sdk/server/index.js";
 import type { ServerNotification } from "@modelcontextprotocol/sdk/types.js";
+import { isAuditLogEnabled, logProgressNotification } from "./auditLog.js";
 
 export type SendNotification = (notification: ServerNotification) => Promise<void>;
 
@@ -83,29 +84,147 @@ export interface RequestProgress {
  */
 export function scopeProgressToRequest(
   emit: (progress: number, total?: number, message?: string) => void | Promise<void>,
+  options?: { flush?: () => void | Promise<void> },
 ): RequestProgress {
   const inFlight = new Set<Promise<void>>();
   let settled = false;
 
+  const track = (call: () => void | Promise<void>): Promise<void> => {
+    let sent: Promise<void>;
+    try {
+      sent = Promise.resolve(call());
+    } catch (err) {
+      sent = Promise.reject(err);
+    }
+    inFlight.add(sent);
+    const done = () => {
+      inFlight.delete(sent);
+    };
+    sent.then(done, done);
+    return sent;
+  };
+
   return {
     emit: (progress, total, message) => {
       if (settled) return Promise.resolve();
-      let sent: Promise<void>;
-      try {
-        sent = Promise.resolve(emit(progress, total, message));
-      } catch (err) {
-        sent = Promise.reject(err);
-      }
-      inFlight.add(sent);
-      const done = () => {
-        inFlight.delete(sent);
-      };
-      sent.then(done, done);
-      return sent;
+      return track(() => emit(progress, total, message));
     },
     settle: async () => {
+      if (settled) {
+        await Promise.allSettled([...inFlight]);
+        return;
+      }
       settled = true;
+      if (options?.flush) {
+        track(() => options.flush!());
+      }
       await Promise.allSettled([...inFlight]);
+    },
+  };
+}
+
+// ── Progress frequency capping & coalescing ──────────────────────────────────
+
+/** Default minimum interval (ms) between non-terminal progress notifications. */
+export const DEFAULT_PROGRESS_MIN_INTERVAL_MS = 250;
+
+/** Environment variable overriding the minimum progress notification interval (ms). */
+export const PROGRESS_MIN_INTERVAL_ENV = "MINDVAULT_PROGRESS_MIN_INTERVAL_MS";
+
+/**
+ * Parse `MINDVAULT_PROGRESS_MIN_INTERVAL_MS` from the environment.
+ *
+ * Accepts non-negative integers (`0` disables throttling). Falls back to
+ * {@link DEFAULT_PROGRESS_MIN_INTERVAL_MS} when unset or invalid.
+ */
+export function resolveProgressMinIntervalMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env[PROGRESS_MIN_INTERVAL_ENV];
+  if (raw === undefined || raw.trim() === "") return DEFAULT_PROGRESS_MIN_INTERVAL_MS;
+  const parsed = Number(raw.trim());
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_PROGRESS_MIN_INTERVAL_MS;
+  return Math.floor(parsed);
+}
+
+export interface ProgressThrottleOptions {
+  /**
+   * Minimum interval in milliseconds between non-terminal progress
+   * notifications. `0` disables throttling. Defaults to
+   * {@link DEFAULT_PROGRESS_MIN_INTERVAL_MS}.
+   */
+  minIntervalMs?: number;
+  /** Clock source for deterministic testing; defaults to `Date.now`. */
+  now?: () => number;
+}
+
+export interface ThrottledProgressEmitter {
+  /** Emit a progress update, coalescing rapid non-terminal updates within `minIntervalMs`. */
+  emit: ProgressFn;
+  /** Deliver the latest coalesced update (if any) immediately; no-op when nothing is pending. */
+  flush: () => Promise<void>;
+}
+
+interface PendingProgressUpdate {
+  progress: number;
+  total?: number;
+  message?: string;
+}
+
+/**
+ * Cap progress notification frequency for fast polling loops.
+ *
+ * - The first update is sent immediately (leading edge).
+ * - Subsequent non-terminal updates arriving within `minIntervalMs` of the last
+ *   sent notification are coalesced, retaining only the highest-progress update.
+ * - Terminal updates (`total != null && progress >= total`) always bypass the
+ *   interval and are delivered immediately, clearing any stale pending update.
+ * - `flush()` delivers any remaining coalesced update (for example, when a
+ *   request finishes without an explicit `total` or exits early).
+ */
+export function throttleProgressEmitter(
+  emit: ProgressFn,
+  options: ProgressThrottleOptions = {},
+): ThrottledProgressEmitter {
+  const minIntervalMs = Math.max(0, options.minIntervalMs ?? DEFAULT_PROGRESS_MIN_INTERVAL_MS);
+  const now = options.now ?? Date.now;
+
+  let lastSentAt: number | null = null;
+  let lastSentProgress = Number.NEGATIVE_INFINITY;
+  let pending: PendingProgressUpdate | null = null;
+
+  const sendNow = async (progress: number, total?: number, message?: string): Promise<void> => {
+    lastSentAt = now();
+    lastSentProgress = progress;
+    pending = null;
+    await emit(progress, total, message);
+  };
+
+  return {
+    emit: async (progress, total, message) => {
+      if (minIntervalMs === 0) {
+        await sendNow(progress, total, message);
+        return;
+      }
+
+      const isTerminal = total != null && progress >= total;
+      const elapsed = lastSentAt === null ? Infinity : now() - lastSentAt;
+
+      if (isTerminal || lastSentAt === null || elapsed >= minIntervalMs) {
+        await sendNow(progress, total, message);
+        return;
+      }
+
+      if (pending === null || progress >= pending.progress) {
+        pending = { progress, total, message };
+      }
+    },
+    flush: async () => {
+      if (pending === null) return;
+      const next = pending;
+      pending = null;
+      if (next.progress <= lastSentProgress) return;
+      await sendNow(next.progress, next.total, next.message);
     },
   };
 }
@@ -147,6 +266,10 @@ export interface ProgressEventMeta {
 export function sequenceProgressNotifications<N extends { method: string; params?: unknown }>(
   send: (notification: N) => Promise<void> | void,
   streamId: string = randomUUID(),
+  options?: {
+    toolName?: string;
+    logAudit?: boolean;
+  },
 ): (notification: N) => Promise<void> {
   let sequence = 0;
   let lastProgress = Number.NEGATIVE_INFINITY;
@@ -158,12 +281,27 @@ export function sequenceProgressNotifications<N extends { method: string; params
     }
     const params = (notification.params ?? {}) as {
       progress: number;
+      total?: number;
+      message?: string;
+      progressToken?: string | number;
       _meta?: Record<string, unknown>;
     };
     if (!(params.progress > lastProgress)) return;
     lastProgress = params.progress;
     sequence += 1;
     const event: ProgressEventMeta = { streamId, sequence, eventId: `${streamId}:${sequence}` };
+    if ((options?.logAudit ?? true) && isAuditLogEnabled()) {
+      logProgressNotification({
+        toolName: options?.toolName,
+        progressToken: params.progressToken,
+        progress: params.progress,
+        total: params.total,
+        message: params.message,
+        eventId: event.eventId,
+        sequence: event.sequence,
+        streamId: event.streamId,
+      });
+    }
     await send({
       ...notification,
       params: { ...params, _meta: { ...(params._meta ?? {}), [PROGRESS_EVENT_META_KEY]: event } },

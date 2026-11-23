@@ -15,6 +15,7 @@ import {
   inferNetworkFromX402,
   validateNetworkConfig,
   X402_NETWORK_IDS,
+  type RegistryInfo,
 } from "./index.js";
 
 /**
@@ -148,6 +149,14 @@ describe("generated bindings (drift guard)", () => {
     53: "RecoveryAdminNotSet",
     54: "UnsupportedResourceSchema",
     55: "RevisionOverflow",
+    56: "RoleCapacityReached",
+    57: "UnclaimedFees",
+    58: "LeaseFeeConfigConflict",
+    59: "RevocationReasonHashTooLong",
+    60: "InvalidMaintenanceReason",
+    61: "InvalidPaymentMemo",
+    62: "FlagNotOverdue",
+    63: "InvalidFlagResolutionWindow",
   };
   // The full set of contract methods consumers call, mirroring the contract's
   // METHOD_SCHEMA. Adding, removing or renaming a contract function changes
@@ -164,8 +173,10 @@ describe("generated bindings (drift guard)", () => {
     "attempt_anchor_purchase_receipt",
     "bootstrap_dual_admin",
     "buy_lease",
+    "cancel_admin_nomination",
     "cancel_transfer",
     "check_tag_index",
+    "claim_fees",
     "compute_attestation_hash",
     "contract_version",
     "count",
@@ -179,15 +190,19 @@ describe("generated bindings (drift guard)", () => {
     "export_page",
     "extend_resource_ttl",
     "flag_details",
+    "flag_resolution_window",
     "flag_resource",
+    "force_resolve_flag",
     "freeze_metadata",
     "freeze_resource",
     "get",
+    "get_accrued_fees",
     "get_anchor_attempts",
     "get_anchor_failure",
     "get_attestation_hash",
     "get_fee_config",
     "get_fee_destination",
+    "get_flag_deadline",
     "get_flag_reason_hash",
     "get_lease",
     "get_many",
@@ -196,20 +211,24 @@ describe("generated bindings (drift guard)", () => {
     "get_owner",
     "get_owner_many",
     "get_payment",
+    "get_payment_memo",
     "get_payment_receipt",
     "get_purchase_receipt",
     "get_refund",
     "get_refund_deadline",
     "get_refunded_amount",
+    "get_remaining_refundable",
     "get_resource_state",
     "get_resource_states",
     "get_revision",
     "get_terms_hash",
     "get_verifier_status_history",
     "initialize_network",
+    "is_flag_overdue",
     "is_flagged",
     "is_moderator",
     "is_paused",
+    "is_payment_paused",
     "is_settler",
     "is_verifier",
     "lease_is_active",
@@ -228,12 +247,14 @@ describe("generated bindings (drift guard)", () => {
     "list_listed_page",
     "list_page",
     "listed_count",
+    "maintenance_status",
     "migrate_resource",
     "network_id",
     "nominate_new_admin",
     "open_dispute",
     "override_purchase_receipt_anchor",
     "pause_until",
+    "payment_pause_until",
     "pending_admin",
     "pending_admin_expiry",
     "propose_transfer",
@@ -244,6 +265,7 @@ describe("generated bindings (drift guard)", () => {
     "record_lease",
     "record_payment",
     "record_payment_idempotent",
+    "record_payment_with_memo",
     "recover_admin",
     "recovery_admin",
     "refund_window",
@@ -261,16 +283,21 @@ describe("generated bindings (drift guard)", () => {
     "resource_schema_version",
     "retry_anchor_purchase_receipt",
     "revoke_lease",
+    "role_inventory_page",
     "rotate_verifier",
     "search_by_tag_prefix",
     "set_fee_config",
     "set_fee_destination",
     "set_fee_recipient",
     "set_flag_reason_hash",
+    "set_flag_resolution_window",
     "set_listed",
+    "set_maintenance_status",
     "set_metadata_pointers",
     "set_paused",
     "set_paused_until",
+    "set_payment_paused",
+    "set_payment_paused_until",
     "set_price",
     "set_price_many",
     "set_recovery_admin",
@@ -282,6 +309,7 @@ describe("generated bindings (drift guard)", () => {
     "set_verification_status",
     "settle_lease",
     "settle_payment",
+    "simulate_record_payment",
     "state_digest",
     "tombstone_resource",
     "top_tags",
@@ -323,6 +351,25 @@ describe("generated bindings (drift guard)", () => {
     }
 
     expect(typeof listResources).toBe("function");
+  });
+
+  it("exposes role_capability_version on RegistryInfo for capability detection", () => {
+    // Compile-time + runtime check that the bindings' RegistryInfo carries the
+    // role capability version clients use to detect optional role methods
+    // (e.g. role_inventory_page) before invoking them.
+    const info: RegistryInfo = {
+      name: "mindvault-vault-registry",
+      version: "0.1.0",
+      resource_schema_version: 7,
+      network_id: Buffer.alloc(32),
+      role_capability_version: 1,
+    };
+    expect(info.role_capability_version).toBe(1);
+    expect(typeof info.role_capability_version).toBe("number");
+  });
+
+  it("exposes role_inventory_page in the generated method set", () => {
+    expect(EXPECTED_METHODS).toContain("role_inventory_page");
   });
 });
 

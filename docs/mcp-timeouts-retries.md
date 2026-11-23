@@ -13,6 +13,18 @@ and idempotent calls retry transient failures with bounded, jittered backoff.
 - [Timeouts](#timeouts) — `mcp/src/httpTimeout.ts`
 - [Retries](#retries) — `mcp/src/retry.ts`
 
+## Upstream concurrency
+
+`MINDVAULT_MAX_CONCURRENT_UPSTREAM_REQUESTS` sets the maximum number of active
+upstream requests per MCP process (default `8`, positive integers only). The
+MindVault API, sponsored-account service, Horizon, Soroban RPC, and x402
+payment transport share this limit. Excess work waits in arrival order. MCP
+fetch deadlines include time spent waiting for a slot, and a queued fetch
+whose signal is aborted is removed from the queue. A fetch releases its slot
+when headers arrive or an error occurs. SDK calls release their slot when the
+RPC completes. x402 payload creation reserves a slot for its SDK simulation
+sequence. Retry backoff never holds a slot.
+
 ## Timeouts
 
 Every outbound HTTP call the MindVault MCP server makes runs under a deadline.
@@ -154,6 +166,15 @@ list (`unknownToolNames`) rather than assuming a parsed entry took effect.
 
 ## Retries
 
+`MINDVAULT_TOOL_RETRY_BUDGET` caps the extra attempts across eligible requests
+within a single tool call (default `4`). Use `0` to disable tool retries.
+Each request still gets its first attempt and is subject to its own retry
+ceiling. When a tool runs out of retries, the current upstream response or
+error follows the usual tool error handling. Concurrent tool invocations get
+independent allowances. Polling schedules and paid operation recovery retain
+their existing behavior. Both new settings are read on process startup or
+first transport use and require a restart to change.
+
 A single dropped connection or a 503 from a cold-starting backend used to fail a
 whole tool call, leaving the agent to decide whether retrying was safe. For reads
 it usually is, so idempotent calls now retry automatically.
@@ -287,11 +308,19 @@ status. Fields only the failed endpoint carries come back `null` — the
 ### A submitted transaction that cannot be confirmed
 
 Registry mutations (`mindvault_update_metadata`, `mindvault_set_price`,
-`mindvault_transfer_ownership`, `mindvault_set_listed`, `mindvault_set_tags`)
-and the `register_batch` step of `mindvault_publish_batch` sign a transaction,
-submit it with `sendTransaction`, then poll `getTransaction` until it lands.
-A submit is never retried. It is not idempotent, and a second submit would be
-a second transaction.
+`mindvault_transfer_ownership`, `mindvault_set_listed`, `mindvault_accept_transfer`,
+`mindvault_cancel_transfer`) and the `register_batch` step of `mindvault_publish_batch`
+sign a transaction, submit it with `sendTransaction`, then poll `getTransaction`
+until it lands. A submit is never retried. It is not idempotent, and a second
+submit would be a second transaction.
+
+All of these mutations go through `signAndSendTracked` (in
+[`mcp/src/submittedTransaction.ts`](../mcp/src/submittedTransaction.ts)), which
+captures the transaction hash the moment `sendTransaction` returns via the SDK's
+`onSubmitted` hook. This is the single entry point for all transaction retry paths:
+manual retries (an agent calling the tool again after a failure) and automatic
+retries (the SDK's own internal polling) are both bounded by the same submitted-hash
+invariant. Neither path can bypass it.
 
 If the poll times out, or the RPC goes away after the network accepted the
 transaction, the outcome is unknown but the transaction hash is known. The tool
@@ -363,6 +392,13 @@ MindVault MCP: retrying GET /resources — attempt 2/3 failed (HTTP 503); next a
   RPC loss and poll timeout after submit, run through the SDK's own
   `SentTransaction`, return the hash and a `mindvault_tx_status` lookup
   instead of an error
+- [`mcp/src/tools/anchorRetry.test.ts`](../mcp/src/tools/anchorRetry.test.ts) —
+  all six single-resource registry mutations (`update_metadata`, `set_price`,
+  `transfer_ownership`, `set_listed`, `accept_transfer`, `cancel_transfer`)
+  exhausted through both entry points (submitted-but-unconfirmed and confirmed):
+  every unconfirmed path returns `status: "submitted"` with the hash and
+  `statusLookup`, never resubmits, and the confirmed path returns
+  `status: "success"` with `txPhase: "settled"`
 - [`mcp/src/publishStatusRetry.test.ts`](../mcp/src/publishStatusRetry.test.ts) —
   `mindvault_publish_status` stopping at a terminal status while a companion
   request exhausts its retries

@@ -15,6 +15,9 @@ import {
   logPaymentError,
   logOnchainTransaction,
   logWalletOperation,
+  logProgressNotification,
+  resetAuditDeduplicator,
+  isProgressAuditDuplicate,
 } from "./auditLog.js";
 
 describe("auditLog – initialization and control", () => {
@@ -294,6 +297,92 @@ describe("auditLog – wallet operation logging", () => {
     const logged = JSON.parse((console.error as any).mock.calls[0][0]);
     expect(logged.message).not.toContain("S1234567890");
     expect(logged.message).toContain("[REDACTED]");
+  });
+});
+
+describe("auditLog – progress notification logging and deduplication (#1214)", () => {
+  beforeEach(() => {
+    setAuditLogEnabled(true);
+    resetAuditDeduplicator();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    setAuditLogEnabled(false);
+    resetAuditDeduplicator();
+    vi.restoreAllMocks();
+  });
+
+  it("logs progress notification with progress status and event metadata", () => {
+    logProgressNotification({
+      toolName: "mindvault_publish",
+      progressToken: "tok-1",
+      progress: 2,
+      total: 5,
+      message: "Verifying resource",
+      eventId: "stream-1:2",
+      sequence: 2,
+      streamId: "stream-1",
+    });
+
+    expect(console.error).toHaveBeenCalledTimes(1);
+    const logged = JSON.parse((console.error as any).mock.calls[0][0]);
+    expect(logged.status).toBe("progress");
+    expect(logged.toolName).toBe("mindvault_publish");
+    expect(logged.progress).toBe(2);
+    expect(logged.total).toBe(5);
+    expect(logged.message).toBe("Verifying resource");
+    expect(logged.eventId).toBe("stream-1:2");
+    expect(logged.sequence).toBe(2);
+    expect(logged.streamId).toBe("stream-1");
+  });
+
+  it("suppresses duplicate audit entries when progress notifications are replayed after reconnect", () => {
+    const notification = {
+      toolName: "mindvault_publish",
+      progressToken: "tok-1",
+      progress: 1,
+      total: 4,
+      message: "Validating resource",
+      eventId: "stream-abc:1",
+      sequence: 1,
+      streamId: "stream-abc",
+    };
+
+    // First delivery
+    logProgressNotification(notification);
+    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(isProgressAuditDuplicate("stream-abc:1")).toBe(true);
+
+    // Replay after stream reconnect
+    logProgressNotification(notification);
+    expect(console.error).toHaveBeenCalledTimes(1);
+
+    // Next step in sequence is logged
+    logProgressNotification({
+      ...notification,
+      progress: 2,
+      eventId: "stream-abc:2",
+      sequence: 2,
+    });
+    expect(console.error).toHaveBeenCalledTimes(2);
+  });
+
+  it("resets deduplicator cache cleanly with resetAuditDeduplicator", () => {
+    logProgressNotification({
+      progress: 1,
+      eventId: "stream-xyz:1",
+    });
+    expect(console.error).toHaveBeenCalledTimes(1);
+
+    resetAuditDeduplicator();
+    expect(isProgressAuditDuplicate("stream-xyz:1")).toBe(false);
+
+    logProgressNotification({
+      progress: 1,
+      eventId: "stream-xyz:1",
+    });
+    expect(console.error).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -17,6 +17,7 @@
 
 import { redactSecrets } from "./diagnostics.js";
 import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
 
 // ── SDK version helpers ───────────────────────────────────────────────────────
@@ -51,25 +52,43 @@ export function compareSemver(a: string, b: string): number {
 export function readInstalledSdkVersion(
   resolver: (id: string) => string | null = defaultResolver,
 ): string | null {
-  const jsonPath = resolver("@modelcontextprotocol/sdk/package.json");
-  if (!jsonPath) return null;
-  try {
-    const raw = readFileSync(jsonPath, "utf-8");
-    const pkg = JSON.parse(raw) as { version?: unknown };
-    return typeof pkg.version === "string" ? pkg.version : null;
-  } catch {
-    return null;
+  const manifest = resolver("@modelcontextprotocol/sdk/package.json");
+  const entry = manifest ?? resolver("@modelcontextprotocol/sdk/server/index.js");
+  if (!entry) return null;
+
+  for (let dir = dirname(entry); dir !== dirname(dir); dir = dirname(dir)) {
+    try {
+      const raw = readFileSync(join(dir, "package.json"), "utf-8");
+      const pkg = JSON.parse(raw) as { name?: unknown; version?: unknown };
+      if (pkg.name === "@modelcontextprotocol/sdk") {
+        return typeof pkg.version === "string" ? pkg.version : null;
+      }
+    } catch {
+      // The installed SDK may only expose compiled subpaths.
+    }
   }
+  return null;
 }
 
 /** Use createRequire to resolve a package file path relative to this module. */
 const _require = createRequire(import.meta.url);
+/** Fallback resolver from cwd — handles pnpm workspace hoisting where the
+ * package lives in the root node_modules rather than the local one. */
+const _requireCwd = createRequire(
+  new URL(`file://${process.cwd().replace(/\\/g, "/")}/package.json`),
+);
 
 function defaultResolver(id: string): string | null {
   try {
     return _require.resolve(id);
   } catch {
-    return null;
+    // Fallback: try resolving from the current working directory (handles pnpm
+    // workspace hoisting where deps land in the workspace root node_modules).
+    try {
+      return _requireCwd.resolve(id);
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -104,28 +123,50 @@ function nodeMajor(version: string): number {
 }
 
 /**
- * Validate that a string is an absolute http(s) URL.
+ * Validate that a string is an absolute http(s) URL with no embedded credentials.
  * Returns null when the value is absent/empty (treated as "using default").
+ *
+ * Three failure modes are reported distinctly:
+ *   1. Completely unparseable — "not a valid URL"
+ *   2. Parseable but non-http(s) scheme — names the actual scheme
+ *   3. Valid http(s) URL but with embedded user:pass — flags without echoing creds
  */
 function urlIssue(variable: string, value: string | undefined): InstallCheck | null {
   if (!value || !value.trim()) return null; // unset → default in use, that is fine
+  const trimmed = value.trim();
+  let parsed: URL;
   try {
-    const url = new URL(value.trim());
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return {
-        name: variable,
-        ok: false,
-        detail: `${variable} must be an http(s) URL; got: "${redactSecrets(value)}"`,
-      };
-    }
-    return { name: variable, ok: true, detail: `${variable}: ${value.trim()} (custom)` };
+    parsed = new URL(trimmed);
   } catch {
     return {
       name: variable,
       ok: false,
-      detail: `${variable} is not a valid URL: "${redactSecrets(value)}"`,
+      detail: `${variable} is not a valid URL: "${redactSecrets(trimmed)}"`,
     };
   }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    const scheme = parsed.protocol.replace(/:$/, "");
+    return {
+      name: variable,
+      ok: false,
+      detail: `${variable} must be an http(s) URL; got unsupported scheme "${scheme}://"`,
+    };
+  }
+
+  if (parsed.username !== "" || parsed.password !== "") {
+    // Strip credentials before including the URL in the message.
+    return {
+      name: variable,
+      ok: false,
+      detail:
+        `${variable} must not contain embedded credentials (user:pass@host). ` +
+        `Use environment variables or a secrets manager instead. ` +
+        `Configured URL (credentials removed): ${redactSecrets(trimmed)}`,
+    };
+  }
+
+  return { name: variable, ok: true, detail: `${variable}: ${trimmed} (custom)` };
 }
 
 // ── Core ──────────────────────────────────────────────────────────────────────

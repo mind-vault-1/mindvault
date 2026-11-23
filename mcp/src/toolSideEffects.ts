@@ -69,6 +69,8 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   // Replaces the target profile's wallet secret; the sponsor pays for the account.
   mindvault_setup_wallet: { local: "overwrite", remote: "api", payment: "none" },
   mindvault_wallet_info: READ,
+  mindvault_wallet_balances: READ,
+  mindvault_wallet_allowance: READ,
   // Replaces the target profile's wallet secret after a Horizon read.
   mindvault_repair_sponsored_account: { local: "overwrite", remote: "none", payment: "none" },
   mindvault_use_profile: { local: "write", remote: "none", payment: "none" },
@@ -88,6 +90,8 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_browse: READ,
   mindvault_search: READ,
   mindvault_preview: READ,
+  mindvault_batch_catalog_lookup: READ,
+  mindvault_preview_metadata_hash: READ,
   mindvault_prewarm_catalog: READ,
   // Returns guidance only; it invalidates nothing.
   mindvault_recover_catalog_cache: READ,
@@ -102,20 +106,28 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_lease_status: READ,
   mindvault_purchase_history: READ,
   mindvault_export_receipts: READ,
+  mindvault_verify_receipt: READ,
 
   // ── Registry reads ───────────────────────────────────────────────────────
   mindvault_agent_status: READ,
   mindvault_registry_info: READ,
   mindvault_network_profile: READ,
   mindvault_check_bindings: READ,
+  mindvault_onchain_preflight: READ,
+  mindvault_verify_deployment: READ,
+  mindvault_server_endpoints: READ,
   mindvault_check_consistency: READ,
+  mindvault_metadata_diff: READ,
   mindvault_verify_attestation: READ,
   mindvault_registry_lookup: READ,
+  // Explains a contract error from a table; it reads nothing and writes nothing.
+  mindvault_explain_error_code: READ,
   mindvault_registry_list: READ,
   mindvault_registry_count: READ,
   mindvault_registry_creator_page: READ,
   mindvault_registry_tag_search: READ,
   mindvault_pending_transfer: READ,
+  mindvault_prepare_ownership_transfer: READ,
   mindvault_fee_config: READ,
   mindvault_tx_status: READ,
   mindvault_resource_provenance: READ,
@@ -142,15 +154,19 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_compare_state_backup: READ,
   mindvault_restore_state: { local: "overwrite", remote: "none", payment: "none" },
   mindvault_check_state_permissions: READ,
+  mindvault_migration_preview: READ,
 
   // ── Diagnostics ──────────────────────────────────────────────────────────
   // `reset: true` clears the in-process counters other calls report.
   mindvault_metrics: { local: "memory", remote: "none", payment: "none" },
   mindvault_registry_health: READ,
   mindvault_rpc_health: READ,
+  mindvault_upstream_health: READ,
+  mindvault_cache_chain_diff: READ,
   mindvault_client_config: READ,
   mindvault_mainnet_banner: READ,
   mindvault_verify_install: READ,
+  mindvault_support_bundle: READ,
   mindvault_debug_bundle: READ,
 };
 

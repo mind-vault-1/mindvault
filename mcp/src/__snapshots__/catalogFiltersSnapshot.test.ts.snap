@@ -67,6 +67,7 @@ exports[`describeCatalogFilters — snapshots > verificationStatus labels in des
 exports[`parseCatalogFilters — round-trip snapshots > all four verificationStatus values accepted 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -86,6 +87,7 @@ exports[`parseCatalogFilters — round-trip snapshots > all four verificationSta
 exports[`parseCatalogFilters — round-trip snapshots > all four verificationStatus values accepted 2`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -105,6 +107,7 @@ exports[`parseCatalogFilters — round-trip snapshots > all four verificationSta
 exports[`parseCatalogFilters — round-trip snapshots > all four verificationStatus values accepted 3`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -124,6 +127,7 @@ exports[`parseCatalogFilters — round-trip snapshots > all four verificationSta
 exports[`parseCatalogFilters — round-trip snapshots > all four verificationStatus values accepted 4`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -143,6 +147,7 @@ exports[`parseCatalogFilters — round-trip snapshots > all four verificationSta
 exports[`parseCatalogFilters — round-trip snapshots > both resourceType values accepted 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -162,6 +167,7 @@ exports[`parseCatalogFilters — round-trip snapshots > both resourceType values
 exports[`parseCatalogFilters — round-trip snapshots > both resourceType values accepted 2`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -181,6 +187,7 @@ exports[`parseCatalogFilters — round-trip snapshots > both resourceType values
 exports[`parseCatalogFilters — round-trip snapshots > empty object for browse (no criteria required) 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -263,6 +270,7 @@ exports[`parseCatalogFilters — round-trip snapshots > error shape for requireC
 exports[`parseCatalogFilters — round-trip snapshots > full browse filter set — all fields present 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": 25,
     "listed": true,
     "maxPrice": "10.00",
@@ -285,6 +293,7 @@ exports[`parseCatalogFilters — round-trip snapshots > full browse filter set �
 exports[`parseCatalogFilters — round-trip snapshots > keyword via legacy search alias 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -304,6 +313,7 @@ exports[`parseCatalogFilters — round-trip snapshots > keyword via legacy searc
 exports[`parseCatalogFilters — round-trip snapshots > keyword via query field 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -323,6 +333,7 @@ exports[`parseCatalogFilters — round-trip snapshots > keyword via query field 
 exports[`parseCatalogFilters — round-trip snapshots > limit and offset coerced from string to integer 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": 10,
     "listed": undefined,
     "maxPrice": undefined,
@@ -342,6 +353,7 @@ exports[`parseCatalogFilters — round-trip snapshots > limit and offset coerced
 exports[`parseCatalogFilters — round-trip snapshots > listed as boolean true/false 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": true,
     "maxPrice": undefined,
@@ -361,6 +373,7 @@ exports[`parseCatalogFilters — round-trip snapshots > listed as boolean true/f
 exports[`parseCatalogFilters — round-trip snapshots > listed as boolean true/false 2`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": false,
     "maxPrice": undefined,
@@ -380,6 +393,7 @@ exports[`parseCatalogFilters — round-trip snapshots > listed as boolean true/f
 exports[`parseCatalogFilters — round-trip snapshots > listed as string 'true'/'false' 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": true,
     "maxPrice": undefined,
@@ -399,6 +413,7 @@ exports[`parseCatalogFilters — round-trip snapshots > listed as string 'true'/
 exports[`parseCatalogFilters — round-trip snapshots > listed as string 'true'/'false' 2`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": false,
     "maxPrice": undefined,
@@ -418,6 +433,7 @@ exports[`parseCatalogFilters — round-trip snapshots > listed as string 'true'/
 exports[`parseCatalogFilters — round-trip snapshots > price filters as strings 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": "5.00",
@@ -437,6 +453,7 @@ exports[`parseCatalogFilters — round-trip snapshots > price filters as strings
 exports[`parseCatalogFilters — round-trip snapshots > requireCriteria=true with a valid filter set 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -456,6 +473,7 @@ exports[`parseCatalogFilters — round-trip snapshots > requireCriteria=true wit
 exports[`parseCatalogFilters — round-trip snapshots > sort — all four values accepted and passed through 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -475,6 +493,7 @@ exports[`parseCatalogFilters — round-trip snapshots > sort — all four values
 exports[`parseCatalogFilters — round-trip snapshots > sort — all four values accepted and passed through 2`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -494,6 +513,7 @@ exports[`parseCatalogFilters — round-trip snapshots > sort — all four values
 exports[`parseCatalogFilters — round-trip snapshots > sort — all four values accepted and passed through 3`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -513,6 +533,7 @@ exports[`parseCatalogFilters — round-trip snapshots > sort — all four values
 exports[`parseCatalogFilters — round-trip snapshots > sort — all four values accepted and passed through 4`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -532,6 +553,7 @@ exports[`parseCatalogFilters — round-trip snapshots > sort — all four values
 exports[`parseCatalogFilters — round-trip snapshots > tags as array 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,
@@ -554,6 +576,7 @@ exports[`parseCatalogFilters — round-trip snapshots > tags as array 1`] = `
 exports[`parseCatalogFilters — round-trip snapshots > tags as comma-separated string 1`] = `
 {
   "filters": {
+    "cursor": undefined,
     "limit": undefined,
     "listed": undefined,
     "maxPrice": undefined,

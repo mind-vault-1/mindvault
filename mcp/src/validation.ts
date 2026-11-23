@@ -51,6 +51,7 @@ import {
   TRANSACTION_WAIT_POLICIES,
 } from "./settlement.js";
 import { StrKey } from "@stellar/stellar-sdk";
+import { checkUsdcAmountInput, USDC_AMOUNT_FORMAT } from "./usdcAmount.js";
 
 // ── Spec model ────────────────────────────────────────────────────────────────
 
@@ -76,6 +77,15 @@ import { StrKey } from "@stellar/stellar-sdk";
  *                 bounded length. Unlike `tag_array` entries keep their case
  *                 and duplicates — they are data selectors, not on-chain tags.
  *                 Accepts a comma-separated string as well.
+ * - `usdc_amount` — a USDC amount as a decimal string (see usdcAmount.ts):
+ *                 at most 7 decimal places, no sign, no exponent, at most the
+ *                 registry's `MAX_PRICE`. Refused, never rounded (#1252).
+ *                 `positive` also refuses zero.
+ * - `object`    — a JSON object passed through unchanged. Used for structured
+ *                 payloads whose field-level validation belongs to the owning
+ *                 module (e.g. an expected deployment manifest), so the tool
+ *                 can report every problem in one deterministic result instead
+ *                 of a generic argument error.
  *
  * Normalization guidance for tag_array:
  *   - Tags are lowercased before the on-chain call so "Finance" and "finance"
@@ -94,7 +104,9 @@ export type ArgumentKind =
   | "tag_array"
   | "string_array"
   | "url"
-  | "integer";
+  | "integer"
+  | "usdc_amount"
+  | "object";
 
 export interface ArgumentSpec {
   kind: ArgumentKind;
@@ -126,6 +138,8 @@ export interface ArgumentSpec {
    * only the URL form carries a host to check.
    */
   rejectLocalHost?: boolean;
+  /** Refuse zero — `usdc_amount` only. */
+  positive?: boolean;
 }
 
 export type ToolArgumentSpec = Record<string, ArgumentSpec>;
@@ -160,13 +174,22 @@ const PROFILE_NAME: ArgumentSpec = {
   patternHint: "letters, digits, dot, dash, or underscore (1–64 chars)",
 };
 
-/** Decimal USDC amount as a string, e.g. "5", "0.50". */
-const USDC_AMOUNT: ArgumentSpec = {
+/**
+ * Decimal USDC amount as a string for catalog price filters, e.g. "5", "0.50".
+ * `parseCatalogFilters` re-checks it.
+ */
+const USDC_FILTER_AMOUNT: ArgumentSpec = {
   kind: "string",
   maxLength: 32,
   pattern: /^\d+(\.\d+)?$/,
   patternHint: 'a non-negative decimal amount in USDC, e.g. "5.00"',
 };
+
+/** A USDC amount the caller pays or charges: a ceiling or a price (#1252). */
+const USDC_AMOUNT: ArgumentSpec = { kind: "usdc_amount" };
+
+/** A price: a USDC amount that must be above zero. */
+const USDC_PRICE: ArgumentSpec = { kind: "usdc_amount", positive: true, required: true };
 
 /**
  * Batch-size ceiling for tools that take a list of resource ids in one call.
@@ -232,8 +255,8 @@ const PASSPHRASE: ArgumentSpec = { kind: "string", required: true, minLength: 8,
  */
 const CATALOG_FILTER_ARGS: ToolArgumentSpec = {
   query: { kind: "string", maxLength: 256 },
-  minPrice: USDC_AMOUNT,
-  maxPrice: USDC_AMOUNT,
+  minPrice: USDC_FILTER_AMOUNT,
+  maxPrice: USDC_FILTER_AMOUNT,
   verificationStatus: {
     kind: "enum",
     values: ["pending", "verified", "rejected", "skipped"],
@@ -288,6 +311,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     confirmMainnet: CONFIRM_MAINNET,
   },
   mindvault_wallet_info: {},
+  mindvault_wallet_allowance: {},
   mindvault_use_profile: { name: { ...PROFILE_NAME, required: true } },
   mindvault_switch_network_profile: {
     name: { ...PROFILE_NAME, required: true },
@@ -316,7 +340,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_publish: {
     title: { kind: "string", required: true, maxLength: 256 },
     description: { kind: "string", maxLength: 2048 },
-    price: { ...USDC_AMOUNT, required: true },
+    price: USDC_PRICE,
     externalUrl: {
       kind: "url",
       required: true,
@@ -343,6 +367,12 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     },
     intervalMs: { kind: "integer", min: MIN_SETTLEMENT_INTERVAL_MS },
   },
+  mindvault_purchase_history: {
+    resourceId: { ...RESOURCE_ID, required: false },
+    network: { kind: "string", maxLength: 64 },
+    query: { kind: "string" },
+    idempotencyKey: { kind: "string" },
+  },
   mindvault_export_receipts: {
     format: { kind: "enum", values: ["json", "csv", "ndjson"] },
     resourceId: { ...RESOURCE_ID, required: false },
@@ -368,7 +398,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     resourceId: RESOURCE_ID,
     tier: { kind: "enum", required: true, values: ["hour", "day", "week"] },
     dryRun: DRY_RUN,
-    maxAutoPayUsdc: { kind: "string", maxLength: 32 },
+    maxAutoPayUsdc: USDC_AMOUNT,
     confirmMainnet: CONFIRM_MAINNET,
     confirmPaid: CONFIRM_PAID,
   },
@@ -394,15 +424,50 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_metadata_diff: {
     resourceId: RESOURCE_ID,
   },
+  mindvault_cache_chain_diff: {
+    resourceIds: {
+      kind: "string_array",
+      minLength: 1,
+      maxLength: CACHE_CHAIN_DIFF_MAX_RESOURCES,
+      pattern: /^[A-Za-z0-9._-]{1,128}$/,
+      patternHint: RESOURCE_ID.patternHint,
+    },
+    limit: { kind: "integer", min: 1, max: CACHE_CHAIN_DIFF_MAX_RESOURCES },
+  },
   mindvault_verify_attestation: {
     resourceId: ON_CHAIN_RESOURCE_ID,
     attestationHash: ATTESTATION_HASH,
   },
   mindvault_registry_lookup: { resourceId: RESOURCE_ID },
+  mindvault_explain_error_code: {
+    // Exactly one of the two identifies the error. The spec marks neither as
+    // required because the pair is an exclusive choice, and the validator's
+    // "required" flag cannot express "one of"; the handler rejects a call
+    // that gives neither or both.
+    code: { kind: "integer", min: 0, max: 65535 },
+    name: {
+      kind: "string",
+      maxLength: 64,
+      pattern: /^[A-Za-z][A-Za-z0-9]*$/,
+      patternHint: "an error name such as NotFound",
+    },
+  },
   mindvault_registry_list: {
     start: { kind: "integer", min: 0 },
     limit: { kind: "integer", min: 1, max: REGISTRY_LIST_MAX_LIMIT },
   },
+  mindvault_batch_catalog_lookup: {
+    resourceIds: {
+      kind: "string_array",
+      required: true,
+      minLength: 1,
+      maxLength: BATCH_LOOKUP_MAX_IDS,
+      pattern: /^[A-Za-z0-9._-]+$/,
+      patternHint: "a resource id: letters, digits, dot, dash, or underscore (max 128 chars)",
+    },
+    refetch: { kind: "flag" },
+  },
+  mindvault_preview_metadata_hash: { resourceId: RESOURCE_ID },
   mindvault_registry_count: {
     creator: { kind: "string" },
   },
@@ -449,6 +514,9 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_onchain_preflight: {
     requestedSchemaVersion: { kind: "integer", min: 0 },
   },
+  mindvault_verify_deployment: {
+    manifest: { kind: "object" },
+  },
   mindvault_migration_preview: {},
   mindvault_support_bundle: {
     incidentId: { kind: "string", required: true, minLength: 1, maxLength: 128 },
@@ -468,9 +536,13 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   },
   mindvault_set_price: {
     resourceId: RESOURCE_ID,
-    price: { ...USDC_AMOUNT, required: true },
+    price: USDC_PRICE,
     confirmMainnet: CONFIRM_MAINNET,
     confirmPaid: CONFIRM_PAID,
+  },
+  mindvault_prepare_ownership_transfer: {
+    resourceId: RESOURCE_ID,
+    newCreator: { ...STELLAR_ADDRESS, required: true },
   },
   mindvault_transfer_ownership: {
     resourceId: RESOURCE_ID,
@@ -517,8 +589,23 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     confirmPaid: CONFIRM_PAID,
   },
   mindvault_check_state_permissions: {},
+  mindvault_state_diagnostics: {},
   mindvault_registry_health: {},
   mindvault_rpc_health: {},
+  mindvault_upstream_health: {
+    upstreams: {
+      kind: "string_array",
+      minLength: 1,
+      maxLength: UPSTREAM_IDS.length,
+      pattern: new RegExp(`^(${UPSTREAM_IDS.join("|")})$`),
+      patternHint: `one of ${UPSTREAM_IDS.join(", ")}`,
+    },
+    timeoutMs: {
+      kind: "integer",
+      min: UPSTREAM_PROBE_MIN_TIMEOUT_MS,
+      max: UPSTREAM_PROBE_MAX_TIMEOUT_MS,
+    },
+  },
   mindvault_prewarm_catalog: {},
   mindvault_client_config: {
     client: {
@@ -563,6 +650,7 @@ export type ValidationIssueCode =
   | "invalid_stellar_secret"
   | "invalid_tag_array"
   | "invalid_string_array"
+  | "invalid_usdc_amount"
   | "blocked_url";
 
 export interface ValidationIssue {
@@ -637,6 +725,10 @@ function expectation(spec: ArgumentSpec): string {
       if (spec.max !== undefined) parts.push(`≤ ${spec.max}`);
       return parts.join(" ");
     }
+    case "object":
+      return "a JSON object";
+    case "usdc_amount":
+      return spec.positive ? `${USDC_AMOUNT_FORMAT}, above zero` : USDC_AMOUNT_FORMAT;
     case "string": {
       if (spec.patternHint) return spec.patternHint;
       if (spec.maxLength) return `a string of up to ${spec.maxLength} characters`;
@@ -1071,6 +1163,57 @@ function validateInteger(
   return n;
 }
 
+function validateObject(
+  field: string,
+  value: unknown,
+  issues: ValidationIssue[],
+): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    issues.push({
+      field,
+      code: "wrong_type",
+      message: `${field} must be a JSON object; received ${typeName(value)}.`,
+    });
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+/**
+ * Validate a USDC amount (#1252). Only a string is accepted: a JSON number has
+ * already been through floating point (`0.1 + 0.2`, `1e-7`) and may not be the
+ * amount the caller meant, so it is refused rather than stringified.
+ */
+function validateUsdcAmount(
+  field: string,
+  value: unknown,
+  spec: ArgumentSpec,
+  issues: ValidationIssue[],
+): string | undefined {
+  if (typeof value !== "string") {
+    issues.push({
+      field,
+      code: "wrong_type",
+      message: `${field} must be a string; received ${typeName(value)}. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+  if (value.trim().length === 0) {
+    issues.push({
+      field,
+      code: "empty_string",
+      message: `${field} must not be empty. Expected ${expectation(spec)}.`,
+    });
+    return undefined;
+  }
+  const check = checkUsdcAmountInput(value, { positive: spec.positive === true });
+  if (!check.ok) {
+    issues.push({ field, code: "invalid_usdc_amount", message: `${field}: ${check.message}` });
+    return undefined;
+  }
+  return check.amount;
+}
+
 function validateHash(
   field: string,
   value: unknown,
@@ -1198,7 +1341,10 @@ function hostSafetyIssue(host: string, field: string): ValidationIssue | null {
 }
 
 /** Validated, normalized arguments for a tool call. */
-export type ValidatedArgs = Record<string, string | boolean | string[] | number>;
+export type ValidatedArgs = Record<
+  string,
+  string | boolean | string[] | number | Record<string, unknown>
+>;
 
 /**
  * Validate and normalize a tool call's arguments.
@@ -1286,6 +1432,16 @@ export function validateToolArgs(tool: string, rawArgs: unknown): ValidatedArgs 
       case "integer": {
         const num = validateInteger(field, value, fieldSpec, issues);
         if (num !== undefined) out[field] = num;
+        break;
+      }
+      case "object": {
+        const obj = validateObject(field, value, issues);
+        if (obj !== undefined) out[field] = obj;
+        break;
+      }
+      case "usdc_amount": {
+        const amount = validateUsdcAmount(field, value, fieldSpec, issues);
+        if (amount !== undefined) out[field] = amount;
         break;
       }
       case "string": {

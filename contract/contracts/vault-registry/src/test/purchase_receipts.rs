@@ -517,3 +517,167 @@ fn override_purchase_receipt_anchor_reverts_for_non_admin() {
         Err(Ok(Error::Unauthorized))
     );
 }
+
+// ── Receipt hash binding (#998) ──────────────────────────────────────────────
+//
+// The `(resource_id, buyer)` anchor is the canonical key, but a receipt hash
+// also identifies a purchase. A hash already bound to one purchase must not be
+// rebound to another by a verifier anchor, an alternate settlement retry, or
+// an admin override.
+
+#[test]
+fn anchor_hash_cannot_be_rebound_to_another_purchase() {
+    let (env, creator, service, client) = setup_with_anchor_service();
+    let buyer_one = Address::generate(&env);
+    let buyer_two = Address::generate(&env);
+    let id_one = register_priced(&env, &creator, &client, "hashdup1", 100i128);
+    let id_two = register_priced(&env, &creator, &client, "hashdup2", 100i128);
+    let hash = String::from_str(&env, "tx-shared-receipt");
+
+    env.ledger().set_sequence_number(300);
+    client.anchor_purchase_receipt(&service, &id_one, &buyer_one, &hash);
+    let original = client.get_purchase_receipt(&id_one, &buyer_one);
+    assert_eq!(original.receipt_hash, hash);
+    assert_eq!(original.ledger, 300);
+
+    // Same hash, different buyer or different resource: stable `DuplicateReceipt`.
+    assert_eq!(
+        client.try_anchor_purchase_receipt(&service, &id_one, &buyer_two, &hash),
+        Err(Ok(Error::DuplicateReceipt))
+    );
+    assert_eq!(
+        client.try_anchor_purchase_receipt(&service, &id_two, &buyer_one, &hash),
+        Err(Ok(Error::DuplicateReceipt))
+    );
+
+    // The non-reverting variant reports the same conflict and keeps the original.
+    assert!(!client.attempt_anchor_purchase_receipt(&service, &id_one, &buyer_two, &hash));
+    assert_eq!(
+        last_anchor_failure(&env, &id_one).reason,
+        AnchorFailureReason::DuplicateReceipt
+    );
+    assert_eq!(client.get_purchase_receipt(&id_one, &buyer_one), original);
+    assert_eq!(
+        client.try_get_purchase_receipt(&id_one, &buyer_two),
+        Err(Ok(Error::NotFound))
+    );
+    assert_eq!(
+        client.try_get_purchase_receipt(&id_two, &buyer_one),
+        Err(Ok(Error::NotFound))
+    );
+}
+
+#[test]
+fn retry_anchor_preserves_original_hash_against_alternate_hashes() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let settler = Address::generate(&env);
+    let service = Address::generate(&env);
+    client.add_settler(&settler);
+    client.add_verifier(&service);
+    let buyer_one = Address::generate(&env);
+    let buyer_two = Address::generate(&env);
+    let id_one = register_priced(&env, &creator, &client, "hashrty1", 100i128);
+    let id_two = register_priced(&env, &creator, &client, "hashrty2", 100i128);
+    let first_hash = String::from_str(&env, "tx-anchored-first");
+    let second_hash = String::from_str(&env, "tx-anchored-second");
+    let other_hash = String::from_str(&env, "tx-other-payment");
+
+    env.ledger().set_sequence_number(300);
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "pay-first"),
+        &id_one,
+        &buyer_one,
+        &100i128,
+        &first_hash,
+    );
+    client.anchor_purchase_receipt(&service, &id_one, &buyer_one, &first_hash);
+    let original = client.get_purchase_receipt(&id_one, &buyer_one);
+
+    // A later payment for the same pair advances PaymentIndex, but retrying
+    // the anchored hash stays idempotent.
+    env.ledger().set_sequence_number(400);
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "pay-second"),
+        &id_one,
+        &buyer_one,
+        &100i128,
+        &second_hash,
+    );
+    assert!(client.retry_anchor_purchase_receipt(&settler, &id_one, &buyer_one, &first_hash));
+    assert_eq!(client.get_purchase_receipt(&id_one, &buyer_one), original);
+
+    // The alternate hash is a conflict, not a rewrite, and an anchored pair
+    // does not gain a contradictory failure record.
+    assert!(!client.retry_anchor_purchase_receipt(&settler, &id_one, &buyer_one, &second_hash));
+    assert_eq!(client.get_purchase_receipt(&id_one, &buyer_one), original);
+    assert_eq!(
+        client.try_get_anchor_failure(&id_one, &buyer_one),
+        Err(Ok(Error::NotFound))
+    );
+
+    // The same hash cannot be retried into a different purchase either.
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "pay-other"),
+        &id_two,
+        &buyer_two,
+        &100i128,
+        &other_hash,
+    );
+    assert!(!client.retry_anchor_purchase_receipt(&settler, &id_two, &buyer_two, &first_hash));
+    assert_eq!(
+        last_anchor_failure(&env, &id_two).reason,
+        AnchorFailureReason::DuplicateReceipt
+    );
+    assert_eq!(
+        client.try_get_purchase_receipt(&id_two, &buyer_two),
+        Err(Ok(Error::NotFound))
+    );
+    assert_eq!(client.get_purchase_receipt(&id_one, &buyer_one), original);
+}
+
+#[test]
+fn override_anchor_rejects_hash_bound_to_another_purchase() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let service = Address::generate(&env);
+    client.add_verifier(&service);
+    let buyer_one = Address::generate(&env);
+    let buyer_two = Address::generate(&env);
+    let id_one = register_priced(&env, &creator, &client, "hashovr1", 100i128);
+    let id_two = register_priced(&env, &creator, &client, "hashovr2", 100i128);
+    let hash_one = String::from_str(&env, "tx-bound-one");
+    let hash_two = String::from_str(&env, "tx-bound-two");
+
+    client.anchor_purchase_receipt(&service, &id_one, &buyer_one, &hash_one);
+    client.anchor_purchase_receipt(&service, &id_two, &buyer_two, &hash_two);
+
+    assert_eq!(
+        client.try_override_purchase_receipt_anchor(&admin, &id_two, &buyer_two, &hash_one),
+        Err(Ok(Error::DuplicateReceipt))
+    );
+    assert_eq!(
+        client
+            .get_purchase_receipt(&id_two, &buyer_two)
+            .receipt_hash,
+        hash_two,
+        "a rejected override must leave the original association intact"
+    );
+    assert_eq!(
+        client
+            .get_purchase_receipt(&id_one, &buyer_one)
+            .receipt_hash,
+        hash_one
+    );
+
+    // Overriding with a fresh hash is still supported and moves the index.
+    let replacement = String::from_str(&env, "tx-replacement");
+    client.override_purchase_receipt_anchor(&admin, &id_one, &buyer_one, &replacement);
+    assert_eq!(
+        client
+            .get_purchase_receipt(&id_one, &buyer_one)
+            .receipt_hash,
+        replacement
+    );
+}

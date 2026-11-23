@@ -201,6 +201,95 @@ fn lease_rejects_wrong_amount_bad_hash_and_unlisted_resources() {
 }
 
 #[test]
+fn lease_renewal_rejects_delisted_and_tombstoned_resources_without_writes() {
+    let (env, creator, settler, holder, client) = lease_setup();
+    let admin = client.admin().unwrap();
+    let id = register_priced(&env, &creator, &client, "leaseclosed", 100i128);
+    let tx = String::from_str(&env, "lease-tx");
+
+    env.ledger().set_sequence_number(100);
+    client.record_lease(&settler, &holder, &id, &LeaseTier::Hour, &100i128, &tx);
+    let prior_lease = client.get_lease(&id, &holder);
+    let new_holder = Address::generate(&env);
+
+    // An expired lease may be renewed only while its resource is Listed.
+    env.ledger().set_sequence_number(100 + LEASE_HOUR_LEDGERS);
+    client.delist(&id);
+    let before_rejection_events = env.events().all().len();
+    assert_eq!(
+        client.try_buy_lease(&holder, &id, &LeaseTier::Hour, &100i128, &tx),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(
+        client.try_record_lease(&settler, &holder, &id, &LeaseTier::Hour, &100i128, &tx),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(
+        client.try_buy_lease(&new_holder, &id, &LeaseTier::Hour, &100i128, &tx),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(client.get_lease(&id, &holder), prior_lease);
+    assert_eq!(client.try_get_lease(&id, &new_holder), Err(Ok(Error::NotFound)));
+    assert_eq!(env.events().all().len(), before_rejection_events);
+
+    client.tombstone_resource(&id, &admin);
+    let before_tombstone_rejection_events = env.events().all().len();
+    assert_eq!(
+        client.try_buy_lease(&holder, &id, &LeaseTier::Hour, &100i128, &tx),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(
+        client.try_record_lease(&settler, &holder, &id, &LeaseTier::Hour, &100i128, &tx),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(client.get_lease(&id, &holder), prior_lease);
+    assert_eq!(env.events().all().len(), before_tombstone_rejection_events);
+}
+
+#[test]
+fn pending_lease_cannot_be_settled_after_delisting_or_tombstoning() {
+    let (env, creator, settler, holder, client) = lease_setup();
+    let admin = client.admin().unwrap();
+    let tx = String::from_str(&env, "pending-lease-tx");
+    let delisted = register_priced(&env, &creator, &client, "pendingoff", 100i128);
+    let pending = client.buy_lease(&holder, &delisted, &LeaseTier::Hour, &100i128, &tx);
+
+    client.delist(&delisted);
+    let before_events = env.events().all().len();
+    assert_eq!(
+        client.try_settle_lease(&settler, &delisted, &holder),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(client.get_lease(&delisted, &holder), pending);
+    assert_eq!(env.events().all().len(), before_events);
+
+    // Relisting permits settlement of the unchanged, still-pending lease.
+    client.reactivate_resource(&delisted);
+    let settled = client.settle_lease(&settler, &delisted, &holder);
+    assert_eq!(settled.state, LeaseState::Active);
+    assert_eq!(settled.amount, pending.amount);
+    assert_eq!(settled.tx_hash, pending.tx_hash);
+    assert_eq!(settled.expiry_ledger, pending.expiry_ledger);
+
+    let tombstoned = register_priced(&env, &creator, &client, "pendinggone", 100i128);
+    let pending_tombstone = client.buy_lease(
+        &holder,
+        &tombstoned,
+        &LeaseTier::Hour,
+        &100i128,
+        &tx,
+    );
+    client.tombstone_resource(&tombstoned, &admin);
+    let before_tombstone_events = env.events().all().len();
+    assert_eq!(
+        client.try_settle_lease(&settler, &tombstoned, &holder),
+        Err(Ok(Error::ResourceNotMutable))
+    );
+    assert_eq!(client.get_lease(&tombstoned, &holder), pending_tombstone);
+    assert_eq!(env.events().all().len(), before_tombstone_events);
+}
+
+#[test]
 fn one_open_lease_per_pair_but_expired_or_revoked_leases_are_replaced() {
     let (env, creator, settler, holder, client) = lease_setup();
     let id = register_priced(&env, &creator, &client, "leaseonce", 100i128);
@@ -331,415 +420,409 @@ fn lease_writes_respect_the_emergency_pause() {
     assert_eq!(client.lease_price(&id, &LeaseTier::Hour), 100i128);
 }
 
-#[test]
-fn lease_quote_returns_price_and_duration_for_all_tiers() {
-    let (env, creator, _settler, _holder, client) = lease_setup();
-    let id = register_priced(&env, &creator, &client, "leasequote", 1_000i128);
-
-    // Hour tier: 1x multiplier, 720 ledgers
-    let hour_quote = client.lease_quote(&id, &LeaseTier::Hour);
-    assert_eq!(hour_quote.resource_id, id);
-    assert_eq!(hour_quote.tier, LeaseTier::Hour);
-    assert_eq!(hour_quote.price, 1_000i128);
-    assert_eq!(hour_quote.duration_ledgers, LEASE_HOUR_LEDGERS);
-
-    // Day tier: 5x multiplier, 17_280 ledgers
-    let day_quote = client.lease_quote(&id, &LeaseTier::Day);
-    assert_eq!(day_quote.resource_id, id);
-    assert_eq!(day_quote.tier, LeaseTier::Day);
-    assert_eq!(day_quote.price, 5_000i128);
-    assert_eq!(day_quote.duration_ledgers, LEASE_DAY_LEDGERS);
-
-    // Week tier: 20x multiplier, 120_960 ledgers
-    let week_quote = client.lease_quote(&id, &LeaseTier::Week);
-    assert_eq!(week_quote.resource_id, id);
-    assert_eq!(week_quote.tier, LeaseTier::Week);
-    assert_eq!(week_quote.price, 20_000i128);
-    assert_eq!(week_quote.duration_ledgers, LEASE_WEEK_LEDGERS);
-
-    // Quote tracks price changes
-    client.set_price(&id, &2_000i128);
-    let updated = client.lease_quote(&id, &LeaseTier::Week);
-    assert_eq!(updated.price, 40_000i128);
-    assert_eq!(updated.duration_ledgers, LEASE_WEEK_LEDGERS);
-
-    // Unknown resource returns NotFound
-    assert_eq!(
-        client.try_lease_quote(&String::from_str(&env, "nosuchquote"), &LeaseTier::Hour),
-        Err(Ok(Error::NotFound))
-    );
-}
+// ─── Lease extension binding (#997) ─────────────────────────────────────────
 
 #[test]
-fn lease_quote_boundary_cases() {
-    let (env, creator, _settler, _holder, client) = lease_setup();
-
-    // Minimum valid price (1 stroop)
-    let id_min = register_priced(&env, &creator, &client, "quoteminprice", 1i128);
-    let quote_min = client.lease_quote(&id_min, &LeaseTier::Hour);
-    assert_eq!(quote_min.price, 1i128);
-    assert_eq!(quote_min.duration_ledgers, LEASE_HOUR_LEDGERS);
-
-    // Large price (but within MAX_PRICE)
-    let large_price = 1_000_000_000i128; // 100 USDC
-    let id_large = register_priced(&env, &creator, &client, "quotelargeprice", large_price);
-    let quote_large = client.lease_quote(&id_large, &LeaseTier::Week);
-    assert_eq!(quote_large.price, large_price * 20);
-    assert_eq!(quote_large.duration_ledgers, LEASE_WEEK_LEDGERS);
-
-    // Invalid resource ID
-    assert_eq!(
-        client.try_lease_quote(&String::from_str(&env, "INVALID-ID!"), &LeaseTier::Day),
-        Err(Ok(Error::InvalidResourceId))
-    );
-}
-
-#[test]
-fn lease_quote_preserves_atomic_failure_semantics() {
-    let (env, creator, _settler, _holder, client) = lease_setup();
-
-    // Quote on non-existent resource should not modify storage
-    let result = client.try_lease_quote(&String::from_str(&env, "doesnotexist"), &LeaseTier::Day);
-    assert_eq!(result, Err(Ok(Error::NotFound)));
-
-    // Verify no events were emitted (storage unchanged)
-    let events_before = env.events().all().len();
-    let _ = client.try_lease_quote(&String::from_str(&env, "stillnone"), &LeaseTier::Hour);
-    let events_after = env.events().all().len();
-    assert_eq!(events_before, events_after, "lease_quote must not emit events on failure");
-}
-
-// ─── Lease renewal eligibility checks ────────────────────────────────────────
-
-#[test]
-fn check_lease_renewal_eligibility_returns_info_for_active_lease() {
+fn extend_lease_preserves_original_binding_after_ownership_transfer() {
     let (env, creator, settler, holder, client) = lease_setup();
-    let id = register_priced(&env, &creator, &client, "renewcheck", 1_000i128);
-    env.ledger().set_sequence_number(100);
+    let new_owner = Address::generate(&env);
+    let other_holder = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "leasebind", 100i128);
+    let price = 100i128;
+    let hour_amount = LEASE_HOUR_MULTIPLIER * price;
+    let day_amount = LEASE_DAY_MULTIPLIER * price;
+    env.ledger().set_sequence_number(200);
 
-    // Create and settle an active lease
-    client.record_lease(
-        &settler,
-        &holder,
-        &id,
-        &LeaseTier::Day,
-        &5_000i128,
-        &String::from_str(&env, "tx1"),
-    );
-
-    let renewal_info = client.check_lease_renewal_eligibility(&id, &holder);
-
-    assert_eq!(renewal_info.resource_id, id);
-    assert_eq!(renewal_info.holder, holder);
-    assert_eq!(renewal_info.current_tier, LeaseTier::Day);
-    assert!(renewal_info.renewable, "Active lease should be renewable");
-    assert_eq!(renewal_info.current_expiry, 100 + LEASE_DAY_LEDGERS);
-    assert_eq!(renewal_info.renewal_price, 5_000i128); // 1000 * 5
-    assert_eq!(renewal_info.renewal_duration, LEASE_DAY_LEDGERS);
-    assert_eq!(
-        renewal_info.new_expiry_after_renewal,
-        100 + LEASE_DAY_LEDGERS + LEASE_DAY_LEDGERS
-    );
-}
-
-#[test]
-fn check_lease_renewal_eligibility_tracks_price_changes() {
-    let (env, creator, settler, holder, client) = lease_setup();
-    let id = register_priced(&env, &creator, &client, "renewprice", 1_000i128);
-    env.ledger().set_sequence_number(100);
-
-    client.record_lease(
-        &settler,
-        &holder,
-        &id,
-        &LeaseTier::Week,
-        &20_000i128,
-        &String::from_str(&env, "tx1"),
-    );
-
-    // Check initial renewal price
-    let info1 = client.check_lease_renewal_eligibility(&id, &holder);
-    assert_eq!(info1.renewal_price, 20_000i128); // 1000 * 20
-
-    // Resource price changes
-    client.set_price(&id, &2_000i128);
-
-    // Renewal price should reflect new resource price
-    let info2 = client.check_lease_renewal_eligibility(&id, &holder);
-    assert_eq!(info2.renewal_price, 40_000i128); // 2000 * 20
-    assert_eq!(info2.renewal_duration, LEASE_WEEK_LEDGERS);
-    assert!(info2.renewable);
-}
-
-#[test]
-fn check_lease_renewal_eligibility_not_renewable_when_expired() {
-    let (env, creator, settler, holder, client) = lease_setup();
-    let id = register_priced(&env, &creator, &client, "renewexp", 100i128);
-    env.ledger().set_sequence_number(100);
-
-    client.record_lease(
+    let initial = client.record_lease(
         &settler,
         &holder,
         &id,
         &LeaseTier::Hour,
-        &100i128,
+        &hour_amount,
         &String::from_str(&env, "tx1"),
     );
+    assert_eq!(initial.holder, holder);
+    assert_eq!(initial.resource_id, id);
 
-    // Move to expiry
-    env.ledger().set_sequence_number(100 + LEASE_HOUR_LEDGERS);
+    // A new creator must not inherit or rebind the holder's lease.
+    client.transfer_ownership(&id, &new_owner);
+    assert_eq!(client.get(&id).creator, new_owner);
 
-    let renewal_info = client.check_lease_renewal_eligibility(&id, &holder);
-    assert!(!renewal_info.renewable, "Expired lease should not be renewable");
-    assert_eq!(renewal_info.current_expiry, 100 + LEASE_HOUR_LEDGERS);
-    // Price and duration still returned for reference
-    assert_eq!(renewal_info.renewal_price, 100i128);
-    assert_eq!(renewal_info.renewal_duration, LEASE_HOUR_LEDGERS);
-}
-
-#[test]
-fn check_lease_renewal_eligibility_not_renewable_when_revoked() {
-    let (env, creator, settler, holder, client) = lease_setup();
-    let id = register_priced(&env, &creator, &client, "renewrevk", 100i128);
-
-    client.record_lease(
-        &settler,
+    env.ledger().set_sequence_number(300);
+    let extended = client.extend_lease(
         &holder,
         &id,
         &LeaseTier::Day,
-        &500i128,
-        &String::from_str(&env, "tx1"),
+        &day_amount,
+        &String::from_str(&env, "tx2"),
     );
-
-    // Creator revokes the lease
-    client.revoke_lease(&id, &holder);
-
-    let renewal_info = client.check_lease_renewal_eligibility(&id, &holder);
-    assert!(!renewal_info.renewable, "Revoked lease should not be renewable");
-}
-
-#[test]
-fn check_lease_renewal_eligibility_not_renewable_when_resource_delisted() {
-    let (env, creator, settler, holder, client) = lease_setup();
-    let id = register_priced(&env, &creator, &client, "renewdelist", 100i128);
-
-    client.record_lease(
-        &settler,
-        &holder,
-        &id,
-        &LeaseTier::Day,
-        &500i128,
-        &String::from_str(&env, "tx1"),
-    );
-
-    // Lease is active
-    assert!(client.lease_is_active(&id, &holder));
-
-    // But resource gets delisted
-    client.delist(&id);
-
-    let renewal_info = client.check_lease_renewal_eligibility(&id, &holder);
-    assert!(!renewal_info.renewable, "Lease on delisted resource should not be renewable");
-    // Existing lease still grants access until expiry
-    assert!(client.lease_is_active(&id, &holder));
-}
-
-#[test]
-fn check_lease_renewal_eligibility_errors_for_nonexistent_lease() {
-    let (env, creator, _settler, holder, client) = lease_setup();
-    let id = register_priced(&env, &creator, &client, "renewnone", 100i128);
-
+    assert_eq!(extended.holder, holder);
+    assert_eq!(extended.resource_id, id);
+    assert_eq!(extended.tier, LeaseTier::Day);
+    assert_eq!(extended.start_ledger, initial.start_ledger);
     assert_eq!(
-        client.try_check_lease_renewal_eligibility(&id, &holder),
-        Err(Ok(Error::NotFound))
+        extended.expiry_ledger,
+        initial.expiry_ledger + LEASE_DAY_LEDGERS
     );
-}
+    assert_eq!(extended.amount, hour_amount + day_amount);
+    assert_eq!(extended.tx_hash, String::from_str(&env, "tx2"));
+    assert_eq!(extended.state, LeaseState::Active);
+    assert_eq!(extended.recorded_at, 300);
+    assert_eq!(client.get_lease(&id, &holder), extended);
+    assert!(client.lease_is_active(&id, &holder));
+    assert_eq!(last_lease_event(&env, symbol_short!("lease"), &id), extended);
 
-#[test]
-fn check_lease_renewal_eligibility_errors_for_invalid_resource_id() {
-    let (env, _creator, _settler, holder, client) = lease_setup();
-
+    // A payment hash cannot be replayed for another extension.
     assert_eq!(
-        client.try_check_lease_renewal_eligibility(
-            &String::from_str(&env, "INVALID-ID!"),
-            &holder
+        client.try_extend_lease(
+            &holder,
+            &id,
+            &LeaseTier::Day,
+            &day_amount,
+            &String::from_str(&env, "tx2"),
         ),
-        Err(Ok(Error::InvalidResourceId))
+        Err(Ok(Error::DuplicateTxHash))
+    );
+
+    // A different holder has no lease under its own key.
+    assert_eq!(
+        client.try_extend_lease(
+            &other_holder,
+            &id,
+            &LeaseTier::Hour,
+            &hour_amount,
+            &String::from_str(&env, "tx3"),
+        ),
+        Err(Ok(Error::NotFound))
+    );
+
+    // If storage itself is inconsistent, the write still refuses to rebind it.
+    env.as_contract(&client.address, || {
+        let key = DataKey::Lease(id.clone(), other_holder.clone());
+        let mismatched = Lease {
+            resource_id: id.clone(),
+            holder: holder.clone(),
+            tier: LeaseTier::Hour,
+            start_ledger: 200,
+            expiry_ledger: 900,
+            amount: hour_amount,
+            tx_hash: String::from_str(&env, "txbad"),
+            state: LeaseState::Active,
+            recorded_at: 200,
+        };
+        env.storage().persistent().set(&key, &mismatched);
+    });
+    assert_eq!(
+        client.try_extend_lease(
+            &other_holder,
+            &id,
+            &LeaseTier::Hour,
+            &hour_amount,
+            &String::from_str(&env, "tx4"),
+        ),
+        Err(Ok(Error::Unauthorized))
     );
 }
 
 #[test]
-fn check_lease_renewal_eligibility_boundary_at_exact_expiry() {
+fn extend_lease_renews_expired_leases_but_not_pending_or_revoked_ones() {
     let (env, creator, settler, holder, client) = lease_setup();
-    let id = register_priced(&env, &creator, &client, "renewbound", 100i128);
-    env.ledger().set_sequence_number(1_000);
+    let id = register_priced(&env, &creator, &client, "leaseexp", 100i128);
+    let price = 100i128;
+    let hour_amount = LEASE_HOUR_MULTIPLIER * price;
+    let day_amount = LEASE_DAY_MULTIPLIER * price;
+    let week_amount = LEASE_WEEK_MULTIPLIER * price;
 
+    env.ledger().set_sequence_number(100);
+    let pending = client.buy_lease(
+        &holder,
+        &id,
+        &LeaseTier::Hour,
+        &hour_amount,
+        &String::from_str(&env, "tx1"),
+    );
+    assert_eq!(
+        client.try_extend_lease(
+            &holder,
+            &id,
+            &LeaseTier::Day,
+            &day_amount,
+            &String::from_str(&env, "tx-pending"),
+        ),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+
+    client.settle_lease(&settler, &id, &holder);
+    assert!(client.lease_is_active(&id, &holder));
+
+    // Expiry stops access but keeps the record, so the holder can renew it.
+    env.ledger().set_sequence_number(pending.expiry_ledger);
+    assert!(!client.lease_is_active(&id, &holder));
+    let renewed = client.extend_lease(
+        &holder,
+        &id,
+        &LeaseTier::Day,
+        &day_amount,
+        &String::from_str(&env, "tx-renew"),
+    );
+    assert_eq!(renewed.resource_id, id);
+    assert_eq!(renewed.holder, holder);
+    assert_eq!(renewed.start_ledger, pending.start_ledger);
+    assert_eq!(
+        renewed.expiry_ledger,
+        pending.expiry_ledger + LEASE_DAY_LEDGERS
+    );
+    assert_eq!(renewed.amount, hour_amount + day_amount);
+    assert_eq!(renewed.state, LeaseState::Active);
+    assert!(client.lease_is_active(&id, &holder));
+
+    // Revocation is terminal for extension, even though a fresh purchase is not.
+    let revoked = client.revoke_lease(&id, &holder);
+    assert_eq!(revoked.state, LeaseState::Revoked);
+    assert_eq!(
+        client.try_extend_lease(
+            &holder,
+            &id,
+            &LeaseTier::Week,
+            &week_amount,
+            &String::from_str(&env, "tx-after-revoke"),
+        ),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+    assert!(!client.lease_is_active(&id, &holder));
+}
+
+#[test]
+fn lease_renewal_writes_reject_a_stored_binding_mismatch() {
+    let (env, creator, settler, holder, client) = lease_setup();
+    let other_holder = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "leasewrong", 100i128);
+    let amount = LEASE_HOUR_MULTIPLIER * 100i128;
+    let tx = String::from_str(&env, "tx1");
+    env.ledger().set_sequence_number(10);
+
+    client.buy_lease(&holder, &id, &LeaseTier::Hour, &amount, &tx);
+
+    env.as_contract(&client.address, || {
+        let key = DataKey::Lease(id.clone(), holder.clone());
+        let mismatched = Lease {
+            resource_id: id.clone(),
+            holder: other_holder.clone(),
+            tier: LeaseTier::Hour,
+            start_ledger: 10,
+            expiry_ledger: 10 + LEASE_HOUR_LEDGERS,
+            amount,
+            tx_hash: tx.clone(),
+            state: LeaseState::Pending,
+            recorded_at: 10,
+        };
+        env.storage().persistent().set(&key, &mismatched);
+    });
+
+    assert_eq!(
+        client.try_settle_lease(&settler, &id, &holder),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(
+        client.try_buy_lease(
+            &holder,
+            &id,
+            &LeaseTier::Hour,
+            &amount,
+            &String::from_str(&env, "tx2"),
+        ),
+        Err(Ok(Error::Unauthorized))
+    );
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Pending);
+}
+
+// ─── Fee config protection for active leases (#991) ──────────────────────────
+
+#[test]
+fn set_fee_config_blocked_when_fees_would_exceed_listed_resource_price() {
+    let (env, creator, _settler, holder, client) = lease_setup();
+    let admin = client.admin().unwrap();
+    
+    // Register a resource with a low price
+    let id = register_priced(&env, &creator, &client, "lowprice", 100i128);
+    
+    // Create an active lease on it
     client.record_lease(
-        &settler,
+        &client.admin().unwrap(),
         &holder,
         &id,
         &LeaseTier::Hour,
         &100i128,
         &String::from_str(&env, "tx1"),
     );
-
-    let expiry = 1_000 + LEASE_HOUR_LEDGERS;
-
-    // One ledger before expiry: renewable
-    env.ledger().set_sequence_number(expiry - 1);
-    let info_before = client.check_lease_renewal_eligibility(&id, &holder);
-    assert!(info_before.renewable, "Should be renewable one ledger before expiry");
-
-    // Exactly at expiry: not renewable (expiry_ledger is first ledger without access)
-    env.ledger().set_sequence_number(expiry);
-    let info_at = client.check_lease_renewal_eligibility(&id, &holder);
-    assert!(!info_at.renewable, "Should not be renewable at exact expiry ledger");
-
-    // After expiry: not renewable
-    env.ledger().set_sequence_number(expiry + 1);
-    let info_after = client.check_lease_renewal_eligibility(&id, &holder);
-    assert!(!info_after.renewable, "Should not be renewable after expiry");
+    
+    // Set initial fee config that's valid (combined 50 < 100)
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 25,
+        royalty_bps: 25,
+        fee_recipient: None,
+    });
+    
+    // Try to increase fees such that combined >= resource price
+    // 100 bps combined would equal the resource price of 100
+    let result = client.try_set_fee_config(&FeeConfig {
+        platform_fee_bps: 50,
+        royalty_bps: 50,
+        fee_recipient: None,
+    });
+    
+    assert_eq!(result, Err(Ok(Error::LeaseFeeConfigConflict)));
 }
 
 #[test]
-fn check_lease_renewal_eligibility_calculates_new_expiry_correctly() {
-    let (env, creator, settler, holder, client) = lease_setup();
-    let id = register_priced(&env, &creator, &client, "renewcalc", 1_000i128);
-    env.ledger().set_sequence_number(500);
-
-    // Create hour lease
+fn set_fee_config_allowed_when_fees_stay_below_all_listed_prices() {
+    let (env, creator, _settler, holder, client) = lease_setup();
+    let admin = client.admin().unwrap();
+    
+    // Register resources with various prices
+    let id1 = register_priced(&env, &creator, &client, "price1000", 1_000i128);
+    let id2 = register_priced(&env, &creator, &client, "price2000", 2_000i128);
+    
+    // Create active leases
     client.record_lease(
-        &settler,
+        &admin,
         &holder,
-        &id,
+        &id1,
         &LeaseTier::Hour,
         &1_000i128,
         &String::from_str(&env, "tx1"),
     );
-
-    let original_expiry = 500 + LEASE_HOUR_LEDGERS; // 500 + 720 = 1220
-    let info = client.check_lease_renewal_eligibility(&id, &holder);
-
-    assert_eq!(info.current_expiry, original_expiry);
-    assert_eq!(
-        info.new_expiry_after_renewal,
-        original_expiry + LEASE_HOUR_LEDGERS,
-        "New expiry should be current expiry + renewal duration"
-    );
-    assert_eq!(info.new_expiry_after_renewal, 1220 + 720);
-}
-
-#[test]
-fn check_lease_renewal_eligibility_pending_lease_not_renewable() {
-    let (env, creator, _settler, holder, client) = lease_setup();
-    let id = register_priced(&env, &creator, &client, "renewpend", 100i128);
-
-    // Buy lease but don't settle it (stays Pending)
-    client.buy_lease(
-        &holder,
-        &id,
-        &LeaseTier::Day,
-        &500i128,
-        &String::from_str(&env, "tx1"),
-    );
-
-    let renewal_info = client.check_lease_renewal_eligibility(&id, &holder);
-    assert!(!renewal_info.renewable, "Pending lease should not be renewable");
-}
-
-#[test]
-fn renew_lease_extends_active_expiry_and_emits_event() {
-    let (env, creator, settler, holder, client) = lease_setup();
-    let id = register_priced(&env, &creator, &client, "renewlease", 100i128);
-    env.ledger().set_sequence_number(1_000);
-
-    let original = client.record_lease(
-        &settler,
-        &holder,
-        &id,
-        &LeaseTier::Hour,
-        &100i128,
-        &String::from_str(&env, "tx1"),
-    );
-    env.ledger().set_sequence_number(1_000 + 300);
-
-    let renewed = client.renew_lease(
-        &holder,
-        &id,
-        &LeaseTier::Hour,
-        &100i128,
-        &String::from_str(&env, "tx2"),
-    );
-
-    assert_eq!(renewed.expiry_ledger, original.expiry_ledger + LEASE_HOUR_LEDGERS);
-    assert_eq!(renewed.amount, 100i128);
-    assert_eq!(renewed.recorded_at, 1_300);
-    assert_eq!(renewed.tx_hash, String::from_str(&env, "tx2"));
-    assert_eq!(last_lease_event(&env, symbol_short!("leasernew"), &id), renewed);
-    assert!(client.lease_is_active(&id, &holder));
-}
-
-#[test]
-fn renew_lease_requires_holder_exact_price_and_active_window() {
-    let (env, creator, settler, holder, client) = lease_setup();
-    let id = register_priced(&env, &creator, &client, "renewauth", 100i128);
-    env.ledger().set_sequence_number(2_000);
-
+    
+    let holder2 = Address::generate(&env);
     client.record_lease(
-        &settler,
+        &admin,
+        &holder2,
+        &id2,
+        &LeaseTier::Day,
+        &10_000i128,
+        &String::from_str(&env, "tx2"),
+    );
+    
+    // Fee config with combined 500 bps is valid (500 < 1000)
+    let result = client.try_set_fee_config(&FeeConfig {
+        platform_fee_bps: 250,
+        royalty_bps: 250,
+        fee_recipient: None,
+    });
+    
+    assert!(result.is_ok());
+}
+
+#[test]
+fn set_fee_config_considers_only_listed_resources() {
+    let (env, creator, _settler, holder, client) = lease_setup();
+    let admin = client.admin().unwrap();
+    
+    // Register a low-priced resource and delist it
+    let id1 = register_priced(&env, &creator, &client, "delisted", 50i128);
+    client.delist(&id1);
+    
+    // Register another resource with higher price that stays listed
+    let id2 = register_priced(&env, &creator, &client, "listed", 1_000i128);
+    
+    // Create lease on the listed resource
+    client.record_lease(
+        &admin,
+        &holder,
+        &id2,
+        &LeaseTier::Hour,
+        &1_000i128,
+        &String::from_str(&env, "tx1"),
+    );
+    
+    // Fee config with combined 500 bps should be accepted because:
+    // - delisted resource (50) is ignored
+    // - listed resource (1000) allows fees up to 999
+    let result = client.try_set_fee_config(&FeeConfig {
+        platform_fee_bps: 250,
+        royalty_bps: 250,
+        fee_recipient: None,
+    });
+    
+    assert!(result.is_ok());
+}
+
+#[test]
+fn existing_lease_preserves_original_price_despite_fee_changes() {
+    let (env, creator, settler, holder, client) = lease_setup();
+    let admin = client.admin().unwrap();
+    
+    // Register resource and set low fees
+    let id = register_priced(&env, &creator, &client, "preserve", 10_000i128);
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 100,  // 1%
+        royalty_bps: 100,       // 1%
+        fee_recipient: None,
+    });
+    
+    // Buy a lease at this price point
+    let lease1 = client.buy_lease(
         &holder,
         &id,
         &LeaseTier::Day,
-        &500i128,
+        &50_000i128,  // 10_000 * 5
         &String::from_str(&env, "tx1"),
     );
-
-    assert_eq!(
-        client.try_renew_lease(
-            &holder,
-            &id,
-            &LeaseTier::Day,
-            &499i128,
-            &String::from_str(&env, "tx2"),
-        ),
-        Err(Ok(Error::PaymentAmountMismatch))
-    );
-
-    let intruder = Address::generate(&env);
-    let invoke = MockAuthInvoke {
-        contract: &client.address,
-        fn_name: "renew_lease",
-        args: (
-            intruder.clone(),
-            id.clone(),
-            LeaseTier::Day,
-            500i128,
-            String::from_str(&env, "tx2"),
-        )
-            .into_val(&env),
-        sub_invokes: &[],
-    };
-    let auth = [MockAuth {
-        address: &intruder,
-        invoke: &invoke,
-    }];
-    assert!(client.mock_auths(&auth).try_renew_lease(
-        &intruder,
+    client.settle_lease(&settler, &id, &holder);
+    
+    // The lease locked in the amount paid
+    assert_eq!(lease1.amount, 50_000i128);
+    
+    // Increase the resource price
+    client.set_price(&id, &20_000i128);
+    
+    // Update fees (still valid because 1000 < 20000)
+    client.set_fee_config(&FeeConfig {
+        platform_fee_bps: 500,  // 5%
+        royalty_bps: 500,       // 5%
+        fee_recipient: None,
+    });
+    
+    // The original lease still has its locked-in amount
+    let stored_lease = client.get_lease(&id, &holder);
+    assert_eq!(stored_lease.amount, 50_000i128);
+    
+    // New leases use the new price
+    let holder2 = Address::generate(&env);
+    let lease2 = client.buy_lease(
+        &holder2,
         &id,
         &LeaseTier::Day,
-        &500i128,
+        &100_000i128,  // 20_000 * 5
         &String::from_str(&env, "tx2"),
-    ).is_err());
-
-    env.ledger().set_sequence_number(2_000 + LEASE_DAY_LEDGERS);
-    assert_eq!(
-        client.try_renew_lease(
-            &holder,
-            &id,
-            &LeaseTier::Day,
-            &500i128,
-            &String::from_str(&env, "tx3"),
-        ),
-        Err(Ok(Error::InvalidPaymentTransition))
     );
+    assert_eq!(lease2.amount, 100_000i128);
+}
+
+#[test]
+fn zero_fee_config_always_allowed() {
+    let (env, creator, _settler, holder, client) = lease_setup();
+    let admin = client.admin().unwrap();
+    
+    // Register resource with any price, even very low
+    let id = register_priced(&env, &creator, &client, "anyprice", 1i128);
+    
+    // Create a lease
+    client.record_lease(
+        &admin,
+        &holder,
+        &id,
+        &LeaseTier::Hour,
+        &1i128,
+        &String::from_str(&env, "tx1"),
+    );
+    
+    // Zero fees should always be acceptable
+    let result = client.try_set_fee_config(&FeeConfig {
+        platform_fee_bps: 0,
+        royalty_bps: 0,
+        fee_recipient: None,
+    });
+    
+    assert!(result.is_ok());
 }

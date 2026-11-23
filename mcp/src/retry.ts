@@ -21,6 +21,34 @@
  * unit-testable without real waiting.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
+export const RETRY_BUDGET_ENV = "MINDVAULT_TOOL_RETRY_BUDGET";
+export const DEFAULT_TOOL_RETRY_BUDGET = 4;
+
+export function retryBudgetFromEnv(env: NodeJS.ProcessEnv): number {
+  const raw = env[RETRY_BUDGET_ENV]?.trim() ?? String(DEFAULT_TOOL_RETRY_BUDGET);
+  const budget = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(budget)) {
+    throw new Error(`${RETRY_BUDGET_ENV} must be a non-negative integer.`);
+  }
+  return budget;
+}
+
+const retryBudget = new AsyncLocalStorage<{ remaining: number }>();
+
+export function runWithRetryBudget<T>(budget: number, call: () => T): T {
+  return retryBudget.run({ remaining: budget }, call);
+}
+
+function takeRetry(): boolean {
+  const budget = retryBudget.getStore();
+  if (!budget) return true;
+  if (budget.remaining === 0) return false;
+  budget.remaining--;
+  return true;
+}
+
 export interface RetryPolicy {
   /** Total attempts including the first. 1 disables retrying. */
   attempts: number;
@@ -359,6 +387,49 @@ export interface RetryOptions<T> {
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
+  /** Optional cancellation signal. Stops nested retry loops and sleeps immediately. */
+  signal?: AbortSignal;
+}
+
+export function abortableSleep(
+  sleep: (ms: number) => Promise<void>,
+  ms: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (ms <= 0) {
+    if (signal?.aborted) {
+      throw signal.reason ?? new DOMException("This operation was aborted", "AbortError");
+    }
+    return Promise.resolve();
+  }
+  if (signal?.aborted) {
+    throw signal.reason ?? new DOMException("This operation was aborted", "AbortError");
+  }
+  if (!signal) {
+    return sleep(ms);
+  }
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      reject(signal.reason ?? new DOMException("This operation was aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    sleep(ms)
+      .then(() => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      })
+      .catch((err) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      });
+  });
 }
 
 const defaultSleep = (ms: number) =>
@@ -378,19 +449,29 @@ const defaultSleep = (ms: number) =>
  * replaying `fn` is safe.
  */
 export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions<T>): Promise<T> {
-  const { policy, label } = options;
+  const { policy, label, signal } = options;
   const sleep = options.sleep ?? defaultSleep;
   const random = options.random ?? Math.random;
   const attempts = Math.max(1, policy.attempts);
 
+  const checkAbort = () => {
+    if (signal?.aborted) {
+      throw signal.reason ?? new DOMException("This operation was aborted", "AbortError");
+    }
+  };
+
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    checkAbort();
     const isLast = attempt === attempts;
     try {
       await options.beforeAttempt?.(attempt);
+      checkAbort();
       const result = await fn();
+      checkAbort();
       if (!isLast && options.shouldRetryResult?.(result)) {
         const override = options.delayFromResult?.(result) ?? null;
+        if (!takeRetry()) return result;
         const delayMs = override ?? computeBackoffDelay(attempt, policy, random);
         options.onRetry?.({
           label,
@@ -399,13 +480,14 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions<T
           delayMs,
           reason: options.describeResult?.(result) ?? "retryable result",
         });
-        if (delayMs > 0) await sleep(delayMs);
+        if (delayMs > 0) await abortableSleep(sleep, delayMs, signal);
         continue;
       }
       return result;
     } catch (err) {
+      checkAbort();
       lastError = err;
-      if (isLast || !isRetryableError(err)) throw err;
+      if (isLast || !isRetryableError(err) || !takeRetry()) throw err;
       const delayMs = computeBackoffDelay(attempt, policy, random);
       options.onRetry?.({
         label,
@@ -414,7 +496,7 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions<T
         delayMs,
         reason: err instanceof Error ? err.message : String(err),
       });
-      if (delayMs > 0) await sleep(delayMs);
+      if (delayMs > 0) await abortableSleep(sleep, delayMs, signal);
     }
   }
 
