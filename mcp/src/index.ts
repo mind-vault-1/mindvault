@@ -7,6 +7,7 @@ import {
 import { randomUUID } from "node:crypto";
 import {
   checkContractBindings,
+  createRegistryClient,
   getAttestationHash,
   Errors as RegistryErrors,
   listResources,
@@ -115,6 +116,8 @@ import {
 } from "./purchaseHistory.js";
 import { Mutex } from "./mutex.js";
 import { exportReceiptsTool } from "./receipts.js";
+import { queryAuditLogTool } from "./auditQuery.js";
+import { previewPublishBatch } from "./publishBatchPreview.js";
 import { debugBundleTool } from "./debugBundle.js";
 import { onchainPreflightTool } from "./onchainPreflight.js";
 import { deploymentVerificationTool } from "./deploymentVerification.js";
@@ -5288,6 +5291,8 @@ async function executeTool(
         });
       case "mindvault_publish_status":
         return publishStatus(rawRecord, onProgress, signal);
+      case "mindvault_publish_batch_preview":
+        return previewPublishBatch(rawRecord, process.env);
       case "mindvault_publish_batch": {
         const batchItems = rawRecord.items;
         if (!Array.isArray(batchItems) || batchItems.length === 0) {
@@ -5530,6 +5535,8 @@ async function executeTool(
         return migrationPreviewTool(rawRecord);
       case "mindvault_support_bundle":
         return supportBundleTool(rawRecord);
+      case "mindvault_query_audit_log":
+        return queryAuditLogTool(rawRecord, process.env);
       case "mindvault_recover_catalog_cache":
         return recoverCatalogCache();
       case "mindvault_wallet_balances":

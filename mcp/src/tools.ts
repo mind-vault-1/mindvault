@@ -27,8 +27,14 @@ import {
   SUPPORT_BUNDLE_OUTPUT_SCHEMA,
 } from "./supportBundle.js";
 import { withToolErrorVariant } from "./outputValidation.js";
+import { MAX_AUDIT_QUERY_RESULTS } from "./auditQuery.js";
+import {
+  PUBLISH_BATCH_PREVIEW_MAX_ITEMS,
+  PUBLISH_BATCH_PREVIEW_OUTPUT_SCHEMA,
+} from "./publishBatchPreview.js";
 import {
   AGENT_STATUS_OUTPUT_SCHEMA,
+  AUDIT_QUERY_OUTPUT_SCHEMA,
   ATTESTATION_VERIFICATION_OUTPUT_SCHEMA,
   BATCH_CATALOG_LOOKUP_OUTPUT_SCHEMA,
   CATALOG_LIST_OUTPUT_SCHEMA,
@@ -639,16 +645,16 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_export_receipts",
     description:
-      "Export receipts for resources this agent has purchased as a schema-versioned document (JSON, RFC 4180 CSV in the envelope's csv field, or Newline-Delimited JSON in the envelope's ndjson field). Filter by resource, network, and date range. Reports a row count and the summed USDC total, so an agent can reconcile spend without re-reading each purchase.",
+      "Export receipts for resources this agent has purchased as a schema-versioned document (JSON, RFC 4180 CSV in the envelope's csv field, or Newline-Delimited JSON / JSON Lines in the envelope's ndjson field). Pass format 'jsonl' as an alias for 'ndjson'. Filter by resource, network, and date range. Reports a row count and the summed USDC total, so an agent can reconcile spend without re-reading each purchase.",
     inputSchema: {
       type: "object",
       properties: {
         format: {
           type: "string",
-          enum: ["json", "csv", "ndjson"],
+          enum: ["json", "csv", "ndjson", "jsonl"],
           description:
-            'Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope\'s csv field; "ndjson" renders each row as a JSON object on its own line in the envelope\'s ndjson field.',
-          examples: ["json", "csv", "ndjson"],
+            'Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope\'s csv field; "ndjson" renders each row as a JSON object on its own line in the envelope\'s ndjson field. "jsonl" is an alias for "ndjson" and returns the same envelope.',
+          examples: ["json", "csv", "ndjson", "jsonl"],
         },
         resourceId: {
           type: "string",
@@ -2209,6 +2215,51 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_publish_batch_preview",
+    description:
+      "Validate up to 10 batch-publish items offline before signing or paying. Checks each title, description, positive USDC price, and public http(s) external URL with the same rules mindvault_publish_batch uses, and returns a deterministic per-item report. Read-only and local: no network calls, wallet access, payments, or on-chain writes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          description: `Resources to validate (1–${PUBLISH_BATCH_PREVIEW_MAX_ITEMS} items). Each item may include title, description, price, and externalUrl.`,
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Resource title (1–256 characters)." },
+              description: {
+                type: "string",
+                description: "Optional description (max 2048 characters).",
+              },
+              price: {
+                type: "string",
+                description: "Price in USDC as a positive decimal string, e.g. '5.00'.",
+                examples: ["1.00", "5.00", "10.00"],
+              },
+              externalUrl: {
+                type: "string",
+                description: "Public http(s) URL buyers receive after payment.",
+                examples: ["https://example.com/data.json"],
+              },
+            },
+            required: ["title", "price", "externalUrl"],
+          },
+          minItems: 1,
+          maxItems: PUBLISH_BATCH_PREVIEW_MAX_ITEMS,
+        },
+      },
+      required: ["items"],
+    },
+    outputSchema: PUBLISH_BATCH_PREVIEW_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Preview Batch Publish",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_publish_batch",
     description:
       "Publish up to 10 link resources in a single batch. Each resource is created and verified via x402 payment individually (the agent wallet pays the verification fee per item), then all verified resources are registered on-chain in one `register_batch` Soroban transaction — a single wallet approval covers the entire batch. Returns a summary with per-item verification status, on-chain status, and the batch transaction hash.",
@@ -2347,6 +2398,60 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: SUPPORT_BUNDLE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Export Support Bundle",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_query_audit_log",
+    description:
+      "Query the operator-configured JSONL audit log by time range, tool name, and outcome. Reads only the latest bounded window (at most 1 MiB) and returns at most 500 redacted entries in file order, with a nextOffset for paging. The log path is never an argument — only MINDVAULT_AUDIT_LOG_FILE is consulted — so an agent cannot use this tool to read arbitrary local files. Local and read-only, no network calls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        since: {
+          type: "string",
+          description: "Inclusive lower bound on the entry timestamp (ISO-8601).",
+          examples: ["2026-11-20T00:00:00Z"],
+        },
+        until: {
+          type: "string",
+          description: "Inclusive upper bound on the entry timestamp (ISO-8601).",
+          examples: ["2026-11-21T00:00:00Z"],
+        },
+        tool: {
+          type: "string",
+          description: "Match only entries emitted by this tool name.",
+          examples: ["mindvault_publish"],
+        },
+        outcome: {
+          type: "string",
+          enum: ["start", "success", "error"],
+          description:
+            'Match only entries with this audit status ("start", "success", or "error").',
+          examples: ["error"],
+        },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Entries to skip from the matching set. Use the previous result's nextOffset.",
+          examples: [0, 50],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_AUDIT_QUERY_RESULTS,
+          description: `Max entries to return (1–${MAX_AUDIT_QUERY_RESULTS}, default 50).`,
+          examples: [50, 100],
+        },
+      },
+      required: [],
+    },
+    outputSchema: AUDIT_QUERY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Query Audit Log",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

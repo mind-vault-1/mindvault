@@ -239,7 +239,7 @@ describe("side-effect reference documentation", () => {
       line
         .trim()
         .match(
-          /^\| `(mindvault_[a-z0-9_]+)` \| `(\w+)` \| `(\w+)` \| `(\w+)` \| (yes|no) \| (yes|no) \| (yes|no) \|$/,
+          /^\|\s*`(mindvault_[a-z0-9_]+)`\s*\|\s*`(\w+)`\s*\|\s*`(\w+)`\s*\|\s*`(\w+)`\s*\|\s*(yes|no)\s*\|\s*(yes|no)\s*\|\s*(yes|no)\s*\|$/,
         ),
     )
     .filter((match): match is RegExpMatchArray => match !== null);

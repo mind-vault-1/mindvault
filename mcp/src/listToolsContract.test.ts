@@ -206,7 +206,13 @@ const SAMPLE_OVERRIDES: Record<string, Record<string, unknown>> = {
   },
   mindvault_import_wallet: { secretKey: SAMPLE_WALLET_SEED },
   mindvault_explain_error_code: { code: 1 },
+  // This tool self-validates and requires one of resourceId/operationId at
+  // runtime even though the advertised input schema marks neither required.
+  mindvault_publish_status: { resourceId: "probe-resource" },
   mindvault_publish_batch: {
+    items: [{ title: "Probe Resource", price: "1.00", externalUrl: "https://example.com/probe" }],
+  },
+  mindvault_publish_batch_preview: {
     items: [{ title: "Probe Resource", price: "1.00", externalUrl: "https://example.com/probe" }],
   },
 };
