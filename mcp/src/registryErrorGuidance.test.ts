@@ -52,6 +52,13 @@ describe("registry error guidance", () => {
     expect(registryErrorGuidance("NotFound")?.retry).toBe("unsafe");
   });
 
+  it("turns role authorization failures into signing guidance", () => {
+    expect(explainRegistryError({ name: "NotVerifier" }).nextSteps).toContain("sign");
+    expect(explainRegistryError({ name: "NotVerifier" }).nextSteps).toContain("add_verifier");
+    expect(explainRegistryError({ name: "NotModerator" }).nextSteps).toContain("admin");
+    expect(explainRegistryError({ name: "NotSettler" }).nextSteps).toContain("settler");
+  });
+
   it("returns undefined for a name it does not know", () => {
     expect(registryErrorGuidance("NotARealError")).toBeUndefined();
   });

@@ -109,9 +109,10 @@ export const REGISTRY_ERROR_GUIDANCE: Record<string, RegistryErrorGuidance> = {
     category: "authorization",
     retry: "conditional",
     nextSteps:
-      "The caller is not authorized for this resource, or the refund recipient does not " +
-      "match. Confirm the signing account owns the resource; if a role is missing, it has " +
-      "to be granted before the call can succeed.",
+      "Confirm the exact signing address: resource writes require the creator or holder named " +
+      "by the method, admin writes require the current admin, and role writes require the " +
+      "matching verifier, moderator, settler, payer, or recipient. Rebuild and re-sign the " +
+      "invocation after the account or role state is corrected.",
   },
   PendingAdminNotSet: {
     category: "admin",
@@ -190,8 +191,9 @@ export const REGISTRY_ERROR_GUIDANCE: Record<string, RegistryErrorGuidance> = {
     category: "authorization",
     retry: "conditional",
     nextSteps:
-      "The caller does not hold the verifier role. A verifier has to perform the status " +
-      "change, so retrying as the same account will fail identically.",
+      "Sign the call with an address granted the verifier role by the admin, or have the " +
+      "admin call add_verifier or rotate_verifier before retrying. Verify membership with " +
+      "is_verifier or role_inventory_page; retrying as the rejected address cannot recover.",
   },
   InvalidVerificationTransition: {
     category: "moderation",
@@ -238,7 +240,8 @@ export const REGISTRY_ERROR_GUIDANCE: Record<string, RegistryErrorGuidance> = {
     category: "authorization",
     retry: "conditional",
     nextSteps:
-      "The caller does not hold the moderator role. A moderator has to perform this action.",
+      "Sign with an address granted the moderator role by the admin. Check role membership " +
+      "before retrying; the resource creator or another role cannot substitute.",
   },
   AlreadyFlagged: {
     category: "moderation",
@@ -340,7 +343,10 @@ export const REGISTRY_ERROR_GUIDANCE: Record<string, RegistryErrorGuidance> = {
   NotSettler: {
     category: "authorization",
     retry: "conditional",
-    nextSteps: "The caller does not hold the settler role. A settler has to perform this action.",
+    nextSteps:
+      "Sign with an address granted the settler role by the admin, then resubmit the " +
+      "settlement. The payer or resource creator may co-sign the payment method but does " +
+      "not replace the settler authorization.",
   },
   ReceiptAlreadyExists: {
     category: "payment",

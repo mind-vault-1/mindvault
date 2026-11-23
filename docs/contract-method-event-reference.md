@@ -12,7 +12,7 @@ the canonical list enforced by the contract tests. The generated Soroban spec
 carries method signatures but not event topics, so the two inputs are
 deliberately separate.
 
-**138 methods** and **42 event topics** as of last generation.
+**138 methods** and **43 event topics** as of last generation.
 
 ## Methods
 
@@ -880,6 +880,7 @@ lifecycle conditions that emit each topic.
 | `addverif`            | `RoleChange { admin, target, granted: true }`                      |
 | `rmverif`             | `RoleChange { admin, target, granted: false }`                     |
 | `verrot`              | `VerifierRotation { admin, old_verifier, new_verifier, ledger }`   |
+| `vercfg`              | `VerifierConfigChange { version, action, admin, verifier, previous, ledger }` |
 | `reindex`             | `new_count: u32 (topic carries old_count: u32)`                    |
 | `addsettlr`           | `RoleChange { admin, target, granted: true }`                      |
 | `rmsettlr`            | `RoleChange { admin, target, granted: false }`                     |

@@ -188,7 +188,11 @@ pub const PREVIOUS_RESOURCE_SCHEMA_VERSION: u32 = 6;
 ///
 /// - `1`: `role_inventory_page`, actor and target on role-rotation events.
 /// - `2`: `verifier_key_history` (#1238).
-pub const ROLE_CAPABILITY_VERSION: u32 = 2;
+/// - `3`: versioned `vercfg` verifier configuration change events (#1264).
+pub const ROLE_CAPABILITY_VERSION: u32 = 3;
+/// Encoding version for verifier configuration events. Indexers must keep
+/// handling version 1 and ignore unknown future versions until upgraded.
+pub const VERIFIER_CONFIG_EVENT_VERSION: u32 = 1;
 
 /// Maximum byte length of a settlement transaction hash stored in a
 /// [`PaymentReceipt`]. Stellar transaction hashes are 64 hex characters
@@ -532,6 +536,7 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("addverif", "RoleChange { admin, target, granted: true }"),
     ("rmverif", "RoleChange { admin, target, granted: false }"),
     ("verrot", "VerifierRotation { admin, old_verifier, new_verifier, ledger }"),
+    ("vercfg", "VerifierConfigChange { version, action, admin, verifier, previous, ledger }"),
     ("reindex", "new_count: u32 (topic carries old_count: u32)"),
     (
         "payment",
@@ -789,6 +794,21 @@ pub struct VerifierRotation {
     pub admin: Address,
     pub old_verifier: Address,
     pub new_verifier: Address,
+    pub ledger: u32,
+}
+
+/// Versioned payload emitted whenever the verifier role is granted, revoked,
+/// or rotated. The `version` field lets indexers reject or migrate layouts
+/// safely. Version 1 is append-only: unknown future versions must be ignored
+/// until a compatible indexer upgrade.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct VerifierConfigChange {
+    pub version: u32,
+    pub action: VerifierKeyAction,
+    pub admin: Address,
+    pub verifier: Address,
+    pub previous: Option<Address>,
     pub ledger: u32,
 }
 
@@ -4487,7 +4507,26 @@ impl VaultRegistry {
         let was_active = Self::is_verifier(env.clone(), verifier.clone());
         Self::add_verifier_internal(&env, &admin, verifier.clone())?;
         if !was_active {
-            Self::log_verifier_key_change(&env, &admin, VerifierKeyAction::Added, verifier, None);
+            Self::log_verifier_key_change(
+                &env,
+                &admin,
+                VerifierKeyAction::Added,
+                verifier.clone(),
+                None,
+            );
+        }
+        if !was_active {
+            env.events().publish(
+                (Symbol::new(&env, "vercfg"),),
+                VerifierConfigChange {
+                    version: VERIFIER_CONFIG_EVENT_VERSION,
+                    action: VerifierKeyAction::Added,
+                    admin,
+                    verifier,
+                    previous: None,
+                    ledger: env.ledger().sequence(),
+                },
+            );
         }
         Ok(())
     }
@@ -4499,7 +4538,24 @@ impl VaultRegistry {
         let was_active = Self::is_verifier(env.clone(), verifier.clone());
         Self::remove_verifier_internal(&env, &admin, verifier.clone());
         if was_active {
-            Self::log_verifier_key_change(&env, &admin, VerifierKeyAction::Removed, verifier, None);
+            Self::log_verifier_key_change(
+                &env,
+                &admin,
+                VerifierKeyAction::Removed,
+                verifier.clone(),
+                None,
+            );
+            env.events().publish(
+                (Symbol::new(&env, "vercfg"),),
+                VerifierConfigChange {
+                    version: VERIFIER_CONFIG_EVENT_VERSION,
+                    action: VerifierKeyAction::Removed,
+                    admin,
+                    verifier,
+                    previous: None,
+                    ledger: env.ledger().sequence(),
+                },
+            );
         }
         Ok(())
     }
@@ -4530,6 +4586,17 @@ impl VaultRegistry {
             VerifierKeyAction::Rotated,
             new_verifier.clone(),
             Some(old_verifier.clone()),
+        );
+        env.events().publish(
+            (Symbol::new(&env, "vercfg"),),
+            VerifierConfigChange {
+                version: VERIFIER_CONFIG_EVENT_VERSION,
+                action: VerifierKeyAction::Rotated,
+                admin: admin.clone(),
+                verifier: new_verifier.clone(),
+                previous: Some(old_verifier.clone()),
+                ledger: env.ledger().sequence(),
+            },
         );
         env.events().publish(
             (symbol_short!("verrot"), old_verifier.clone()),
