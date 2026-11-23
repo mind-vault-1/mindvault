@@ -140,3 +140,7 @@ For client installation and configuration see
 ---
 
 _This file was generated from `mcp/src/tools.ts` — 68 tools._
+
+### Lease renewal compatibility
+
+The contract exposes `renew_lease` for holder-authorized renewal of an active, unexpired lease. MCP clients should quote the tier price and duration before renewal and preserve the existing `mindvault_buy_lease` / `mindvault_lease_status` compatibility: renewal does not introduce a gap in access when it extends the existing expiry, and it emits the `leasernew` contract event. At the exact `expiry_ledger`, the lease is expired and cannot be renewed through this path.

@@ -10063,7 +10063,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 48] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 50] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -10143,6 +10143,8 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 48] {
         (DataKey::MetadataPointers(id.clone()), "MetadataPointers", 2),
         (DataKey::RecoveryAdmin, "RecoveryAdmin", 1),
         (DataKey::Revision(id.clone()), "Revision", 2),
+        (DataKey::IndexRepairProgress, "IndexRepairProgress", 1),
+        (DataKey::RevocationReasonHash(id.clone()), "RevocationReasonHash", 2),
     ]
 }
 
@@ -10182,7 +10184,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        48,
+        50,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -10236,6 +10238,8 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::MetadataPointers(_) => "MetadataPointers",
             DataKey::RecoveryAdmin => "RecoveryAdmin",
             DataKey::Revision(_) => "Revision",
+            DataKey::IndexRepairProgress => "IndexRepairProgress",
+            DataKey::RevocationReasonHash(_) => "RevocationReasonHash",
         };
         assert_eq!(
             matched, *name,
