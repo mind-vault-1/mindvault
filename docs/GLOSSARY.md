@@ -57,7 +57,7 @@ This glossary defines the core terms used throughout the MindVault documentation
 : The payment verification and settlement service at `x402.org/facilitator` (operated by Coinbase on Stellar testnet). The facilitator calls `/verify` to check a payment authorization and `/settle` to submit the USDC transfer on-chain. Also called the x402 facilitator.
 
 **Freighter**
-: A browser wallet extension for Stellar. MindVault's web app uses Freighter via `@creit.tech/stellar-wallets-kit` for wallet connection and transaction signing.
+: A browser wallet extension for Stellar. MindVault's web app uses Freighter via `@stellar/freighter-api` for wallet connection and transaction signing.
 
 ---
 
@@ -72,6 +72,19 @@ This glossary defines the core terms used throughout the MindVault documentation
 
 **IPFS URI**
 : An InterPlanetary File System identifier pointing to content stored off-chain. Stored in the vault-registry contract's `metadata` field. MindVault does not host content directly — it stores the URI on-chain and serves content off-chain.
+
+---
+
+## L
+
+**Lease**
+: A time-limited access grant for a resource, held by a buyer (the holder) and recorded on-chain in the vault-registry contract. A `Lease` struct stores `resource_id`, `holder`, `tier`, `start_ledger`, `expiry_ledger`, `amount` (USDC stroops), `tx_hash`, `state`, and `recorded_at`. See [adr-time-limited-access-leases.md](adr-time-limited-access-leases.md) for the full design.
+
+**Lease State**
+: The lifecycle of a lease, tracked by the on-chain `LeaseState` enum. **Pending** — the lease window has been opened but is not yet settled or active. **Active** — settlement is confirmed and access is granted until the expiry ledger. **Revoked** — the creator revoked the lease; this is a terminal state.
+
+**Lease Tier**
+: The duration tier of a lease, tracked by the on-chain `LeaseTier` enum. Each tier has a price multiplier and a ledger duration: **Hour** (720 ledgers), **Day** (17,280 ledgers), **Week** (120,960 ledgers).
 
 ---
 
@@ -106,6 +119,12 @@ This glossary defines the core terms used throughout the MindVault documentation
 **Publisher**
 : An authenticated MindVault user who has registered as a creator via `mindvault_register`. Publishers can store resources, set prices, and receive payments directly to their Stellar wallet.
 
+**Payment Receipt**
+: An on-chain record of a USDC payment, keyed by a caller-assigned `receipt_id`. Stored as a `PaymentReceipt` struct with fields: `receipt_id`, `resource_id`, `payer`, `amount` (USDC stroops), `state`, `tx_hash`, `recorded_at`, and `ledger`.
+
+**Payment State**
+: The lifecycle of a payment, tracked by the on-chain `PaymentState` enum. **Escrowed** — the payment is authorised but not yet settled on-chain; the x402 facilitator records the receipt in this state, and `settle_payment` advances it to Settled. **Settled** — the USDC transfer is confirmed on-chain and the creator has been credited.
+
 ---
 
 ## R
@@ -115,6 +134,12 @@ This glossary defines the core terms used throughout the MindVault documentation
 
 **require_auth**
 : A Soroban contract mechanism that enforces cryptographic ownership. Methods on the vault-registry contract tagged with `require_auth` only execute when the transaction includes the creator's signature. This guarantees the platform cannot reassign a resource without the creator's key.
+
+**Refund Receipt**
+: An on-chain record of a partial or full refund against a payment, stored as a `RefundReceipt` struct with fields: `refund_id`, `payment_receipt_id`, `resource_id`, `recipient`, `amount` (stroops), `tx_hash`, `initiated_by`, `recorded_at`, `admin_override`, `remaining_balance`, and an optional `reason_hash`. Refunds are cumulative per payment receipt; the contract rejects any refund exceeding the remaining balance.
+
+**Resource State**
+: The on-chain lifecycle states enforced by the vault-registry contract, tracked by the `ResourceState` enum. **Listed** — the resource is visible in the catalog and buyable. **Delisted** — the creator has removed it from the catalog (still owned, not visible). **Frozen** — a moderator has frozen it; the creator cannot mutate metadata but can still change price, tags, listing, and ownership. **Disputed** — a moderator has flagged it for dispute resolution. **Tombstoned** — permanently removed by admin; readable via `get` but not discoverable in catalog searches, and blocks all creator mutations.
 
 ---
 
@@ -167,6 +192,9 @@ This glossary defines the core terms used throughout the MindVault documentation
 
 **Verification Agent**
 : A built-in AI agent that reviews submitted resources for originality and quality before they go live in the vault. It has its own x402-paid endpoint (`POST /verify-content`) priced at $0.10 USDC, payable from the publisher's wallet.
+
+**Verification Status**
+: The review state of a resource, tracked by the on-chain `VerificationStatus` enum and set by the verification agent via `set_verification_status`. **Pending** — the default state after registration; not yet reviewed by the verification agent. **Verified** — the verification agent approved the resource. **Rejected** — the verification agent rejected the resource; cannot revert to Pending.
 
 ---
 

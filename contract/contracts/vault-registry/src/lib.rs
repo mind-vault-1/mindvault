@@ -23,6 +23,12 @@ const DAY_IN_LEDGERS: u32 = 17280;
 const ADMIN_NOMINATION_DURATION: u32 = 7 * DAY_IN_LEDGERS;
 /// Minimum ledgers between `nominate_new_admin` and `accept_admin`.
 pub const ADMIN_NOMINATION_MIN_GAP: u32 = DAY_IN_LEDGERS;
+/// How long a pending verifier rotation proposal stays open before it expires.
+const VERIFIER_ROTATION_DURATION: u32 = 7 * DAY_IN_LEDGERS;
+/// Minimum ledgers between `propose_verifier_rotation` and
+/// `accept_verifier_rotation`, so the two steps cannot be batched into a
+/// single transaction.
+pub const VERIFIER_ROTATION_MIN_GAP: u32 = DAY_IN_LEDGERS;
 /// Maximum rejected anchor attempts per `(resource_id, buyer)` pair.
 pub const MAX_ANCHOR_ATTEMPTS: u32 = 5;
 /// Ledgers a pair must wait after a rejected anchor attempt before retrying.
@@ -151,6 +157,10 @@ pub const ROLE_INVENTORY_PAGE_CAP: u32 = 20;
 /// Most entries `verifier_key_history` returns in one page. A `limit` above
 /// it (or `0`) is clamped to `1..=VERIFIER_KEY_HISTORY_PAGE_CAP`.
 pub const VERIFIER_KEY_HISTORY_PAGE_CAP: u32 = 20;
+/// Maximum number of revision snapshots retained per resource in
+/// `ResourceHistory`. When the buffer is full the oldest entry is evicted
+/// so storage growth stays bounded (#1174).
+pub const MAX_RESOURCE_HISTORY: u32 = 16;
 
 // ── Fee / royalty configuration ──────────────────────────────────────────────
 /// Fee basis-point ceiling: 50 % (5 000 bp). Neither platform_fee_bps nor
@@ -188,7 +198,7 @@ pub const PREVIOUS_RESOURCE_SCHEMA_VERSION: u32 = 6;
 ///
 /// - `1`: `role_inventory_page`, actor and target on role-rotation events.
 /// - `2`: `verifier_key_history` (#1238).
-pub const ROLE_CAPABILITY_VERSION: u32 = 2;
+pub const ROLE_CAPABILITY_VERSION: u32 = 3;
 
 /// Maximum byte length of a settlement transaction hash stored in a
 /// [`PaymentReceipt`]. Stellar transaction hashes are 64 hex characters
@@ -281,6 +291,10 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("add_verifier", "admin"),
     ("remove_verifier", "admin"),
     ("rotate_verifier", "admin"),
+    ("propose_verifier_rotation", "admin"),
+    ("accept_verifier_rotation", "new verifier"),
+    ("cancel_verifier_rotation", "admin"),
+    ("pending_verifier_rotation", "—"),
     ("is_verifier", "—"),
     ("set_verification_status", "verifier"),
     ("get_attestation_hash", "—"),
@@ -402,8 +416,6 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("list_by_state", "—"),
     // ── Ownership transfer with terms handoff (#808) ──────────────────────
     ("transfer_ownership_with_terms", "creator"),
-    ("maintenance_status", "none"),
-    ("set_maintenance_status", "admin"),
     ("get_anchor_failure", "none"),
     ("record_anchor_failure", "settler"),
     ("retry_anchor_purchase_receipt", "verifier"),
@@ -476,6 +488,13 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (57, "UnclaimedFees", "A fee-recipient or fee-destination change was attempted while accrued fees remain unclaimed. Call `claim_fees` first, then retry."),
     (58, "LeaseFeeConfigConflict", "`set_fee_config` was called with a combined fee bps ≥ the price of a resource with active leases; the change is rejected to preserve existing lease terms."),
     (59, "InvalidMaintenanceReason", "`reason_code` in `set_maintenance_status` exceeds `MAX_MAINTENANCE_REASON_CODE` (255)."),
+    (60, "PendingVerifierRotationNotSet", "No pending verifier rotation proposal is set, or one was not found."),
+    (61, "PendingVerifierRotationAlreadySet", "A pending verifier rotation proposal is already active and must be accepted or cancelled first."),
+    (62, "VerifierRotationExpired", "The pending verifier rotation is missing, has expired, or was called before the minimum ledger gap elapsed."),
+    (63, "InvalidPaymentMemo", "`record_payment_with_memo` received a memo that does not match the canonical payment memo format for the resource id."),
+    (64, "InvalidFlagResolutionWindow", "`set_flag_resolution_window` received a window exceeding `MAX_FLAG_RESOLUTION_WINDOW`."),
+    (65, "FlagNotOverdue", "A force-resolution was attempted on a flag whose deadline has not yet elapsed, or which has no deadline set."),
+    (66, "RefundReasonHashTooLong", "`reason_hash` supplied to `record_refund` exceeds `MAX_REFUND_REASON_HASH_LEN` (64 bytes)."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -532,6 +551,9 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("addverif", "RoleChange { admin, target, granted: true }"),
     ("rmverif", "RoleChange { admin, target, granted: false }"),
     ("verrot", "VerifierRotation { admin, old_verifier, new_verifier, ledger }"),
+    ("verprop", "PendingVerifierRotation { admin, old_verifier, new_verifier, nominated_at, expiry }"),
+    ("veracc", "VerifierRotation { admin, old_verifier, new_verifier, ledger }"),
+    ("vercncl", "(old_verifier: Address, new_verifier: Address, admin: Address)"),
     ("reindex", "new_count: u32 (topic carries old_count: u32)"),
     (
         "payment",
@@ -546,7 +568,7 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("pause", "(paused: bool, admin: Address)"),
     ("pause_until", "(pause_until: u64, admin: Address)"),
     ("payment_pause_until", "(pause_until: u64, admin: Address)"),
-    ("pay_pause", "(paused: bool, admin: Address)"),
+    ("payment_pause", "(paused: bool, admin: Address)"),
     (
         "mntstat",
         "MaintenanceStatusEvent { kind, reason_code, admin }",
@@ -792,6 +814,24 @@ pub struct VerifierRotation {
     pub ledger: u32,
 }
 
+/// Pending two-step verifier rotation proposal. Created by
+/// `propose_verifier_rotation` and consumed by `accept_verifier_rotation`.
+/// The current verifier stays active until the new verifier accepts.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingVerifierRotation {
+    /// Admin that authorized the proposal.
+    pub admin: Address,
+    /// Verifier currently holding the role (stays active until acceptance).
+    pub old_verifier: Address,
+    /// Replacement verifier that must accept before the rotation completes.
+    pub new_verifier: Address,
+    /// Ledger sequence at which the proposal was created.
+    pub nominated_at: u32,
+    /// Ledger sequence at which the proposal expires.
+    pub expiry: u32,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Resource {
@@ -844,6 +884,28 @@ pub struct Resource {
 }
 
 /// A read-only projection of a [`Resource`] returned by [`VaultRegistry::export_page`].
+/// Immutable snapshot of a resource's mutable fields at a specific revision,
+/// stored in bounded per-resource history (#1174). Written by `save` on every
+/// persisted mutation; the buffer is capped at `MAX_RESOURCE_HISTORY`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResourceRevision {
+    /// The `version` counter at the time of the snapshot.
+    pub revision: u32,
+    /// Ledger sequence at which the snapshot was written (`updated_at`).
+    pub ledger: u32,
+    /// Price in USDC stroops at this revision.
+    pub price: i128,
+    /// Metadata pointer at this revision.
+    pub metadata: String,
+    /// Whether the resource was listed at this revision.
+    pub listed: bool,
+    /// Verification status at this revision.
+    pub verified: VerificationStatus,
+    /// Tags at this revision.
+    pub tags: Vec<String>,
+}
+
 ///
 /// The set of fields is stable: `EXPORT_VIEW_VERSION` is bumped whenever a
 /// field is added, removed, or changes meaning so migration tooling can gate
@@ -1085,6 +1147,10 @@ pub enum VerifierKeyAction {
     /// `rotate_verifier` revoked the role from `previous` and granted it to
     /// `verifier` in one step.
     Rotated = 2,
+    /// `accept_verifier_rotation` completed a two-step rotation: the role was
+    /// revoked from `previous` and granted to `verifier` after the new key
+    /// accepted a pending proposal.
+    PendingRotated = 3,
 }
 
 /// One entry of the registry-wide verifier key history (#1238).
@@ -1322,6 +1388,25 @@ pub enum DataKeyExt {
     VerifierKeyChangeCount,
     /// Verifier key history entry at a 0-based position.
     VerifierKeyChange(u32),
+    /// Pending two-step verifier rotation proposal (#1239). Set by
+    /// `propose_verifier_rotation`, cleared by `accept_verifier_rotation`
+    /// or `cancel_verifier_rotation`. Absent when no rotation is pending.
+    PendingVerifierRotation,
+    /// Per-verifier status-change history (issue #805). Keyed by verifier address.
+    VerifierHistory(Address),
+    /// Payment memo stored by `record_payment_with_memo`, keyed by `receipt_id`.
+    PaymentMemo(String),
+    /// Hash of a refund's off-chain reason document, keyed by `refund_id`.
+    RefundReasonHash(String),
+    /// Ledger sequence at which a dispute flag's resolution deadline expires,
+    /// keyed by resource id.
+    FlagDeadline(String),
+    /// Configured flag resolution window length, in ledgers.
+    FlagResolutionWindow,
+    /// Bounded revision history for a resource, keyed by resource id (#1174).
+    ResourceHistory(String),
+    /// Last moderator to act on a resource's dispute flag.
+    FlagModerator(String),
 }
 
 /// Payload of every role grant/revoke event (`addverif`/`rmverif`,
@@ -1563,7 +1648,7 @@ pub struct RefundReceipt {
 }
 
 /// Stored encoding of a refund receipt. The optional reason hash lives under
-/// [`DataKey::RefundReasonHash`] so this map keeps the field set that existed
+/// [`DataKeyExt::RefundReasonHash`] so this map keeps the field set that existed
 /// before refund reasons were added.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -1836,7 +1921,7 @@ pub enum Error {
     RevisionOverflow = 55,
     /// A role grant would exceed `MAX_ROLE_HOLDERS` (32) active holders for
     /// that role. The grant is rejected without modifying state.
-    RoleCapacityReached = 57,
+    RoleCapacityReached = 56,
     /// A fee-recipient or fee-destination change was attempted while accrued
     /// fees remain unclaimed. Call `claim_fees` first to acknowledge receipt
     /// of outstanding fees, then retry the change.
@@ -1850,6 +1935,27 @@ pub enum Error {
     /// `reason_code` in `set_maintenance_status` exceeds
     /// `MAX_MAINTENANCE_REASON_CODE`.
     InvalidMaintenanceReason = 59,
+    /// No pending verifier rotation proposal is set, or one was not found.
+    PendingVerifierRotationNotSet = 60,
+    /// A pending verifier rotation proposal is already active and must be
+    /// accepted or cancelled before a new one can be proposed.
+    PendingVerifierRotationAlreadySet = 61,
+    /// The pending verifier rotation is missing, has expired, or was called
+    /// too soon after `propose_verifier_rotation` (before
+    /// `VERIFIER_ROTATION_MIN_GAP` ledgers have elapsed).
+    VerifierRotationExpired = 62,
+    /// `record_payment_with_memo` received a memo that does not match the
+    /// canonical payment memo format for the resource id.
+    InvalidPaymentMemo = 63,
+    /// `set_flag_resolution_window` received a window exceeding
+    /// `MAX_FLAG_RESOLUTION_WINDOW`.
+    InvalidFlagResolutionWindow = 64,
+    /// A force-resolution was attempted on a flag whose deadline has not
+    /// yet elapsed, or which has no deadline set.
+    FlagNotOverdue = 65,
+    /// `reason_hash` supplied to `record_refund` exceeds
+    /// `MAX_REFUND_REASON_HASH_LEN` (64 bytes).
+    RefundReasonHashTooLong = 66,
 }
 
 #[contract]
@@ -2415,7 +2521,7 @@ impl VaultRegistry {
         // Append to the verifier's status-change history for paginated reads.
         // `seq` is assigned before the push so it always matches the entry's
         // insertion position, even when several updates share one ledger.
-        let hist_key = DataKey::VerifierHistory(verifier.clone());
+        let hist_key = DataKeyExt::VerifierHistory(verifier.clone());
         let mut history: Vec<VerifierStatusEntry> = env
             .storage()
             .persistent()
@@ -4543,6 +4649,172 @@ impl VaultRegistry {
         Ok(())
     }
 
+    /// Propose a two-step verifier key rotation (#1239). Only the admin may
+    /// call this. The current verifier stays active until the replacement
+    /// verifier calls `accept_verifier_rotation`. The proposal expires after
+    /// `VERIFIER_ROTATION_DURATION` ledgers. Emits `verprop`.
+    pub fn propose_verifier_rotation(
+        env: Env,
+        old_verifier: Address,
+        new_verifier: Address,
+    ) -> Result<(), Error> {
+        let admin = Self::require_admin(&env)?;
+        admin.require_auth();
+
+        if old_verifier == new_verifier {
+            return Err(Error::AlreadyRegistered);
+        }
+        if !Self::is_verifier(env.clone(), old_verifier.clone()) {
+            return Err(Error::NotFound);
+        }
+        if Self::is_verifier(env.clone(), new_verifier.clone()) {
+            return Err(Error::AlreadyRegistered);
+        }
+
+        // Clear an expired pending proposal so a new one can replace it,
+        // mirroring nominate_new_admin.
+        if let Some(existing) = env
+            .storage()
+            .instance()
+            .get::<DataKeyExt, PendingVerifierRotation>(&DataKeyExt::PendingVerifierRotation)
+        {
+            if env.ledger().sequence() >= existing.expiry {
+                env.storage()
+                    .instance()
+                    .remove(&DataKeyExt::PendingVerifierRotation);
+            } else {
+                return Err(Error::PendingVerifierRotationAlreadySet);
+            }
+        }
+
+        let nominated_at = env.ledger().sequence();
+        let expiry = nominated_at.saturating_add(VERIFIER_ROTATION_DURATION);
+        let proposal = PendingVerifierRotation {
+            admin: admin.clone(),
+            old_verifier: old_verifier.clone(),
+            new_verifier: new_verifier.clone(),
+            nominated_at,
+            expiry,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKeyExt::PendingVerifierRotation, &proposal);
+        Self::bump_instance(&env);
+        env.events().publish(
+            (symbol_short!("verprop"), old_verifier.clone()),
+            PendingVerifierRotation {
+                admin,
+                old_verifier,
+                new_verifier,
+                nominated_at,
+                expiry,
+            },
+        );
+        Ok(())
+    }
+
+    /// Accept a pending two-step verifier rotation (#1239). Only the proposed
+    /// new verifier may call this (it must sign). Completes the rotation:
+    /// removes the old verifier, adds the new one, and clears the pending
+    /// proposal. The current verifier is active until this call succeeds.
+    /// Emits `veracc`.
+    pub fn accept_verifier_rotation(env: Env, new_verifier: Address) -> Result<(), Error> {
+        let proposal: PendingVerifierRotation = env
+            .storage()
+            .instance()
+            .get::<DataKeyExt, PendingVerifierRotation>(&DataKeyExt::PendingVerifierRotation)
+            .ok_or(Error::VerifierRotationExpired)?;
+
+        if env.ledger().sequence() >= proposal.expiry {
+            env.storage()
+                .instance()
+                .remove(&DataKeyExt::PendingVerifierRotation);
+            return Err(Error::VerifierRotationExpired);
+        }
+
+        // Enforce the mandatory ledger gap so propose and accept cannot be
+        // batched into a single transaction.
+        if env.ledger().sequence()
+            < proposal.nominated_at.saturating_add(VERIFIER_ROTATION_MIN_GAP)
+        {
+            return Err(Error::VerifierRotationExpired);
+        }
+
+        if proposal.new_verifier != new_verifier {
+            return Err(Error::PendingVerifierRotationNotSet);
+        }
+
+        new_verifier.require_auth();
+
+        let admin = proposal.admin.clone();
+        let old_verifier = proposal.old_verifier.clone();
+
+        Self::remove_verifier_internal(&env, &admin, old_verifier.clone());
+        Self::add_verifier_internal(&env, &admin, new_verifier.clone())?;
+        Self::log_verifier_key_change(
+            &env,
+            &admin,
+            VerifierKeyAction::PendingRotated,
+            new_verifier.clone(),
+            Some(old_verifier.clone()),
+        );
+
+        env.storage()
+            .instance()
+            .remove(&DataKeyExt::PendingVerifierRotation);
+
+        env.events().publish(
+            (symbol_short!("veracc"), old_verifier.clone()),
+            VerifierRotation {
+                admin,
+                old_verifier,
+                new_verifier,
+                ledger: env.ledger().sequence(),
+            },
+        );
+        Ok(())
+    }
+
+    /// Cancel a pending verifier rotation proposal before it is accepted
+    /// (#1239). Only the current admin may call this. Clears the pending
+    /// proposal so the proposed new verifier can no longer call
+    /// `accept_verifier_rotation`. Emits `vercncl`.
+    pub fn cancel_verifier_rotation(env: Env, admin: Address) -> Result<(), Error> {
+        Self::require_current_admin(&env, &admin)?;
+        let proposal: PendingVerifierRotation = env
+            .storage()
+            .instance()
+            .get::<DataKeyExt, PendingVerifierRotation>(&DataKeyExt::PendingVerifierRotation)
+            .ok_or(Error::PendingVerifierRotationNotSet)?;
+        env.storage()
+            .instance()
+            .remove(&DataKeyExt::PendingVerifierRotation);
+        Self::bump_instance(&env);
+        env.events().publish(
+            (symbol_short!("vercncl"),),
+            (
+                proposal.old_verifier,
+                proposal.new_verifier,
+                admin,
+            ),
+        );
+        Ok(())
+    }
+
+    /// The pending two-step verifier rotation proposal, if one is active
+    /// (#1239). Bumps the instance storage TTL to keep the entry alive for
+    /// active monitors. Returns `None` when no rotation is pending.
+    pub fn pending_verifier_rotation(env: Env) -> Option<PendingVerifierRotation> {
+        let proposal = env
+            .storage()
+            .instance()
+            .get::<DataKeyExt, PendingVerifierRotation>(&DataKeyExt::PendingVerifierRotation);
+        if proposal.is_some() {
+            Self::bump_instance(&env);
+        }
+        proposal
+    }
+
     /// Whether `address` currently holds the verifier role.
     pub fn is_verifier(env: Env, address: Address) -> bool {
         env.storage()
@@ -4724,8 +4996,6 @@ impl VaultRegistry {
         }
         let destination = Self::load_fee_destination(&env);
         Self::validate_fee_destination_for_fee_config(&config, &destination)?;
-        Self::validate_fee_config_for_leases(&env, &config)?;
-
         // Prevent fee config changes that would invalidate active lease
         // pricing (#991).
         Self::validate_fee_config_for_active_leases(&env, &config)?;
@@ -5068,28 +5338,6 @@ impl VaultRegistry {
         }
     }
 
-    fn update_lease_price_floor(env: &Env, resource_price: i128) {
-        match env
-            .storage()
-            .instance()
-            .get::<DataKey, i128>(&DataKey::ActiveLeasePriceFloor)
-        {
-            Some(existing) if resource_price < existing => {
-                env.storage()
-                    .instance()
-                    .set(&DataKey::ActiveLeasePriceFloor, &resource_price);
-                Self::bump_instance(env);
-            }
-            None => {
-                env.storage()
-                    .instance()
-                    .set(&DataKey::ActiveLeasePriceFloor, &resource_price);
-                Self::bump_instance(env);
-            }
-            _ => {}
-        }
-    }
-
     /// Store a hash of creator marketplace terms.
     pub fn set_terms_hash(env: Env, creator: Address, terms_hash: String) -> Result<(), Error> {
         creator.require_auth();
@@ -5368,7 +5616,7 @@ impl VaultRegistry {
             amount,
             tx_hash,
         )?;
-        let key = DataKey::PaymentMemo(receipt_id);
+        let key = DataKeyExt::PaymentMemo(receipt_id);
         env.storage().persistent().set(&key, &memo);
         Self::bump_persistent(&env, &key);
         Ok(())
@@ -5380,7 +5628,7 @@ impl VaultRegistry {
     pub fn get_payment_memo(env: Env, receipt_id: String) -> Option<String> {
         env.storage()
             .persistent()
-            .get(&DataKey::PaymentMemo(receipt_id))
+            .get(&DataKeyExt::PaymentMemo(receipt_id))
     }
 
     fn is_canonical_payment_memo(memo: &String, resource_id: &String) -> bool {
@@ -5678,7 +5926,7 @@ impl VaultRegistry {
             .ok_or(Error::NotFound)?;
         Self::bump_persistent(&env, &key);
 
-        let reason_key = DataKey::RefundReasonHash(refund_id);
+        let reason_key = DataKeyExt::RefundReasonHash(refund_id);
         let reason_hash: Option<String> = env.storage().persistent().get(&reason_key);
         if env.storage().persistent().has(&reason_key) {
             Self::bump_persistent(&env, &reason_key);
@@ -6330,13 +6578,14 @@ impl VaultRegistry {
             return Ok(());
         }
 
+        let was_flagged = resource.dispute_flag.is_flagged();
         resource.dispute_flag = DisputeFlag::Flagged(reason);
         Self::save(&env, &mut resource);
         // Start the resolution clock on a fresh flag; re-flagging keeps the
         // original deadline so a moderator cannot extend it indefinitely.
         if !was_flagged {
             let window = Self::flag_resolution_window(env.clone());
-            let key = DataKey::FlagDeadline(id.clone());
+            let key = DataKeyExt::FlagDeadline(id.clone());
             if window > 0 {
                 let deadline = env.ledger().sequence().saturating_add(window);
                 env.storage().persistent().set(&key, &deadline);
@@ -6389,7 +6638,7 @@ impl VaultRegistry {
         Self::record_flag_moderator(&env, &id, &moderator);
         env.storage()
             .persistent()
-            .remove(&DataKey::FlagDeadline(id.clone()));
+            .remove(&DataKeyExt::FlagDeadline(id.clone()));
         env.events()
             .publish((symbol_short!("unflag"), id.clone()), id);
         Ok(())
@@ -6408,7 +6657,7 @@ impl VaultRegistry {
         }
         env.storage()
             .instance()
-            .set(&DataKey::FlagResolutionWindow, &window_ledgers);
+            .set(&DataKeyExt::FlagResolutionWindow, &window_ledgers);
         Self::bump_instance(&env);
         env.events()
             .publish((symbol_short!("flagwin"),), window_ledgers);
@@ -6419,14 +6668,14 @@ impl VaultRegistry {
     pub fn flag_resolution_window(env: Env) -> u32 {
         env.storage()
             .instance()
-            .get(&DataKey::FlagResolutionWindow)
+            .get(&DataKeyExt::FlagResolutionWindow)
             .unwrap_or(0)
     }
 
     /// Ledger sequence after which the active flag on `id` is overdue, or
     /// `None` if the resource is not flagged or was flagged with no window.
     pub fn get_flag_deadline(env: Env, id: String) -> Option<u32> {
-        env.storage().persistent().get(&DataKey::FlagDeadline(id))
+        env.storage().persistent().get(&DataKeyExt::FlagDeadline(id))
     }
 
     /// Whether the active flag on `id` has passed its resolution deadline.
@@ -6464,7 +6713,7 @@ impl VaultRegistry {
         Self::save(&env, &mut resource);
         env.storage()
             .persistent()
-            .remove(&DataKey::FlagDeadline(id.clone()));
+            .remove(&DataKeyExt::FlagDeadline(id.clone()));
         env.events()
             .publish((symbol_short!("flagfrc"), id.clone()), (admin, deadline));
         env.events()
@@ -6552,7 +6801,7 @@ impl VaultRegistry {
         Ok(FlagDetails {
             dispute_flag: resource.dispute_flag,
             reason_hash: storage.get(&DataKey::FlagReasonHash(id.clone())),
-            last_moderator: storage.get(&DataKey::FlagModerator(id)),
+            last_moderator: storage.get(&DataKeyExt::FlagModerator(id)),
         })
     }
 
@@ -6914,7 +7163,7 @@ impl VaultRegistry {
         cursor: u32,
         limit: u32,
     ) -> VerifierStatusPage {
-        let key = DataKey::VerifierHistory(verifier);
+        let key = DataKeyExt::VerifierHistory(verifier);
         let history: Vec<VerifierStatusEntry> = env
             .storage()
             .persistent()
@@ -7220,7 +7469,7 @@ impl VaultRegistry {
         env.storage().persistent().set(&refund_key, &stored);
         Self::bump_persistent(env, &refund_key);
         if let Some(hash) = reason_hash {
-            let reason_key = DataKey::RefundReasonHash(refund_id.clone());
+            let reason_key = DataKeyExt::RefundReasonHash(refund_id.clone());
             env.storage().persistent().set(&reason_key, &hash);
             Self::bump_persistent(env, &reason_key);
         }
@@ -7820,7 +8069,7 @@ impl VaultRegistry {
 
     /// Remember `moderator` as the last to act on `id`'s moderation state.
     fn record_flag_moderator(env: &Env, id: &String, moderator: &Address) {
-        let key = DataKey::FlagModerator(id.clone());
+        let key = DataKeyExt::FlagModerator(id.clone());
         env.storage().persistent().set(&key, moderator);
         Self::bump_persistent(env, &key);
     }
@@ -7839,7 +8088,7 @@ impl VaultRegistry {
         // Append a revision snapshot for bounded history (issue #1174).
         // The buffer is capped at MAX_RESOURCE_HISTORY; when full, the oldest
         // entry is evicted so storage growth stays bounded.
-        let hist_key = DataKey::ResourceHistory(resource.id.clone());
+        let hist_key = DataKeyExt::ResourceHistory(resource.id.clone());
         let mut history: Vec<ResourceRevision> = env
             .storage()
             .persistent()

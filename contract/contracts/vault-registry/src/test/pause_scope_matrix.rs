@@ -32,6 +32,7 @@ const PAUSE_SCOPE_MATRIX: &[(&str, &str)] = &[
     ("record_creator_refund", "refund"),
     ("record_admin_refund", "refund"),
     ("buy_lease", "lease"),
+    ("extend_lease", "lease"),
     ("record_lease", "lease"),
     ("settle_lease", "lease"),
     ("revoke_lease", "lease"),
@@ -58,7 +59,7 @@ enum ScopedValue {
     Window(u32),
     Address(Address),
     Payment(PaymentReceipt),
-    Refund(RefundReceipt),
+    Refund(StoredRefundReceipt),
     Lease(Lease),
     Anchor(PurchaseReceiptAnchor),
     AnchorFailure(AnchorFailure),
@@ -171,6 +172,7 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
     let lease_holder_two = Address::generate(&env);
     let lease_holder_three = Address::generate(&env);
     let lease_holder_four = Address::generate(&env);
+    let lease_holder_five = Address::generate(&env);
 
     client.add_settler(&settler);
     client.add_verifier(&verifier);
@@ -208,6 +210,8 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
     let refund_tx = String::from_str(&env, "tx-refund");
     let admin_refund_tx = String::from_str(&env, "tx-refund-admin");
     let lease_tx = String::from_str(&env, "tx-lease");
+    let extend_lease_tx = String::from_str(&env, "tx-lease-ext");
+    let extend_lease_tx2 = String::from_str(&env, "tx-lease-ext2");
     let record_lease_tx = String::from_str(&env, "tx-lease-rec");
     let settle_lease_tx = String::from_str(&env, "tx-lease-set");
     let revoke_lease_tx = String::from_str(&env, "tx-lease-rev");
@@ -353,6 +357,36 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
         "the lease to revoke must be bought on a live registry"
     );
 
+    // A lease to extend: buy, settle (→ Active), then extend. The paused pass
+    // will try to extend it again and must be blocked.
+    assert_eq!(
+        contract_error(client.try_buy_lease(
+            &lease_holder_five,
+            &resource_id,
+            &LeaseTier::Hour,
+            &lease_amount,
+            &extend_lease_tx,
+        )),
+        None,
+        "the lease to extend must be bought on a live registry"
+    );
+    assert_eq!(
+        contract_error(client.try_settle_lease(&settler, &resource_id, &lease_holder_five)),
+        None,
+        "the lease to extend must be settled (Active) before extend_lease can run"
+    );
+    assert_eq!(
+        contract_error(client.try_extend_lease(
+            &lease_holder_five,
+            &resource_id,
+            &LeaseTier::Hour,
+            &lease_amount,
+            &extend_lease_tx2,
+        )),
+        None,
+        "extend_lease must succeed on a live registry"
+    );
+
     // Anchors.
     assert_eq!(
         contract_error(client.try_anchor_purchase_receipt(
@@ -459,6 +493,7 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
         DataKey::Lease(resource_id.clone(), lease_holder_two.clone()),
         DataKey::Lease(resource_id.clone(), lease_holder_three.clone()),
         DataKey::Lease(resource_id.clone(), lease_holder_four.clone()),
+        DataKey::Lease(resource_id.clone(), lease_holder_five.clone()),
         // Anchors.
         DataKey::PurchaseReceipt(anchor_resource_id.clone(), buyer.clone()),
         DataKey::PurchaseReceipt(anchor_resource_id.clone(), buyer_two.clone()),
@@ -578,6 +613,19 @@ fn pause_scope_matrix_refuses_every_money_path_and_changes_nothing() {
         contract_error(client.try_revoke_lease(&resource_id, &lease_holder_four)),
         Some(Error::ContractPaused),
         "revoke_lease must be refused while paused"
+    );
+    // A fresh extend_lease_tx so extend cannot succeed even if unpaused.
+    let extend_paused_tx = String::from_str(&env, "tx-lease-ext-paused");
+    assert_eq!(
+        contract_error(client.try_extend_lease(
+            &lease_holder_five,
+            &resource_id,
+            &LeaseTier::Hour,
+            &lease_amount,
+            &extend_paused_tx,
+        )),
+        Some(Error::ContractPaused),
+        "extend_lease must be refused while paused"
     );
     assert_eq!(
         snapshot_scoped(&env, &client.address, &keys),

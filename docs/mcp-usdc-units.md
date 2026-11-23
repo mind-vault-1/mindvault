@@ -136,3 +136,155 @@ Source: [`mcp/src/usdcIdentity.ts`](../mcp/src/usdcIdentity.ts).
   USDC alone reports no-trustline; canonical selected when both are present
 - [`mcp/src/generateFixtures.test.ts`](../mcp/src/generateFixtures.test.ts) —
   fixture contains a counterfeit entry that is never selected
+
+
+## USDC units at every public API boundary
+
+USDC crosses six distinct API surfaces on its way from a creator's price to a
+settled on-chain payment, and the unit is not the same at each one. A consumer
+that assumes one unit throughout will either send a transaction for ten million
+times the intended amount or display a balance as ten million times too small.
+The table below maps every boundary to the unit it speaks, with a concrete
+example. The conversion itself always runs through the tagged boundary above
+(`usdcToStroops` / `stroopsToUsdc` in [`mcp/src/usdcAmount.ts`](../mcp/src/usdcAmount.ts));
+this section documents where each unit appears so a caller knows which side of
+the boundary it is on.
+
+| Boundary                     | Unit                    | Example                                  | Where defined                                                |
+| ---------------------------- | ----------------------- | ---------------------------------------- | ------------------------------------------------------------ |
+| Vault-registry contract       | i128 stroops            | `50_000_000` for 5 USDC                  | `contract/contracts/vault-registry/src/lib.rs`              |
+| Server HTTP API               | decimal string          | `"5.0000000"` for 5 USDC                 | `server/src/routes/resources.ts`, `server/src/db/schema.ts` |
+| x402 PAYMENT-REQUIRED header  | stroops (in base64 JSON) | `50000000` inside the encoded blob       | `server/src/middleware/dynamicPaywall.ts`                   |
+| MCP tool arguments            | decimal string          | `"5"` or `"5.5"` for 5 USDC              | `mcp/src/tools/publish.ts`, `mcp/src/tools/registry.ts`     |
+| Stellar Horizon API           | decimal string          | `"1.0000000"` for 1 USDC                | `mcp/src/usdcAmount.ts` (`source: "horizon"`)               |
+| Soroban RPC                   | i128 stroops            | `10000000n` for 1 USDC                   | `mcp/src/usdcAmount.ts` (`source: "soroban"`)               |
+
+### 1. Vault-registry contract (Soroban)
+
+Every price and amount on the contract is an `i128` in USDC base units — 7
+decimals, so `1 USDC = 10_000_000`. The contract never sees a decimal string.
+
+```rust
+// contract/contracts/vault-registry/src/lib.rs
+pub fn register(env: Env, creator: Address, id: String, price: i128, metadata: String)
+//                                  ^^^^^^^^^^^ stroops — 50_000_000 means 5 USDC
+
+pub fn set_price(env: Env, id: String, new_price: i128)
+//                                        ^^^^^^^^^ stroops
+
+pub fn record_payment(env: Env, receipt_id: String, resource_id: String,
+                      payer: Address, amount: i128, tx_hash: String)
+//                                 ^^^^^^ stroops — must exactly match the resource price
+
+pub fn buy_lease(env: Env, holder: Address, resource_id: String,
+                 tier: LeaseTier, amount: i128, tx_hash: String)
+//                              ^^^^^^ stroops — the lease price for the tier
+```
+
+`get(resource_id)` returns a `Resource` whose `price` field is `i128` stroops.
+`preview_fee_split(amount)` takes stroops and applies `floor(amount * bps / 10_000)`
+— the same integer floor division the contract uses when settling, so the
+preview matches the accrued fee exactly. Converting to decimal USDC before
+applying the basis-point rate can produce a quote that differs at small amounts.
+
+### 2. Server HTTP API (Express)
+
+The server stores and returns prices as **decimal strings**, not stroops. The
+Postgres `resources.price` and `payments.amount` columns are `text`, holding
+values like `"5.0000000"`. When the server calls the contract it converts:
+
+```ts
+// server/src/routes/resources.ts
+const priceStroops = BigInt(Math.round(parseFloat(resource.price) * 1_000_000_0));
+// resource.price is "5.0000000"  →  priceStroops is 50000000n
+```
+
+A buyer calling `GET /resources/:id` receives `price` as a decimal string. The
+verification fee (`POST /verify-content`) is `$0.10 USDC`, also expressed as a
+decimal. The server is the boundary that translates between human-readable
+decimal USDC (for the web app and API clients) and stroops (for the contract).
+
+### 3. x402 PAYMENT-REQUIRED header
+
+The 402 response's `PAYMENT-REQUIRED` header is a base64-encoded JSON blob. The
+`price` field inside that blob is in **stroops** — the same i128 the contract
+expects — because the client must sign a Soroban auth entry for exactly that
+amount:
+
+```jsonc
+// decoded PAYMENT-REQUIRED header (abbreviated)
+{
+  "price": "50000000",        // stroops — 5 USDC
+  "destination": "G...",       // creator wallet
+  "scheme": "stellar"
+  // … network, asset contract id …
+}
+```
+
+An x402-aware client reads this header, signs a Soroban authorization entry for
+`price` stroops of USDC, and retries the request with the `X-Payment` header
+carrying the signed entry. The unit is stroops because the auth entry is a
+contract call, and contracts speak stroops.
+
+### 4. MCP tools
+
+MCP tool arguments use **decimal USDC strings** for human-friendly input, then
+convert to stroops before the contract call through `usdcToStroops()`:
+
+```ts
+// mcp/src/tools/publish.ts — mindvault_set_price
+const stroops = usdcToStroops(args.priceUsdc); // "5.5" → 55000000n
+
+// mcp/src/tools/registry.ts — preview normalizes on-chain stroops to decimal
+price: stroopsToUsdc(resource.price) // 50000000n → "5.0000000"
+```
+
+`usdcToStroops` returns `null` for anything it cannot read exactly — including
+`"1.00000001"`, which has more precision than Stellar can hold. A `null` result
+blocks the tool call rather than rounding into a transaction the agent never
+approved. `mindvault_buy` reads the resource price from the catalog (decimal)
+and the contract requires the exact stroop equivalent, so the conversion must
+be exact.
+
+### 5. Stellar Horizon API
+
+`GET /accounts/:id` returns balance entries with `balance` as a **decimal
+string** (`"1.0000000"` for 1 USDC). The MCP server reads these via
+`normalizeUsdcBalance({ source: "horizon", balance })`, which tags the encoding
+at the boundary so it cannot be confused with a Soroban stroop value.
+
+### 6. Soroban RPC
+
+All contract reads and writes through Soroban RPC carry `i128` values in
+**stroops**. `rpcFailover` fans a request across several Soroban RPC endpoints,
+which all speak stroops, so failing over between them cannot change the scale.
+There is no Soroban → Horizon balance fallback today; the tagged boundary is
+what makes adding one safe (see [Failover and units](#failover-and-units) above).
+
+### 7. Reconciliation script
+
+The reconciliation script
+([`server/scripts/reconcile.ts`](../server/scripts/reconcile.ts)) converts
+**both ways** to detect drift between the database (decimal strings) and the
+on-chain registry (stroops):
+
+```ts
+// server/scripts/reconcile.ts
+stroopsToUsdcString(onChainRow.price)   // 50000000n → "5.0000000"
+usdcStringToStroops(dbRow.price)        // "5.0000000" → 50000000n
+```
+
+A mismatch between the two after conversion means the DB and the contract have
+drifted — the reconciliation report surfaces the difference for an operator to
+investigate. See [reconciliation.md](reconciliation.md).
+
+### The dangerous direction
+
+A stroop count read as a decimal balance reports a wallet as richly funded and
+waves an unaffordable payment through — the factor of 10⁷ is silent because
+both units type-check, format, and compare without complaint. The tagged
+boundary above (`normalizeUsdcBalance` with an explicit `source`) is what
+prevents this: a reader cannot consume a balance without declaring which
+encoding it speaks, so a second balance source wired in on the wrong scale does
+not compile. Every boundary in this table feeds into that boundary at the
+point where its unit is converted.
