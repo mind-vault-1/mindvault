@@ -1091,52 +1091,6 @@ pub struct MetadataUpdateEvent {
     pub revision: u32,
 }
 
-/// One row of a bounded registry export (`export_page`).
-///
-/// A flattened projection of [`Resource`] for migration tooling: it carries
-/// only the fields an indexer needs to rebuild state elsewhere, and never
-/// the resource's metadata pointer.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct ResourceExport {
-    /// Catalog index (`DataKey::Index`) the resource was registered under.
-    /// Strictly increasing within and across pages.
-    pub index: u32,
-    pub id: String,
-    pub creator: Address,
-    pub state: ResourceState,
-    pub listed: bool,
-    /// Listed price in USDC base units.
-    pub price: i128,
-    pub verified: VerificationStatus,
-    pub frozen: bool,
-    /// `true` while a moderator dispute flag is active. The flag reason is
-    /// not exported.
-    pub flagged: bool,
-    /// `Resource` storage schema the entry was last written with. Entries
-    /// below `RESOURCE_SCHEMA_VERSION` still need `migrate_resource`.
-    pub schema_version: u32,
-    /// Monotonic write counter (`Resource.version`).
-    pub version: u32,
-    pub created_at: u32,
-    pub updated_at: u32,
-}
-
-/// One bounded page of `export_page`.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct ExportPage {
-    /// [`EXPORT_VIEW_VERSION`] of the `items` layout.
-    pub export_version: u32,
-    /// `RESOURCE_SCHEMA_VERSION` of the contract that produced the page.
-    pub resource_schema_version: u32,
-    /// Total catalog index slots (`count`) when the page was read.
-    pub total: u32,
-    pub items: Vec<ResourceExport>,
-    /// Catalog index to pass back as `cursor`; `None` once the end is reached.
-    pub next_cursor: Option<u32>,
-}
-
 /// Structured payload published with the `setprice` event.
 /// Includes the resource id, the price before and after the update, and the
 /// address that authorised the change — enabling indexers to reconcile price
@@ -1421,6 +1375,21 @@ pub struct Lease {
     pub state: LeaseState,
     /// Ledger sequence at which the lease was recorded.
     pub recorded_at: u32,
+}
+
+/// Read-only quote for a lease on a resource: price (in USDC stroops) and
+/// duration (in ledgers) for a given tier. Returned by `lease_quote`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeaseQuote {
+    /// The resource being quoted.
+    pub resource_id: String,
+    /// The lease tier this quote applies to.
+    pub tier: LeaseTier,
+    /// Price in USDC stroops (resource price × tier multiplier).
+    pub price: i128,
+    /// Duration in ledgers (e.g., 720 for Hour, 17_280 for Day).
+    pub duration_ledgers: u32,
 }
 
 // Spec export is disabled because this enum exceeds the XDR limit of 50
@@ -5216,6 +5185,27 @@ impl VaultRegistry {
         Self::validate_resource_id(&resource_id)?;
         let resource = Self::load(&env, &resource_id)?;
         Self::tier_price(resource.price, tier)
+    }
+
+    /// Read-only quote for a lease: returns both price (in USDC stroops) and
+    /// duration (in ledgers) for the given tier on the specified resource.
+    /// Errors `NotFound` for an unknown resource.
+    ///
+    /// This is a convenience wrapper combining `lease_price` and tier duration
+    /// calculation in a single call, useful for clients that need both values
+    /// to display lease options before initiating a purchase.
+    pub fn lease_quote(env: Env, resource_id: String, tier: LeaseTier) -> Result<LeaseQuote, Error> {
+        Self::validate_resource_id(&resource_id)?;
+        let resource = Self::load(&env, &resource_id)?;
+        let price = Self::tier_price(resource.price, tier)?;
+        let duration_ledgers = Self::tier_ledgers(tier);
+        
+        Ok(LeaseQuote {
+            resource_id,
+            tier,
+            price,
+            duration_ledgers,
+        })
     }
 
     /// Record a lease bought by `holder` in `Pending` state, awaiting a

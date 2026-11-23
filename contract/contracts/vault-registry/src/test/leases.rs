@@ -330,3 +330,81 @@ fn lease_writes_respect_the_emergency_pause() {
     assert!(!client.lease_is_active(&id, &holder));
     assert_eq!(client.lease_price(&id, &LeaseTier::Hour), 100i128);
 }
+
+#[test]
+fn lease_quote_returns_price_and_duration_for_all_tiers() {
+    let (env, creator, _settler, _holder, client) = lease_setup();
+    let id = register_priced(&env, &creator, &client, "leasequote", 1_000i128);
+
+    // Hour tier: 1x multiplier, 720 ledgers
+    let hour_quote = client.lease_quote(&id, &LeaseTier::Hour);
+    assert_eq!(hour_quote.resource_id, id);
+    assert_eq!(hour_quote.tier, LeaseTier::Hour);
+    assert_eq!(hour_quote.price, 1_000i128);
+    assert_eq!(hour_quote.duration_ledgers, LEASE_HOUR_LEDGERS);
+
+    // Day tier: 5x multiplier, 17_280 ledgers
+    let day_quote = client.lease_quote(&id, &LeaseTier::Day);
+    assert_eq!(day_quote.resource_id, id);
+    assert_eq!(day_quote.tier, LeaseTier::Day);
+    assert_eq!(day_quote.price, 5_000i128);
+    assert_eq!(day_quote.duration_ledgers, LEASE_DAY_LEDGERS);
+
+    // Week tier: 20x multiplier, 120_960 ledgers
+    let week_quote = client.lease_quote(&id, &LeaseTier::Week);
+    assert_eq!(week_quote.resource_id, id);
+    assert_eq!(week_quote.tier, LeaseTier::Week);
+    assert_eq!(week_quote.price, 20_000i128);
+    assert_eq!(week_quote.duration_ledgers, LEASE_WEEK_LEDGERS);
+
+    // Quote tracks price changes
+    client.set_price(&id, &2_000i128);
+    let updated = client.lease_quote(&id, &LeaseTier::Week);
+    assert_eq!(updated.price, 40_000i128);
+    assert_eq!(updated.duration_ledgers, LEASE_WEEK_LEDGERS);
+
+    // Unknown resource returns NotFound
+    assert_eq!(
+        client.try_lease_quote(&String::from_str(&env, "nosuchquote"), &LeaseTier::Hour),
+        Err(Ok(Error::NotFound))
+    );
+}
+
+#[test]
+fn lease_quote_boundary_cases() {
+    let (env, creator, _settler, _holder, client) = lease_setup();
+    
+    // Minimum valid price (1 stroop)
+    let id_min = register_priced(&env, &creator, &client, "quoteminprice", 1i128);
+    let quote_min = client.lease_quote(&id_min, &LeaseTier::Hour);
+    assert_eq!(quote_min.price, 1i128);
+    assert_eq!(quote_min.duration_ledgers, LEASE_HOUR_LEDGERS);
+
+    // Large price (but within MAX_PRICE)
+    let large_price = 1_000_000_000i128; // 100 USDC
+    let id_large = register_priced(&env, &creator, &client, "quotelargeprice", large_price);
+    let quote_large = client.lease_quote(&id_large, &LeaseTier::Week);
+    assert_eq!(quote_large.price, large_price * 20);
+    assert_eq!(quote_large.duration_ledgers, LEASE_WEEK_LEDGERS);
+
+    // Invalid resource ID
+    assert_eq!(
+        client.try_lease_quote(&String::from_str(&env, "INVALID-ID!"), &LeaseTier::Day),
+        Err(Ok(Error::InvalidResourceId))
+    );
+}
+
+#[test]
+fn lease_quote_preserves_atomic_failure_semantics() {
+    let (env, creator, _settler, _holder, client) = lease_setup();
+    
+    // Quote on non-existent resource should not modify storage
+    let result = client.try_lease_quote(&String::from_str(&env, "doesnotexist"), &LeaseTier::Day);
+    assert_eq!(result, Err(Ok(Error::NotFound)));
+    
+    // Verify no events were emitted (storage unchanged)
+    let events_before = env.events().all().len();
+    let _ = client.try_lease_quote(&String::from_str(&env, "stillnone"), &LeaseTier::Hour);
+    let events_after = env.events().all().len();
+    assert_eq!(events_before, events_after, "lease_quote must not emit events on failure");
+}
