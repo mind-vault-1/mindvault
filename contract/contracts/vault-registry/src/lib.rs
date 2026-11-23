@@ -3310,13 +3310,20 @@ impl VaultRegistry {
         result
     }
 
-    /// Paginated list of resources filtered by verification status.
+    /// Paginated list of resources filtered by verification status, in
+    /// registration order.
     ///
-    /// Returns resources whose `verified` field matches `status`.
-    /// `cursor` is a global catalog index (same semantics as `list_page`).
-    /// `limit` is capped at 20.
-    /// Returns a `CatalogPage` with `items` (matching resources) and
-    /// `next_cursor` (next catalog position, or `None` at end-of-list).
+    /// Each call scans at most `LIST_PAGE_CAP` catalog slots and returns at
+    /// most the effective page size (`limit` clamped to `1..=LIST_PAGE_CAP`).
+    /// `cursor` is the next global catalog slot to scan, independent of the
+    /// requested status. Consequently, a page may contain fewer than the
+    /// effective page size, including no items, while still returning a
+    /// continuation cursor.
+    ///
+    /// Status is evaluated when each slot is read; pagination is not a
+    /// snapshot. A status change to a slot before the cursor will not be seen
+    /// by that traversal, while a change to an unscanned slot is reflected.
+    /// Restart from cursor 0 for a fresh pass.
     pub fn list_by_verification_status(
         env: Env,
         status: VerificationStatus,
@@ -3324,10 +3331,11 @@ impl VaultRegistry {
         limit: u32,
     ) -> CatalogPage {
         let total: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
-        let page_size = limit.min(LIST_PAGE_CAP);
+        let page_size = limit.clamp(1, LIST_PAGE_CAP);
+        let scan_end = cursor.saturating_add(LIST_PAGE_CAP).min(total);
         let mut items: Vec<Resource> = Vec::new(&env);
         let mut i = cursor;
-        while i < total && items.len() < page_size {
+        while i < scan_end && items.len() < page_size {
             let idx_key = DataKey::Index(i);
             if let Some(id) = env.storage().persistent().get::<DataKey, String>(&idx_key) {
                 Self::bump_persistent(&env, &idx_key);

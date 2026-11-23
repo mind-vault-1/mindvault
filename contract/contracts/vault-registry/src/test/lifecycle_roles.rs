@@ -1227,3 +1227,88 @@ fn list_by_verification_status_pagination_works() {
     assert_eq!(page2.items.get(0).unwrap().id, id3);
     assert_eq!(page2.next_cursor, None, "no more results");
 }
+
+#[test]
+fn list_by_verification_status_bounds_catalog_scan_for_sparse_status() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+
+    let mut ids = Vec::new();
+    for index in 0..=LIST_PAGE_CAP {
+        let id = String::from_str(&env, &format!("bounded{index:02}"));
+        client.register(
+            &creator,
+            &id,
+            &100i128,
+            &String::from_str(&env, "ipfs://m"),
+            &empty_tags(&env),
+        );
+        ids.push_back(id);
+    }
+    let last_id = ids.get(LIST_PAGE_CAP).unwrap();
+    client.set_verification_status(
+        &last_id,
+        &verifier,
+        &VerificationStatus::Verified,
+        &None,
+    );
+
+    let first = client.list_by_verification_status(
+        &VerificationStatus::Verified,
+        &0u32,
+        &LIST_PAGE_CAP,
+    );
+    assert_eq!(first.items.len(), 0);
+    assert_eq!(first.next_cursor, Some(LIST_PAGE_CAP));
+
+    let second = client.list_by_verification_status(
+        &VerificationStatus::Verified,
+        &first.next_cursor.unwrap(),
+        &LIST_PAGE_CAP,
+    );
+    assert_eq!(second.items.len(), 1);
+    assert_eq!(second.items.get(0).unwrap().id, last_id);
+    assert_eq!(second.next_cursor, None);
+}
+
+#[test]
+fn list_by_verification_status_reflects_changes_in_unscanned_slots() {
+    let (env, creator, _admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+
+    let id1 = register_default(&env, &creator, &client, "statuschange1");
+    let id2 = register_default(&env, &creator, &client, "statuschange2");
+
+    let first = client.list_by_verification_status(
+        &VerificationStatus::Pending,
+        &0u32,
+        &1u32,
+    );
+    assert_eq!(first.items.get(0).unwrap().id, id1);
+    assert_eq!(first.next_cursor, Some(1));
+
+    client.set_verification_status(
+        &id2,
+        &verifier,
+        &VerificationStatus::Verified,
+        &None,
+    );
+
+    let pending = client.list_by_verification_status(
+        &VerificationStatus::Pending,
+        &first.next_cursor.unwrap(),
+        &1u32,
+    );
+    assert_eq!(pending.items.len(), 0);
+    assert_eq!(pending.next_cursor, None);
+
+    let verified = client.list_by_verification_status(
+        &VerificationStatus::Verified,
+        &1u32,
+        &1u32,
+    );
+    assert_eq!(verified.items.len(), 1);
+    assert_eq!(verified.items.get(0).unwrap().id, id2);
+}
