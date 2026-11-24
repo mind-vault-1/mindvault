@@ -71,6 +71,10 @@ describe("normalizeReceiptExportOptions", () => {
     expect(normalizeReceiptExportOptions({ format: "ndjson" })).toEqual({ format: "ndjson" });
   });
 
+  it("accepts jsonl as an alias for ndjson", () => {
+    expect(normalizeReceiptExportOptions({ format: "jsonl" })).toEqual({ format: "ndjson" });
+  });
+
   it("reads a bare date as midnight UTC", () => {
     const options = normalizeReceiptExportOptions({ since: "2026-08-01" });
     expect(options.since).toBe("2026-08-01T00:00:00.000Z");
@@ -79,7 +83,7 @@ describe("normalizeReceiptExportOptions", () => {
   it("rejects an unknown format", () => {
     expect(() => normalizeReceiptExportOptions({ format: "xml" })).toThrow(ReceiptExportError);
     expect(() => normalizeReceiptExportOptions({ format: "xml" })).toThrow(
-      /must be "json", "csv", or "ndjson"/,
+      /must be "json", "csv", "ndjson", or "jsonl"/,
     );
   });
 
@@ -432,6 +436,25 @@ describe("exportReceiptsTool", () => {
     expect(typeof result.ndjson).toBe("string");
     const parsed = JSON.parse(result.ndjson);
     expect(parsed.resourceId).toBe("res-001");
+  });
+
+  it("exports a JSON Lines document when format is jsonl", () => {
+    recordPurchase({
+      resourceId: "res-001",
+      amount: "1.50",
+      network: "stellar:testnet",
+      txHash: "abc",
+      receiptRef: "pay-1",
+      title: "Intro to Stellar",
+    });
+
+    const result = JSON.parse(exportReceiptsTool({ format: "jsonl" }));
+    // The alias is canonicalized so the envelope shape stays stable.
+    expect(result.format).toBe("ndjson");
+    expect(result.csv).toBeUndefined();
+    const lines = result.ndjson.split("\n");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]).resourceId).toBe("res-001");
   });
 
   it("surfaces a bad filter as a deterministic error", () => {

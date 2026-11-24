@@ -1,9 +1,11 @@
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 import { describe, it, expect } from "vitest";
 
 import {
   collectStartupDiagnostics,
-  formatDiagnostics,
   hasBlockingDiagnostics,
+  formatDiagnostics,
+  MCP_PROTOCOL_VERSION_ENV,
 } from "./diagnostics.js";
 
 // A minimal env that passes every other check, so these tests isolate the
@@ -38,6 +40,59 @@ describe("collectStartupDiagnostics — global fetch", () => {
     // default-parameter path must not report the missing-fetch diagnostic.
     const diagnostics = collectStartupDiagnostics(VALID_ENV);
     expect(diagnostics.some((d) => d.variable === "globalThis.fetch")).toBe(false);
+  });
+});
+
+describe("collectStartupDiagnostics — MCP protocol version (#1202)", () => {
+  it("does not diagnose an unset, empty, or blank protocol pin", () => {
+    for (const value of [undefined, "", "   "]) {
+      const diagnostics = collectStartupDiagnostics(
+        value === undefined ? VALID_ENV : { ...VALID_ENV, [MCP_PROTOCOL_VERSION_ENV]: value },
+        true,
+      );
+      expect(diagnostics).toEqual([]);
+    }
+  });
+
+  it.each(SUPPORTED_PROTOCOL_VERSIONS)("accepts SDK-supported version %s", (version) => {
+    const diagnostics = collectStartupDiagnostics(
+      { ...VALID_ENV, [MCP_PROTOCOL_VERSION_ENV]: version },
+      true,
+    );
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("accepts surrounding whitespace around a supported version", () => {
+    const version = SUPPORTED_PROTOCOL_VERSIONS[0];
+    const diagnostics = collectStartupDiagnostics(
+      { ...VALID_ENV, [MCP_PROTOCOL_VERSION_ENV]: `  ${version}  ` },
+      true,
+    );
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("blocks startup for an unsupported protocol version", () => {
+    const diagnostics = collectStartupDiagnostics(
+      { ...VALID_ENV, [MCP_PROTOCOL_VERSION_ENV]: "1999-01-01" },
+      true,
+    );
+    const diagnostic = diagnostics.find((d) => d.variable === MCP_PROTOCOL_VERSION_ENV);
+    expect(diagnostic).toBeDefined();
+    expect(diagnostic?.severity).toBe("error");
+    expect(diagnostic?.message).toContain("1999-01-01");
+    expect(diagnostic?.expected).toContain(SUPPORTED_PROTOCOL_VERSIONS[0]);
+    expect(hasBlockingDiagnostics(diagnostics)).toBe(true);
+  });
+
+  it("names the supported versions in the formatted report", () => {
+    const diagnostics = collectStartupDiagnostics(
+      { ...VALID_ENV, [MCP_PROTOCOL_VERSION_ENV]: "future-protocol" },
+      true,
+    );
+    const report = formatDiagnostics(diagnostics);
+    expect(report).toContain(MCP_PROTOCOL_VERSION_ENV);
+    expect(report).toContain("future-protocol");
+    for (const version of SUPPORTED_PROTOCOL_VERSIONS) expect(report).toContain(version);
   });
 });
 

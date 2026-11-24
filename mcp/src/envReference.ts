@@ -21,6 +21,8 @@
  * changes in code changes the generated reference in the same PR.
  */
 
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
+import { MCP_PROTOCOL_VERSION_ENV } from "./diagnostics.js";
 import { DEFAULT_MAX_AUTO_FEE_STROOPS, DEFAULT_MAX_AUTO_PAY_USDC } from "./paymentCeiling.js";
 import { DEFAULT_PAID_CONFIRMATION_POLICY } from "./paidOperations.js";
 import { DEFAULT_DESTRUCTIVE_CONFIRMATION_POLICY } from "./destructiveOperations.js";
@@ -172,6 +174,16 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
       "Comma-separated hosts that bypass the proxy, matching the conventional semantics: `*` bypasses everything, a leading dot matches a domain suffix, and `host:port` requires the port to match. Also accepted lowercase (no_proxy).",
     default: "unset — no host bypasses the proxy",
     source: "mcp/src/proxy.ts",
+  },
+
+  // ── MCP protocol ───────────────────────────────────────────────────────────
+  {
+    name: MCP_PROTOCOL_VERSION_ENV,
+    description:
+      "Optional pin for the MCP protocol version used by the initialize handshake. An unsupported value is a blocking startup error instead of silently negotiating a different version. Unset means negotiate normally (#1202).",
+    default: "unset — negotiate from the client's initialize request",
+    values: [...SUPPORTED_PROTOCOL_VERSIONS],
+    source: "mcp/src/diagnostics.ts",
   },
 
   // ── Guardrails & policies ──────────────────────────────────────────────────

@@ -16,7 +16,10 @@
  *     advertised as the tool's `outputSchema`, so clients can validate it and
  *     the server can return it as `structuredContent` (MCP 2025-06-18);
  *   - a normalized receipt row per purchase, with the explorer link resolved;
- *   - RFC 4180 CSV of those same rows, for spreadsheets and ledgers.
+ *   - RFC 4180 CSV of those same rows, for spreadsheets and ledgers;
+ *   - newline-delimited JSON (NDJSON / JSON Lines) of those same rows, for
+ *     stream-oriented consumers. `jsonl` is accepted as an input alias for
+ *     `ndjson`.
  *
  * The module is pure apart from reading the receipt store: no network, no
  * writes, no process state. Every failure is a deterministic, agent-safe
@@ -84,7 +87,16 @@ export const RECEIPT_CSV_COLUMNS = [
   "explorerUrl",
 ] as const;
 
-export type ReceiptExportFormat = "json" | "csv" | "ndjson";
+/**
+ * Output formats accepted by `mindvault_export_receipts`.
+ *
+ * `jsonl` is an input alias for `ndjson`: both describe newline-delimited JSON,
+ * and both produce the same envelope and document field. The alias is accepted
+ * because JSON Lines is the name most log/streaming tools use; canonicalizing
+ * it to `ndjson` keeps the exported document schema stable for existing
+ * consumers.
+ */
+export type ReceiptExportFormat = "json" | "csv" | "ndjson" | "jsonl";
 
 /** Grouping dimension for receipt summaries. */
 export type ReceiptExportGrouping = "month";
@@ -227,10 +239,17 @@ export function normalizeReceiptExportOptions(
 
   let format: ReceiptExportFormat = "json";
   if (raw.format !== undefined && raw.format !== null && raw.format !== "") {
-    if (raw.format !== "json" && raw.format !== "csv" && raw.format !== "ndjson") {
-      throw new ReceiptExportError('Invalid format: must be "json", "csv", or "ndjson".');
+    if (
+      raw.format !== "json" &&
+      raw.format !== "csv" &&
+      raw.format !== "ndjson" &&
+      raw.format !== "jsonl"
+    ) {
+      throw new ReceiptExportError('Invalid format: must be "json", "csv", "ndjson", or "jsonl".');
     }
-    format = raw.format;
+    // JSON Lines and NDJSON are the same format. Canonicalize the alias so the
+    // envelope (`format`) and document field (`ndjson`) stay stable.
+    format = raw.format === "jsonl" ? "ndjson" : raw.format;
   }
 
   const since = parseBound(raw, "since");

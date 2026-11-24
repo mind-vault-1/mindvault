@@ -1635,3 +1635,50 @@ export const RECEIPT_VERIFICATION_OUTPUT_SCHEMA = {
   },
   required: ["schema", "outcome", "valid", "fields", "issues", "summary"],
 } as const;
+
+/**
+ * Output schema for `mindvault_query_audit_log`.
+ *
+ * Entries are redacted audit events: their exact shape depends on the tool
+ * that emitted them, but the envelope, filters, and bounded-scan metadata are
+ * fixed so clients can page through results deterministically.
+ */
+export const AUDIT_QUERY_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    schema: { type: "string", const: "mindvault.audit-query/v1" },
+    source: { type: "string", const: "MINDVAULT_AUDIT_LOG_FILE" },
+    filters: {
+      type: "object",
+      properties: {
+        since: { type: ["string", "null"] },
+        until: { type: ["string", "null"] },
+        tool: { type: ["string", "null"] },
+        outcome: { type: ["string", "null"], enum: ["start", "success", "error", null] },
+        limit: { type: "integer", minimum: 1, maximum: 500 },
+        offset: { type: "integer", minimum: 0 },
+      },
+      required: ["since", "until", "tool", "outcome", "limit", "offset"],
+    },
+    count: { type: "integer" },
+    nextOffset: { type: ["integer", "null"] },
+    truncated: { type: "boolean" },
+    scannedBytes: { type: "integer" },
+    maxScannedBytes: { type: "integer" },
+    entries: {
+      type: "array",
+      items: { type: "object" },
+    },
+  },
+  required: [
+    "schema",
+    "source",
+    "filters",
+    "count",
+    "nextOffset",
+    "truncated",
+    "scannedBytes",
+    "maxScannedBytes",
+    "entries",
+  ],
+} as const;

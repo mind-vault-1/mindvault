@@ -12,6 +12,7 @@
  * report is always safe to show in issue-driven contributor work.
  */
 
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 import {
   networks as registryNetworks,
   normalizeX402Network,
@@ -46,6 +47,16 @@ export interface StartupDiagnostic {
 
 /** Values accepted (case-insensitively) as booleans for MINDVAULT_METRICS. */
 const BOOLEAN_VALUES = new Set(["1", "0", "true", "false", "yes", "no", "on", "off"]);
+
+/**
+ * Optional startup pin for the MCP protocol version (#1202).
+ *
+ * The SDK negotiates a version from the client's initialize request. An
+ * operator can pin that version here — useful for reproducing a client
+ * compatibility report — and an unsupported pin must stop startup instead of
+ * silently negotiating something else.
+ */
+export const MCP_PROTOCOL_VERSION_ENV = "MINDVAULT_MCP_PROTOCOL_VERSION";
 
 /** Stellar secret keys: 'S' + 55 base32 chars. Redacted so they never leak. */
 const STELLAR_SECRET_KEY = /\bS[A-Z2-7]{55}\b/g;
@@ -123,6 +134,23 @@ export function collectStartupDiagnostics(
       resolve(env);
     } catch (error) {
       diagnostics.push({ variable, severity: "error", message: (error as Error).message });
+    }
+  }
+
+  // An explicit protocol pin must be one of the versions the installed MCP SDK
+  // can negotiate (#1202). Otherwise the server would start with a
+  // configuration that cannot be honoured, leaving the client to fail deep in
+  // the initialize handshake. Unset/blank means "negotiate normally".
+  const protocolVersion = env[MCP_PROTOCOL_VERSION_ENV];
+  if (typeof protocolVersion === "string" && protocolVersion.trim() !== "") {
+    const version = protocolVersion.trim();
+    if (!SUPPORTED_PROTOCOL_VERSIONS.includes(version)) {
+      diagnostics.push({
+        variable: MCP_PROTOCOL_VERSION_ENV,
+        severity: "error",
+        message: `Unsupported MCP protocol version ${JSON.stringify(version)}.`,
+        expected: `one of ${SUPPORTED_PROTOCOL_VERSIONS.join(", ")}`,
+      });
     }
   }
 

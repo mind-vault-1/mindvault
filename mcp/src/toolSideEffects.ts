@@ -100,6 +100,8 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   // x402 payments are signed Stellar transfers, so they count as chain effects.
   mindvault_publish: { local: "write", remote: "chain", payment: "usdc" },
   mindvault_publish_batch: { local: "none", remote: "chain", payment: "usdc" },
+  // Pure offline validation: no signature, payment, API call, or file write.
+  mindvault_publish_batch_preview: READ,
   mindvault_publish_status: READ,
   mindvault_verify_publisher: READ,
   mindvault_subscribe_resource: READ,
@@ -155,6 +157,7 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_backup_state: { local: "write", remote: "none", payment: "none" },
   mindvault_compare_state_backup: READ,
   mindvault_restore_state: { local: "overwrite", remote: "none", payment: "none" },
+  mindvault_state_diagnostics: READ,
   mindvault_check_state_permissions: READ,
   mindvault_migration_preview: READ,
 
@@ -170,6 +173,8 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_verify_install: READ,
   mindvault_support_bundle: READ,
   mindvault_debug_bundle: READ,
+  // Reads only the operator-configured audit log through a bounded window.
+  mindvault_query_audit_log: READ,
 };
 
 /** The annotation hints a side-effect row implies. */
