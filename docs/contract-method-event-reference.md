@@ -12,7 +12,7 @@ the canonical list enforced by the contract tests. The generated Soroban spec
 carries method signatures but not event topics, so the two inputs are
 deliberately separate.
 
-**138 methods** and **43 event topics** as of last generation.
+**139 methods** and **43 event topics** as of last generation.
 
 ## Methods
 
@@ -495,6 +495,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<CatalogPage>`
 - **Summary:** `list_listed` with next-cursor metadata: `cursor` and `next_cursor` are global catalog indexes (same domain as `list_page`), so a page boundary is stable however many resources change state between c…
 
+### `migration_compatibility_report`
+
+- **Arguments:** `{cursor, limit}: {cursor: u32, limit: u32}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<MigrationCompatibilityReport>`
+- **Summary:** Bounded, read-only migration readiness report. Counts resources in catalog-index order by current, supported predecessor, and unsupported `schema_version`; returns `next_cursor` for pagination. Read-only and available while paused.
+
 ### `migrate_resource`
 
 - **Arguments:** `{id}: {id: string}, options?: MethodOptions`
@@ -856,51 +862,51 @@ event key; the payload column describes the second segment. See the
 [`contract/README.md` Events table](../contract/README.md#events) for the
 lifecycle conditions that emit each topic.
 
-| Topic                 | Payload                                                            |
-| --------------------- | ------------------------------------------------------------------ |
-| `register`            | `Resource`                                                         |
-| `regmemo`             | `memo_hash: BytesN<32>`                                            |
-| `nomemo`              | `(receipt_id: String, tx_hash: String)`                            |
-| `setregt`             | `terms_hash: String`                                               |
-| `setroyal`            | `(old_recipient: Option<Address>, new_recipient: Option<Address>)` |
-| `transfer`            | `(previous_owner: Address, new_owner: Address)`                    |
-| `propose`             | `(owner: Address, proposed: Address)`                              |
-| `cancel`              | `owner: Address`                                                   |
-| `setlisted`           | `(old_listed: bool, new_listed: bool)`                             |
-| `setterms`            | `terms_hash: String`                                               |
-| `setadmin`            | `new_admin: Address`                                               |
-| `setrecov`            | `recovery_admin: Option<Address>`                                  |
-| `recover`             | `(old_admin: Address, new_admin: Address)`                         |
-| `setptrs`             | `MetadataPointers { pointers, primary }`                           |
-| `nomadmin`            | `new_admin: Address`                                               |
-| `accadmin`            | `new_admin: Address`                                               |
-| `nomcncl`             | `(nominee: Address, admin: Address)`                               |
-| `netinit`             | `network_id: BytesN<32>`                                           |
-| `freeze`              | `()`                                                               |
-| `addverif`            | `RoleChange { admin, target, granted: true }`                      |
-| `rmverif`             | `RoleChange { admin, target, granted: false }`                     |
-| `verrot`              | `VerifierRotation { admin, old_verifier, new_verifier, ledger }`   |
+| Topic                 | Payload                                                                       |
+| --------------------- | ----------------------------------------------------------------------------- |
+| `register`            | `Resource`                                                                    |
+| `regmemo`             | `memo_hash: BytesN<32>`                                                       |
+| `nomemo`              | `(receipt_id: String, tx_hash: String)`                                       |
+| `setregt`             | `terms_hash: String`                                                          |
+| `setroyal`            | `(old_recipient: Option<Address>, new_recipient: Option<Address>)`            |
+| `transfer`            | `(previous_owner: Address, new_owner: Address)`                               |
+| `propose`             | `(owner: Address, proposed: Address)`                                         |
+| `cancel`              | `owner: Address`                                                              |
+| `setlisted`           | `(old_listed: bool, new_listed: bool)`                                        |
+| `setterms`            | `terms_hash: String`                                                          |
+| `setadmin`            | `new_admin: Address`                                                          |
+| `setrecov`            | `recovery_admin: Option<Address>`                                             |
+| `recover`             | `(old_admin: Address, new_admin: Address)`                                    |
+| `setptrs`             | `MetadataPointers { pointers, primary }`                                      |
+| `nomadmin`            | `new_admin: Address`                                                          |
+| `accadmin`            | `new_admin: Address`                                                          |
+| `nomcncl`             | `(nominee: Address, admin: Address)`                                          |
+| `netinit`             | `network_id: BytesN<32>`                                                      |
+| `freeze`              | `()`                                                                          |
+| `addverif`            | `RoleChange { admin, target, granted: true }`                                 |
+| `rmverif`             | `RoleChange { admin, target, granted: false }`                                |
+| `verrot`              | `VerifierRotation { admin, old_verifier, new_verifier, ledger }`              |
 | `vercfg`              | `VerifierConfigChange { version, action, admin, verifier, previous, ledger }` |
-| `reindex`             | `new_count: u32 (topic carries old_count: u32)`                    |
-| `addsettlr`           | `RoleChange { admin, target, granted: true }`                      |
-| `rmsettlr`            | `RoleChange { admin, target, granted: false }`                     |
-| `pause`               | `(paused: bool, admin: Address)`                                   |
-| `pause_until`         | `(pause_until: u64, admin: Address)`                               |
-| `payment_pause`       | `(paused: bool, admin: Address)`                                   |
-| `payment_pause_until` | `(pause_until: u64, admin: Address)`                               |
-| `addmod`              | `RoleChange { admin, target, granted: true }`                      |
-| `rmmod`               | `RoleChange { admin, target, granted: false }`                     |
-| `flag`                | `FlagEvent { id, moderator, reason }`                              |
-| `unflag`              | `resource id`                                                      |
-| `flagrsn`             | `(moderator: Address, reason_hash: String)`                        |
-| `retagidx`            | `new_count: u32`                                                   |
-| `reactive`            | `resource id`                                                      |
-| `claimfee`            | `(claimed_amount: i128, remaining_amount: i128)`                   |
-| `ttlext`              | `()`                                                               |
-| `lease`               | `(resource_id: String, lease: Lease)`                              |
-| `leasesetl`           | `(resource_id: String, lease: Lease)`                              |
-| `simvalid`            | `(passed: bool, error_code: Option<u32>)`                          |
-| `leaserevk`           | `(resource_id: String, lease: Lease)`                              |
+| `reindex`             | `new_count: u32 (topic carries old_count: u32)`                               |
+| `addsettlr`           | `RoleChange { admin, target, granted: true }`                                 |
+| `rmsettlr`            | `RoleChange { admin, target, granted: false }`                                |
+| `pause`               | `(paused: bool, admin: Address)`                                              |
+| `pause_until`         | `(pause_until: u64, admin: Address)`                                          |
+| `payment_pause`       | `(paused: bool, admin: Address)`                                              |
+| `payment_pause_until` | `(pause_until: u64, admin: Address)`                                          |
+| `addmod`              | `RoleChange { admin, target, granted: true }`                                 |
+| `rmmod`               | `RoleChange { admin, target, granted: false }`                                |
+| `flag`                | `FlagEvent { id, moderator, reason }`                                         |
+| `unflag`              | `resource id`                                                                 |
+| `flagrsn`             | `(moderator: Address, reason_hash: String)`                                   |
+| `retagidx`            | `new_count: u32`                                                              |
+| `reactive`            | `resource id`                                                                 |
+| `claimfee`            | `(claimed_amount: i128, remaining_amount: i128)`                              |
+| `ttlext`              | `()`                                                                          |
+| `lease`               | `(resource_id: String, lease: Lease)`                                         |
+| `leasesetl`           | `(resource_id: String, lease: Lease)`                                         |
+| `simvalid`            | `(passed: bool, error_code: Option<u32>)`                                     |
+| `leaserevk`           | `(resource_id: String, lease: Lease)`                                         |
 
 ## Concrete example
 

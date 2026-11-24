@@ -81,44 +81,45 @@ Generated and checked-in artifacts:
 
 ## Test files
 
-| File                                         | Compiled | Covers                                                                                                            |
-| -------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
-| `src/test.rs`                                | yes      | Core suite: registration, catalog reads, ownership, tags, payments, roles, events, proptests, README drift guards |
-| `src/test/anchor_backoff.rs`                 | no       | Anchor attempt cap and retry back-off (#792)                                                                      |
-| `src/test/auth_fixtures.rs`                  | yes      | Reusable `MockAuth` builders and accept/reject auth tests (#641)                                                  |
-| `src/test/core_catalog.rs`                   | no       | Split-out copy of core catalog tests (most also in `test.rs`)                                                     |
-| `src/test/creator_listed_count.rs`           | yes      | `creator_listed_count` (#681)                                                                                     |
-| `src/test/creator_page_filtered.rs`          | yes      | `list_by_creator_page_filtered` (#972)                                                                            |
-| `src/test/cursor_paging.rs`                  | no       | Stable cursors for the `list_*` family (#794)                                                                     |
-| `src/test/flag_details.rs`                   | yes      | `flag_details` / `is_flagged` moderation read (#820)                                                              |
-| `src/test/hardening_preflight.rs`            | no       | Boundary hardening (duplicates of `test.rs` tests)                                                                |
-| `src/test/leases.rs`                         | no       | Time-limited access leases (#803)                                                                                 |
-| `src/test/lifecycle_events.rs`               | yes      | Lifecycle transition event payloads                                                                               |
-| `src/test/lifecycle_roles.rs`                | no       | Roles, verification, freeze and repair (most also in `test.rs`)                                                   |
-| `src/test/listed_count_matrix.rs`            | yes      | Listed-count transition matrix (#973)                                                                             |
-| `src/test/memo_hash.rs`                      | yes      | `register_with_memo` memo hash (#682)                                                                             |
-| `src/test/metadata_updates.rs`               | no       | `update_metadata` events (duplicates of `test.rs` tests)                                                          |
-| `src/test/moderation_pause.rs`               | no       | Dispute flagging and pause (most also in `test.rs`)                                                               |
-| `src/test/partial_refunds.rs`                | no       | Partial refund accounting (#990)                                                                                  |
-| `src/test/pause_scope_matrix.rs`             | yes      | What the global pause covers (#1018)                                                                              |
-| `src/test/payment_idempotency.rs`            | yes      | Retry-safe `record_payment` (#823)                                                                                |
-| `src/test/payment_listing.rs`                | no       | `record_payment` requires a listed resource (#791)                                                                |
-| `src/test/payment_pause_scope.rs`            | yes      | Payment pause scope (#1016)                                                                                       |
-| `src/test/payments.rs`                       | no       | Escrow payment state (most also in `test.rs`)                                                                     |
-| `src/test/properties_events.rs`              | no       | Pagination/tag property tests and event topic lengths (most also in `test.rs`)                                    |
-| `src/test/purchase_receipts.rs`              | no       | Purchase receipt buyer normalization (most also in `test.rs`)                                                     |
-| `src/test/registry_export.rs`                | no       | Bounded `export_page` (#1073)                                                                                     |
-| `src/test/schema_registry.rs`                | no       | `registry_info` discovery metadata (duplicates of `test.rs` tests)                                                |
-| `src/test/simulation_mutation_validation.rs` | yes      | Simulation vs. submitted mutation parity (#1017)                                                                  |
-| `src/test/stellar_wave_804_805_806_808.rs`   | yes      | Earnings estimate, verifier history, and related (#804–#808)                                                      |
-| `src/test/stellar_wave_970_971_975_976.rs`   | yes      | Listing revision counter and related (#970–#976)                                                                  |
-| `src/test/stellar_wave_977_978_979_980.rs`   | yes      | Tag-index repair idempotency, maintenance status (#977–#980)                                                      |
-| `src/test/stellar_wave_981_982_983_984.rs`   | yes      | Admin recovery guards, role inventory (#981–#984)                                                                 |
-| `src/test/storage_footprint.rs`              | yes      | Storage footprint report and budgets. See [`contract-storage-footprint.md`](contract-storage-footprint.md)        |
-| `src/test/tag_prefix_search.rs`              | yes      | `search_by_tag_prefix` (#974)                                                                                     |
-| `src/test/tags.rs`                           | no       | Tag removal events and `set_tags` validation (most also in `test.rs`)                                             |
-| `src/test/tombstone_read.rs`                 | yes      | Read behaviour after tombstoning (#624)                                                                           |
-| `src/test/ttl_operator_lifecycle.rs`         | yes      | TTL refresh behaviour behind [`contract-ttl-lifecycle.md`](contract-ttl-lifecycle.md)                             |
+| File                                           | Compiled | Covers                                                                                                            |
+| ---------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
+| `src/test.rs`                                  | yes      | Core suite: registration, catalog reads, ownership, tags, payments, roles, events, proptests, README drift guards |
+| `src/test/anchor_backoff.rs`                   | no       | Anchor attempt cap and retry back-off (#792)                                                                      |
+| `src/test/auth_fixtures.rs`                    | yes      | Reusable `MockAuth` builders and accept/reject auth tests (#641)                                                  |
+| `src/test/core_catalog.rs`                     | no       | Split-out copy of core catalog tests (most also in `test.rs`)                                                     |
+| `src/test/creator_listed_count.rs`             | yes      | `creator_listed_count` (#681)                                                                                     |
+| `src/test/creator_page_filtered.rs`            | yes      | `list_by_creator_page_filtered` (#972)                                                                            |
+| `src/test/cursor_paging.rs`                    | no       | Stable cursors for the `list_*` family (#794)                                                                     |
+| `src/test/flag_details.rs`                     | yes      | `flag_details` / `is_flagged` moderation read (#820)                                                              |
+| `src/test/hardening_preflight.rs`              | no       | Boundary hardening (duplicates of `test.rs` tests)                                                                |
+| `src/test/leases.rs`                           | no       | Time-limited access leases (#803)                                                                                 |
+| `src/test/lifecycle_events.rs`                 | yes      | Lifecycle transition event payloads                                                                               |
+| `src/test/lifecycle_roles.rs`                  | no       | Roles, verification, freeze and repair (most also in `test.rs`)                                                   |
+| `src/test/listed_count_matrix.rs`              | yes      | Listed-count transition matrix (#973)                                                                             |
+| `src/test/memo_hash.rs`                        | yes      | `register_with_memo` memo hash (#682)                                                                             |
+| `src/test/metadata_updates.rs`                 | no       | `update_metadata` events (duplicates of `test.rs` tests)                                                          |
+| `src/test/moderation_pause.rs`                 | no       | Dispute flagging and pause (most also in `test.rs`)                                                               |
+| `src/test/partial_refunds.rs`                  | no       | Partial refund accounting (#990)                                                                                  |
+| `src/test/pause_scope_matrix.rs`               | yes      | What the global pause covers (#1018)                                                                              |
+| `src/test/payment_idempotency.rs`              | yes      | Retry-safe `record_payment` (#823)                                                                                |
+| `src/test/payment_listing.rs`                  | no       | `record_payment` requires a listed resource (#791)                                                                |
+| `src/test/payment_pause_scope.rs`              | yes      | Payment pause scope (#1016)                                                                                       |
+| `src/test/payments.rs`                         | no       | Escrow payment state (most also in `test.rs`)                                                                     |
+| `src/test/properties_events.rs`                | no       | Pagination/tag property tests and event topic lengths (most also in `test.rs`)                                    |
+| `src/test/purchase_receipts.rs`                | no       | Purchase receipt buyer normalization (most also in `test.rs`)                                                     |
+| `src/test/registry_export.rs`                  | no       | Bounded `export_page` (#1073)                                                                                     |
+| `src/test/registry_migration_compatibility.rs` | yes      | `migration_compatibility_report` (#1185)                                                                          |
+| `src/test/schema_registry.rs`                  | no       | `registry_info` discovery metadata (duplicates of `test.rs` tests)                                                |
+| `src/test/simulation_mutation_validation.rs`   | yes      | Simulation vs. submitted mutation parity (#1017)                                                                  |
+| `src/test/stellar_wave_804_805_806_808.rs`     | yes      | Earnings estimate, verifier history, and related (#804–#808)                                                      |
+| `src/test/stellar_wave_970_971_975_976.rs`     | yes      | Listing revision counter and related (#970–#976)                                                                  |
+| `src/test/stellar_wave_977_978_979_980.rs`     | yes      | Tag-index repair idempotency, maintenance status (#977–#980)                                                      |
+| `src/test/stellar_wave_981_982_983_984.rs`     | yes      | Admin recovery guards, role inventory (#981–#984)                                                                 |
+| `src/test/storage_footprint.rs`                | yes      | Storage footprint report and budgets. See [`contract-storage-footprint.md`](contract-storage-footprint.md)        |
+| `src/test/tag_prefix_search.rs`                | yes      | `search_by_tag_prefix` (#974)                                                                                     |
+| `src/test/tags.rs`                             | no       | Tag removal events and `set_tags` validation (most also in `test.rs`)                                             |
+| `src/test/tombstone_read.rs`                   | yes      | Read behaviour after tombstoning (#624)                                                                           |
+| `src/test/ttl_operator_lifecycle.rs`           | yes      | TTL refresh behaviour behind [`contract-ttl-lifecycle.md`](contract-ttl-lifecycle.md)                             |
 
 ### About the files that are not compiled
 
