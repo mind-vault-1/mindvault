@@ -5,7 +5,7 @@
 
 This file is a generated, human-readable summary of the MCP tool surface (ListTools). It is scoped to the `mcp/` package and intended as a quick reference for integrators and reviewers.
 
-Generated from `mcp/src/tools.ts` (76 tools).
+Generated from `mcp/src/tools.ts` (79 tools).
 
 ## Tools
 
@@ -33,7 +33,7 @@ Generated from `mcp/src/tools.ts` (76 tools).
 - `mindvault_agent_status`: Check the verification agent's earnings and activity. Returns total verifications, pass/fail counts, total USDC earned, average confidence score, and recent verification history with resource titles.
 - `mindvault_registry_info`: Return the on-chain vault-registry contract ID, network passphrase, RPC URL, resource fields, and schema version negotiation status. The schemaVersion field reports which resource schema versions this client supports, the current version it targets, and the version detected on the deployed contract (or null when the contract is unreachable). Use this to verify ownership, price, and listing state directly from Stellar, and to check schema compatibility before calling mutation tools.
 - `mindvault_terms`: Get or set the active publisher wallet's on-chain licensing terms hash. Use operation "get" with a creator address to inspect terms, or "set" with termsHash to bind the active creator identity to a terms document digest.
-- `mindvault_network_profile`: Report current Stellar/x402 network configuration (testnet/mainnet), RPC URLs, registry contract ID, and warnings for custom overrides. Use this to verify which network the MCP is connected to and diagnose configuration issues.
+- `mindvault_network_profile`: Inspect the effective Stellar/x402 configuration without making network calls or changing state. Reports preset versus environment overrides, sanitized endpoints and RPC failover URLs, contract identities, timeout/retry policies, read-only guardrails, and startup diagnostics. Optionally filter the response with sections.
 - `mindvault_check_bindings`: Verify the installed registry-client bindings match the deployed vault-registry contract interface. Reports a match, or a warning listing the drifting methods with the contract ID, network, client version, and a recommended fix (redeploy the contract or regenerate bindings). Useful after a contract redeploy or client upgrade.
 - `mindvault_check_consistency`: Compare a resource from the API catalog with the same resource in the vault-registry contract. Reports matching fields, mismatches, missing API records, and missing on-chain records, plus the content digest anchored in the on-chain metadata pointer. Pass expectedMetadataHash to assert the anchor matches a digest you computed yourself. Useful for detecting synchronization issues between the API and on-chain registry.
 - `mindvault_metadata_diff`: Compare off-chain resource metadata from the API catalog with the on-chain vault-registry record and report field-level discrepancies. Each compared field (price, metadata pointer, listing status, creator, tags) is reported as match, mismatch, missing_api, or missing_onchain. The response always identifies the comparison sources (API base URL, contract ID) and network so operators know exactly which pair of records they are comparing. Useful for detecting drift after manual edits, failed on-chain sync, or partial publishes. Read-only — does not modify any state.

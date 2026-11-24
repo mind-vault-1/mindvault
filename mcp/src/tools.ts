@@ -856,8 +856,23 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_network_profile",
     description:
-      "Report current Stellar/x402 network configuration (testnet/mainnet), RPC URLs, registry contract ID, and warnings for custom overrides. Use this to verify which network the MCP is connected to and diagnose configuration issues.",
-    inputSchema: { type: "object", properties: {}, required: [] },
+      "Inspect the effective Stellar/x402 configuration without making network calls or changing state. Reports preset versus environment overrides, sanitized endpoints and RPC failover URLs, contract identities, timeout/retry policies, read-only guardrails, and startup diagnostics. Optionally filter the response with sections.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sections: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["network", "endpoints", "contracts", "policies", "diagnostics"],
+          },
+          description:
+            "Optional sections to return: network, endpoints, contracts, policies, diagnostics. Omit for all sections.",
+          examples: [["network", "diagnostics"]],
+        },
+      },
+      required: [],
+    },
     outputSchema: NETWORK_PROFILE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Network Profile",
