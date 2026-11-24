@@ -127,6 +127,27 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
       items: [{ title: "One", price: "1.00", externalUrl: "https://example.com/1" }],
     }),
   mindvault_registry_lookup: () => mockRegistryLookup("mock-1", CONTRACT, ADDRESS),
+  mindvault_contract_event_history: () => ({
+    text: 'Contract event history for resource "mock-1" (contract CTEST).',
+    structured: {
+      resourceId: "mock-1",
+      contractId: "CTEST",
+      events: [
+        {
+          id: "event-1",
+          ledger: 123,
+          ledgerClosedAt: null,
+          txHash: "abc",
+          topic: ["register", "mock-1"],
+          value: { id: "mock-1" },
+        },
+      ],
+      scanned: 1,
+      cursor: null,
+      hasMore: false,
+      notice: null,
+    },
+  }),
   mindvault_registry_list: () => mockRegistryList(0, 10, CONTRACT, ADDRESS),
   mindvault_registry_count: () => mockRegistryCount(undefined, CONTRACT),
   mindvault_registry_creator_page: () =>
