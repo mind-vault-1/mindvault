@@ -891,6 +891,7 @@ if (page.next_cursor !== null) {
 | `64` | `InvalidFlagResolutionWindow` | The resolution window exceeds `MAX_FLAG_RESOLUTION_WINDOW`. |
 | `65` | `FlagNotOverdue` | A force-resolution was attempted on a flag whose deadline has not yet elapsed, or which has no deadline set. |
 | `66` | `RefundReasonHashTooLong` | `reason_hash` in `record_refund` exceeds `MAX_REFUND_REASON_HASH_LEN` (64 bytes). |
+| `67` | `InvalidAddress` | An address-typed argument is the registry contract itself; privileged, recipient, and owner targets must be external Stellar addresses. |
 
 #### Error budget
 
@@ -919,6 +920,22 @@ shipped any of them under a different number.
 Plan new validation around an existing code where the semantics genuinely fit,
 or prefer a behavior that needs no new code (a documented no-op, or folding the
 case into a broader existing error) over growing the enum.
+
+`InvalidAddress` (67) is appended for #1183. The error enum is not spec-exported
+and no stored type changes, so this adds no generated-binding ABI entries and no
+storage-layout migration; clients decode the appended on-wire code from the
+failed invocation result.
+
+### Address argument validation
+
+Soroban decodes every address-typed argument into `Address` before the contract
+runs, so malformed StrKeys are rejected at the host boundary. In addition,
+privileged, recipient, and owner-target arguments are checked against
+`env.current_contract_address()` and rejected with `InvalidAddress` (67) before
+any authorization or state mutation. This covers registration creators,
+ownership/admin targets, role grants, fee and royalty recipients, and refund
+recipients. Normal external `G...`/`C...` addresses are unaffected, and no
+string address parsing was added to the contract ABI.
 
 ### Resource ID format and reserved words
 

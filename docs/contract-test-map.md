@@ -110,6 +110,7 @@ Generated and checked-in artifacts:
 | `src/test/registry_export.rs`                | no       | Bounded `export_page` (#1073)                                                                                     |
 | `src/test/schema_registry.rs`                | no       | `registry_info` discovery metadata (duplicates of `test.rs` tests)                                                |
 | `src/test/simulation_mutation_validation.rs` | yes      | Simulation vs. submitted mutation parity (#1017)                                                                  |
+| `src/test/stellar_address_validation.rs`     | yes      | Consistent Stellar address validation (#1183)                                                                     |
 | `src/test/stellar_wave_804_805_806_808.rs`   | yes      | Earnings estimate, verifier history, and related (#804–#808)                                                      |
 | `src/test/stellar_wave_970_971_975_976.rs`   | yes      | Listing revision counter and related (#970–#976)                                                                  |
 | `src/test/stellar_wave_977_978_979_980.rs`   | yes      | Tag-index repair idempotency, maintenance status (#977–#980)                                                      |

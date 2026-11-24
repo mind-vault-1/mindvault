@@ -497,6 +497,7 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (64, "InvalidFlagResolutionWindow", "`set_flag_resolution_window` received a window exceeding `MAX_FLAG_RESOLUTION_WINDOW`."),
     (65, "FlagNotOverdue", "A force-resolution was attempted on a flag whose deadline has not yet elapsed, or which has no deadline set."),
     (66, "RefundReasonHashTooLong", "`reason_hash` supplied to `record_refund` exceeds `MAX_REFUND_REASON_HASH_LEN` (64 bytes)."),
+    (67, "InvalidAddress", "An address-typed argument is the registry contract itself; privileged, recipient, and owner targets must be external Stellar addresses."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -1979,6 +1980,8 @@ pub enum Error {
     /// `reason_hash` supplied to `record_refund` exceeds
     /// `MAX_REFUND_REASON_HASH_LEN` (64 bytes).
     RefundReasonHashTooLong = 66,
+    /// An address-typed argument is the registry contract itself.
+    InvalidAddress = 67,
 }
 
 #[contract]
@@ -2721,6 +2724,7 @@ impl VaultRegistry {
         id: String,
         recipient: Option<Address>,
     ) -> Result<(), Error> {
+        Self::ensure_valid_optional_address(&env, &recipient)?;
         Self::require_not_paused(&env)?;
         Self::validate_resource_id(&id)?;
         let mut resource = Self::load(&env, &id)?;
@@ -2737,6 +2741,7 @@ impl VaultRegistry {
     }
 
     pub fn transfer_ownership(env: Env, id: String, new_creator: Address) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &new_creator)?;
         Self::require_not_paused(&env)?;
         Self::validate_resource_id(&id)?;
         let mut resource = Self::load(&env, &id)?;
@@ -2764,6 +2769,7 @@ impl VaultRegistry {
 
     /// Propose a transfer to a new owner. The new owner must accept it.
     pub fn propose_transfer(env: Env, id: String, new_creator: Address) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &new_creator)?;
         Self::require_not_paused(&env)?;
         let resource = Self::load(&env, &id)?;
         resource.creator.require_auth();
@@ -2796,6 +2802,7 @@ impl VaultRegistry {
             .persistent()
             .get(&key)
             .ok_or(Error::NoPendingTransfer)?;
+        Self::ensure_valid_address(&env, &pending_owner)?;
         pending_owner.require_auth();
 
         let mut resource = Self::load(&env, &id)?;
@@ -4172,6 +4179,7 @@ impl VaultRegistry {
     /// Sets `pending_admin`. The nomination does not take effect until
     /// the pending admin calls `accept_admin`.
     pub fn nominate_new_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &new_admin)?;
         if !env.storage().instance().has(&DataKey::Admin) {
             new_admin.require_auth();
             env.storage().instance().set(&DataKey::Admin, &new_admin);
@@ -4226,11 +4234,13 @@ impl VaultRegistry {
     /// Accept the pending admin nomination and become the contract admin.
     /// Only the pending admin may call this.
     pub fn accept_admin(env: Env, new_admin: Address) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &new_admin)?;
         let stored_pending: Address = env
             .storage()
             .instance()
             .get::<DataKey, Address>(&DataKey::PendingAdmin)
             .ok_or(Error::AdminNominationExpired)?;
+        Self::ensure_valid_address(&env, &stored_pending)?;
 
         let expiry: u32 = env
             .storage()
@@ -4320,6 +4330,8 @@ impl VaultRegistry {
         admin: Address,
         recovery_admin: Address,
     ) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &admin)?;
+        Self::ensure_valid_address(&env, &recovery_admin)?;
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyRegistered);
         }
@@ -4348,6 +4360,7 @@ impl VaultRegistry {
     /// the recovery admin must differ from the admin (`SameAdmin`). Emits
     /// `setrecov`.
     pub fn set_recovery_admin(env: Env, recovery_admin: Option<Address>) -> Result<(), Error> {
+        Self::ensure_valid_optional_address(&env, &recovery_admin)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         match &recovery_admin {
@@ -4379,6 +4392,8 @@ impl VaultRegistry {
             .instance()
             .get(&DataKey::RecoveryAdmin)
             .ok_or(Error::AdminNotSet)?;
+        Self::ensure_valid_address(&env, &recovery)?;
+        Self::ensure_valid_address(&env, &new_admin)?;
         recovery.require_auth();
         let old_admin = Self::require_admin(&env)?;
         if new_admin == old_admin || new_admin == recovery {
@@ -4619,6 +4634,7 @@ impl VaultRegistry {
     /// been set yet (see `nominate_new_admin`), or `RoleCapacityReached` if
     /// the verifier role already holds `MAX_ROLE_HOLDERS` addresses.
     pub fn add_verifier(env: Env, verifier: Address) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &verifier)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         let was_active = Self::is_verifier(env.clone(), verifier.clone());
@@ -4650,6 +4666,7 @@ impl VaultRegistry {
 
     /// Revoke the verifier role from `verifier`. Only the admin may call this.
     pub fn remove_verifier(env: Env, verifier: Address) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &verifier)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         let was_active = Self::is_verifier(env.clone(), verifier.clone());
@@ -4682,6 +4699,8 @@ impl VaultRegistry {
         old_verifier: Address,
         new_verifier: Address,
     ) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &old_verifier)?;
+        Self::ensure_valid_address(&env, &new_verifier)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
 
@@ -4736,6 +4755,8 @@ impl VaultRegistry {
         old_verifier: Address,
         new_verifier: Address,
     ) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &old_verifier)?;
+        Self::ensure_valid_address(&env, &new_verifier)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
 
@@ -4797,6 +4818,7 @@ impl VaultRegistry {
     /// proposal. The current verifier is active until this call succeeds.
     /// Emits `veracc`.
     pub fn accept_verifier_rotation(env: Env, new_verifier: Address) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &new_verifier)?;
         let proposal: PendingVerifierRotation = env
             .storage()
             .instance()
@@ -5052,6 +5074,7 @@ impl VaultRegistry {
     /// first set) and the new config, so off-chain indexers have a full
     /// audit trail.
     pub fn set_fee_config(env: Env, config: FeeConfig) -> Result<(), Error> {
+        Self::ensure_valid_optional_address(&env, &config.fee_recipient)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         Self::require_not_paused(&env)?;
@@ -5171,6 +5194,7 @@ impl VaultRegistry {
     /// having to re-specify the existing `platform_fee_bps` and `royalty_bps`.
     /// Emits a `setfee` event with the old and new complete `FeeConfig`.
     pub fn set_fee_recipient(env: Env, recipient: Option<Address>) -> Result<(), Error> {
+        Self::ensure_valid_optional_address(&env, &recipient)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         Self::require_not_paused(&env)?;
@@ -5206,6 +5230,7 @@ impl VaultRegistry {
     }
 
     pub fn set_fee_destination(env: Env, config: FeeDestinationConfig) -> Result<(), Error> {
+        Self::ensure_valid_fee_destination(&env, &config.destination)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         Self::require_not_paused(&env)?;
@@ -5464,6 +5489,7 @@ impl VaultRegistry {
     /// if no admin has been set yet, or `RoleCapacityReached` if the settler
     /// role already holds `MAX_ROLE_HOLDERS` addresses.
     pub fn add_settler(env: Env, settler: Address) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &settler)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         Self::role_index_add(&env, RoleKind::Settler, &settler)?;
@@ -5484,6 +5510,7 @@ impl VaultRegistry {
 
     /// Revoke the settler role from `settler`. Only the admin may call this.
     pub fn remove_settler(env: Env, settler: Address) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &settler)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         Self::role_index_remove(&env, RoleKind::Settler, &settler);
@@ -6511,6 +6538,7 @@ impl VaultRegistry {
     /// `RoleCapacityReached` if the moderator role already holds
     /// `MAX_ROLE_HOLDERS` addresses.
     pub fn add_moderator(env: Env, moderator: Address) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &moderator)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         Self::role_index_add(&env, RoleKind::Moderator, &moderator)?;
@@ -6531,6 +6559,7 @@ impl VaultRegistry {
 
     /// Revoke the moderator role from `moderator`. Only the admin may call this.
     pub fn remove_moderator(env: Env, moderator: Address) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &moderator)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
         Self::role_index_remove(&env, RoleKind::Moderator, &moderator);
@@ -7552,6 +7581,8 @@ impl VaultRegistry {
         admin_override: bool,
         reason_hash: Option<String>,
     ) -> Result<(), Error> {
+        Self::ensure_valid_address(env, &initiator)?;
+        Self::ensure_valid_address(env, &recipient)?;
         Self::require_not_paused(env)?;
         Self::require_payment_not_paused(env)?;
         Self::validate_receipt_id(&refund_id)?;
@@ -8237,8 +8268,34 @@ impl VaultRegistry {
         if current != *admin {
             return Err(Error::Unauthorized);
         }
+        Self::ensure_valid_address(env, admin)?;
         admin.require_auth();
         Ok(())
+    }
+
+    fn ensure_valid_address(env: &Env, address: &Address) -> Result<(), Error> {
+        if *address == env.current_contract_address() {
+            Err(Error::InvalidAddress)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn ensure_valid_optional_address(env: &Env, address: &Option<Address>) -> Result<(), Error> {
+        match address {
+            Some(address) => Self::ensure_valid_address(env, address),
+            None => Ok(()),
+        }
+    }
+
+    fn ensure_valid_fee_destination(
+        env: &Env,
+        destination: &FeeDestination,
+    ) -> Result<(), Error> {
+        match destination {
+            FeeDestination::Charity(address) => Self::ensure_valid_address(env, address),
+            _ => Ok(()),
+        }
     }
 
     fn load(env: &Env, id: &String) -> Result<Resource, Error> {
@@ -9354,6 +9411,7 @@ impl VaultRegistry {
         content_hash: Option<String>,
         memo_hash: Option<BytesN<32>>,
     ) -> Result<(), Error> {
+        Self::ensure_valid_address(&env, &creator)?;
         Self::require_not_paused(&env)?;
         Self::validate_price(&env, price)?;
         Self::validate_resource_id(&id)?;
