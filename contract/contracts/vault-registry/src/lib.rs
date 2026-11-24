@@ -4624,7 +4624,26 @@ impl VaultRegistry {
         let was_active = Self::is_verifier(env.clone(), verifier.clone());
         Self::add_verifier_internal(&env, &admin, verifier.clone())?;
         if !was_active {
-            Self::log_verifier_key_change(&env, &admin, VerifierKeyAction::Added, verifier, None);
+            Self::log_verifier_key_change(
+                &env,
+                &admin,
+                VerifierKeyAction::Added,
+                verifier.clone(),
+                None,
+            );
+        }
+        if !was_active {
+            env.events().publish(
+                (Symbol::new(&env, "vercfg"),),
+                VerifierConfigChange {
+                    version: VERIFIER_CONFIG_EVENT_VERSION,
+                    action: VerifierKeyAction::Added,
+                    admin,
+                    verifier,
+                    previous: None,
+                    ledger: env.ledger().sequence(),
+                },
+            );
         }
         Ok(())
     }
@@ -4636,7 +4655,24 @@ impl VaultRegistry {
         let was_active = Self::is_verifier(env.clone(), verifier.clone());
         Self::remove_verifier_internal(&env, &admin, verifier.clone());
         if was_active {
-            Self::log_verifier_key_change(&env, &admin, VerifierKeyAction::Removed, verifier, None);
+            Self::log_verifier_key_change(
+                &env,
+                &admin,
+                VerifierKeyAction::Removed,
+                verifier.clone(),
+                None,
+            );
+            env.events().publish(
+                (Symbol::new(&env, "vercfg"),),
+                VerifierConfigChange {
+                    version: VERIFIER_CONFIG_EVENT_VERSION,
+                    action: VerifierKeyAction::Removed,
+                    admin,
+                    verifier,
+                    previous: None,
+                    ledger: env.ledger().sequence(),
+                },
+            );
         }
         Ok(())
     }
@@ -4667,6 +4703,17 @@ impl VaultRegistry {
             VerifierKeyAction::Rotated,
             new_verifier.clone(),
             Some(old_verifier.clone()),
+        );
+        env.events().publish(
+            (Symbol::new(&env, "vercfg"),),
+            VerifierConfigChange {
+                version: VERIFIER_CONFIG_EVENT_VERSION,
+                action: VerifierKeyAction::Rotated,
+                admin: admin.clone(),
+                verifier: new_verifier.clone(),
+                previous: Some(old_verifier.clone()),
+                ledger: env.ledger().sequence(),
+            },
         );
         env.events().publish(
             (symbol_short!("verrot"), old_verifier.clone()),

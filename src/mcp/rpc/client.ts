@@ -50,6 +50,16 @@ export interface RpcResponse {
  error?: { code: number; message: string; data?: unknown };
 }
 
+export class RpcContextError extends RpcError {
+ constructor(expectedId: number, actualId: number | null) {
+ super(
+  `registry returned JSON-RPC response id ${String(actualId)} for request id ${expectedId}`,
+  undefined,
+ );
+ this.name = "RpcContextError";
+ }
+}
+
 export type FetchLike = (
  url: string,
  init: { method: string; headers: Record<string, string>; body: string },
@@ -140,6 +150,12 @@ export class RegistryRpcClient {
  body = JSON.parse(await res.text()) as RpcResponse;
  } catch {
  throw new RpcError("registry returned invalid JSON", undefined);
+ }
+ if (body.jsonrpc !== "2.0") {
+ throw new RpcError("registry returned invalid JSON-RPC version", undefined);
+ }
+ if (body.id !== request.id) {
+ throw new RpcContextError(request.id, body.id);
  }
  if (body.error) {
  throw new RpcError(body.error.message, body.error.code, body.error.data);

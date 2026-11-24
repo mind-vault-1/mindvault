@@ -4746,7 +4746,9 @@ where
     D: TryFromVal<Env, Val>,
 {
     let events = env.events().all();
-    for i in 0..events.len() {
+    let mut i = events.len();
+    while i > 0 {
+        i -= 1;
         let (address, topics, data) = events.get(i).unwrap();
         if address != *contract || topic0_symbol(env, &topics) != Some(Symbol::new(env, topic)) {
             continue;
