@@ -60,6 +60,29 @@ fn measure_entry(
     })
 }
 
+/// Same as [`measure_entry`] but for `DataKeyExt` storage keys.
+fn measure_entry_ext(
+    env: &Env,
+    contract: &Address,
+    label: &'static str,
+    key: DataKeyExt,
+    kind: StorageKind,
+    budget: usize,
+) -> Option<FootprintRow> {
+    let key_bytes = xdr_len(env, key.clone());
+    let stored: Option<soroban_sdk::Val> = env.as_contract(contract, || match kind {
+        StorageKind::Persistent => env.storage().persistent().get(&key),
+        StorageKind::Instance => env.storage().instance().get(&key),
+    });
+    stored.map(|value| FootprintRow {
+        label,
+        kind,
+        key_bytes,
+        value_bytes: xdr_len(env, value),
+        budget,
+    })
+}
+
 fn register_max_size_resource(
     env: &Env,
     creator: &Address,
@@ -268,12 +291,6 @@ fn storage_footprint_report() {
             200,
         ),
         (
-            "FlagModerator",
-            DataKey::FlagModerator(max_id.clone()),
-            StorageKind::Persistent,
-            160,
-        ),
-        (
             "AttestationHash",
             DataKey::AttestationHash(typical_id.clone()),
             StorageKind::Persistent,
@@ -314,10 +331,27 @@ fn storage_footprint_report() {
         ),
     ];
 
+    // DataKeyExt entries measured separately (different enum type).
+    let specs_ext: std::vec::Vec<(&'static str, DataKeyExt, StorageKind, usize)> = std::vec![
+        (
+            "FlagModerator",
+            DataKeyExt::FlagModerator(max_id.clone()),
+            StorageKind::Persistent,
+            160,
+        ),
+    ];
+
     let mut rows: std::vec::Vec<FootprintRow> = std::vec::Vec::new();
     let mut missing: std::vec::Vec<&'static str> = std::vec::Vec::new();
     for (label, key, kind, budget) in specs {
         match measure_entry(&env, &contract, label, key, kind, budget) {
+            Some(row) => rows.push(row),
+            None if label == "Paused flag" => {}
+            None => missing.push(label),
+        }
+    }
+    for (label, key, kind, budget) in specs_ext {
+        match measure_entry_ext(&env, &contract, label, key, kind, budget) {
             Some(row) => rows.push(row),
             None if label == "Paused flag" => {}
             None => missing.push(label),
