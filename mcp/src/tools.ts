@@ -1209,7 +1209,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     // labelled cached answers instead of failing the whole batch.
     name: "mindvault_batch_catalog_lookup",
     description:
-      "Look up several catalog resources in one call. Accepts up to 25 resource ids and returns per-id results — title, price, verification status, type, and access URL — plus a missing list for ids the API does not know. A miss is a result, not an error, so one bad id cannot sink the batch. Serves the last cached snapshot (labelled) when the catalog API is unreachable, unless refetch is true. For on-chain registry data use mindvault_registry_lookup instead; for a single fresh id use mindvault_preview.",
+      "Look up several catalog resources in one call. Accepts up to 25 resource ids and returns per-id results — status (found, not_found, or cached), reason (live, not_found, or offline_snapshot), title, price, verification status, type, and access URL — plus a missing list for ids the API does not know. A miss is a result, not an error, so one bad id cannot sink the batch. Serves the last cached snapshot (labelled) when the catalog API is unreachable, unless refetch is true. For on-chain registry data use mindvault_registry_lookup instead; for a single fresh id use mindvault_preview.",
     inputSchema: {
       type: "object",
       properties: {

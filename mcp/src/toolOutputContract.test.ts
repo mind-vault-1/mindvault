@@ -437,6 +437,8 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
         {
           id: "mock-1",
           found: true,
+          status: "found",
+          reason: "live",
           title: "Intro",
           price: "1.5",
           verificationStatus: "verified",
