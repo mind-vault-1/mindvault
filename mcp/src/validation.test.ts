@@ -108,7 +108,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
     operation: "get",
     creator: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
   },
-  mindvault_network_profile: {},
+  mindvault_network_profile: { sections: ["network", "diagnostics"] },
   mindvault_check_bindings: {},
   mindvault_check_consistency: { resourceId: "res-001" },
   mindvault_metadata_diff: { resourceId: "res-001" },
