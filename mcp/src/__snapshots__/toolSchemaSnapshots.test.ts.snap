@@ -3600,6 +3600,10 @@ exports[`tool schema snapshots > mindvault_freeze > input schema 1`] = `
       ],
       "type": "string",
     },
+    "confirmDestructive": {
+      "description": "Required when MINDVAULT_CONFIRM_DESTRUCTIVE_OPERATIONS is enabled: explicitly confirm that this tool may replace local wallet/profile/state data or make an irreversible on-chain change.",
+      "type": "boolean",
+    },
     "confirmMainnet": {
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
       "type": "boolean",
@@ -3963,6 +3967,10 @@ exports[`tool schema snapshots > mindvault_import_wallet > input schema 1`] = `
       "examples": [
         true,
       ],
+      "type": "boolean",
+    },
+    "confirmDestructive": {
+      "description": "Required when MINDVAULT_CONFIRM_DESTRUCTIVE_OPERATIONS is enabled: explicitly confirm that this tool may replace local wallet/profile/state data or make an irreversible on-chain change.",
       "type": "boolean",
     },
     "confirmMainnet": {
@@ -7261,6 +7269,10 @@ exports[`tool schema snapshots > mindvault_register > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_register > input schema 1`] = `
 {
   "properties": {
+    "confirmDestructive": {
+      "description": "Required when MINDVAULT_CONFIRM_DESTRUCTIVE_OPERATIONS is enabled: explicitly confirm that this tool may replace local wallet/profile/state data or make an irreversible on-chain change.",
+      "type": "boolean",
+    },
     "confirmMainnet": {
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
       "type": "boolean",
@@ -8375,6 +8387,10 @@ exports[`tool schema snapshots > mindvault_repair_sponsored_account > annotation
 exports[`tool schema snapshots > mindvault_repair_sponsored_account > input schema 1`] = `
 {
   "properties": {
+    "confirmDestructive": {
+      "description": "Required when MINDVAULT_CONFIRM_DESTRUCTIVE_OPERATIONS is enabled: explicitly confirm that this tool may replace local wallet/profile/state data or make an irreversible on-chain change.",
+      "type": "boolean",
+    },
     "confirmMainnet": {
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm restoring credentials for the public Stellar network.",
       "type": "boolean",
@@ -8427,6 +8443,10 @@ exports[`tool schema snapshots > mindvault_reset > input schema 1`] = `
         true,
         false,
       ],
+      "type": "boolean",
+    },
+    "confirmDestructive": {
+      "description": "Required when MINDVAULT_CONFIRM_DESTRUCTIVE_OPERATIONS is enabled: explicitly confirm that this tool may replace local wallet/profile/state data or make an irreversible on-chain change.",
       "type": "boolean",
     },
     "confirmMainnet": {
@@ -8509,6 +8529,10 @@ exports[`tool schema snapshots > mindvault_restore_state > input schema 1`] = `
       "description": "Encrypted backup blob from mindvault_backup_state (v1:… format).",
       "type": "string",
     },
+    "confirmDestructive": {
+      "description": "Required when MINDVAULT_CONFIRM_DESTRUCTIVE_OPERATIONS is enabled: explicitly confirm that this tool may replace local wallet/profile/state data or make an irreversible on-chain change.",
+      "type": "boolean",
+    },
     "passphrase": {
       "description": "Passphrase used when the backup was created (min 8 characters).",
       "type": "string",
@@ -8536,6 +8560,10 @@ exports[`tool schema snapshots > mindvault_rotate_publisher_key > annotations 1`
 exports[`tool schema snapshots > mindvault_rotate_publisher_key > input schema 1`] = `
 {
   "properties": {
+    "confirmDestructive": {
+      "description": "Required when MINDVAULT_CONFIRM_DESTRUCTIVE_OPERATIONS is enabled: explicitly confirm that this tool may replace local wallet/profile/state data or make an irreversible on-chain change.",
+      "type": "boolean",
+    },
     "confirmMainnet": {
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
       "type": "boolean",
@@ -10025,6 +10053,10 @@ exports[`tool schema snapshots > mindvault_setup_wallet > annotations 1`] = `
 exports[`tool schema snapshots > mindvault_setup_wallet > input schema 1`] = `
 {
   "properties": {
+    "confirmDestructive": {
+      "description": "Required when MINDVAULT_CONFIRM_DESTRUCTIVE_OPERATIONS is enabled: explicitly confirm that this tool may replace local wallet/profile/state data or make an irreversible on-chain change.",
+      "type": "boolean",
+    },
     "confirmMainnet": {
       "description": "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
       "type": "boolean",
@@ -10247,6 +10279,223 @@ exports[`tool schema snapshots > mindvault_state_diagnostics > output schema 1`]
         "backups",
         "quarantinedFiles",
         "nextSteps",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_subscribe_resource > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Subscribe Resource",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_subscribe_resource > input schema 1`] = `
+{
+  "properties": {
+    "cursor": {
+      "description": "Opaque cursor from a previous mindvault_subscribe_resource call. Resumes from the last observed state; omit to start a new subscription.",
+      "type": "string",
+    },
+    "intervalMs": {
+      "description": "Delay between polls in milliseconds when wait is true (default 5000, min 1000).",
+      "examples": [
+        1000,
+        5000,
+        10000,
+      ],
+      "type": "number",
+    },
+    "resourceId": {
+      "description": "Resource id to watch, from mindvault_browse, mindvault_search, or mindvault_preview. Example: 'cm7x8y9z'",
+      "examples": [
+        "cm7x8y9z",
+        "res-001",
+      ],
+      "type": "string",
+    },
+    "timeoutMs": {
+      "description": "Max wait time in milliseconds when wait is true (default 120000, max 600000). 0 returns after the first poll.",
+      "examples": [
+        0,
+        30000,
+        120000,
+      ],
+      "type": "number",
+    },
+    "wait": {
+      "description": "When true, poll until timeoutMs elapses. Default false (single check). Cursor reporting works in either mode.",
+      "type": "boolean",
+    },
+  },
+  "required": [
+    "resourceId",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_subscribe_resource > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "attempts": {
+          "type": "number",
+        },
+        "changes": {
+          "items": {
+            "properties": {
+              "detectedAt": {
+                "type": "number",
+              },
+              "field": {
+                "enum": [
+                  "price",
+                  "verificationStatus",
+                  "listed",
+                ],
+                "type": "string",
+              },
+              "newValue": {
+                "type": [
+                  "string",
+                  "boolean",
+                ],
+              },
+              "oldValue": {
+                "type": [
+                  "string",
+                  "boolean",
+                ],
+              },
+            },
+            "required": [
+              "field",
+              "oldValue",
+              "newValue",
+              "detectedAt",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "cursor": {
+          "type": "string",
+        },
+        "lastDetectedAt": {
+          "type": "number",
+        },
+        "listed": {
+          "type": "boolean",
+        },
+        "message": {
+          "type": "string",
+        },
+        "polled": {
+          "type": "boolean",
+        },
+        "price": {
+          "type": "string",
+        },
+        "resourceId": {
+          "type": "string",
+        },
+        "resumed": {
+          "type": "boolean",
+        },
+        "settled": {
+          "type": "boolean",
+        },
+        "timedOut": {
+          "type": "boolean",
+        },
+        "title": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "verificationStatus": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "resourceId",
+        "price",
+        "verificationStatus",
+        "listed",
+        "changes",
+        "polled",
+        "attempts",
+        "settled",
+        "timedOut",
+        "resumed",
+        "lastDetectedAt",
+        "cursor",
+        "message",
       ],
       "type": "object",
     },
@@ -12287,6 +12536,149 @@ exports[`tool schema snapshots > mindvault_verify_install > input schema 1`] = `
 
 exports[`tool schema snapshots > mindvault_verify_install > output schema 1`] = `null`;
 
+exports[`tool schema snapshots > mindvault_verify_publisher > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Verify Publisher",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_verify_publisher > input schema 1`] = `
+{
+  "properties": {
+    "walletAddress": {
+      "description": "Optional Stellar public key (G...) to verify. Defaults to the active profile wallet.",
+      "examples": [
+        "GABC...",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_verify_publisher > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "createdAt": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "credentialPresent": {
+          "type": "boolean",
+        },
+        "credentialStatus": {
+          "enum": [
+            "missing",
+            "ready",
+            "different_wallet",
+            "revoked",
+          ],
+          "type": "string",
+        },
+        "message": {
+          "type": "string",
+        },
+        "name": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "publisherId": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "registered": {
+          "type": "boolean",
+        },
+        "walletAddress": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "walletAddress",
+        "registered",
+        "publisherId",
+        "name",
+        "createdAt",
+        "credentialPresent",
+        "credentialStatus",
+        "message",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_verify_receipt > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -13713,6 +14105,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_set_tags",
   "mindvault_setup_wallet",
   "mindvault_state_diagnostics",
+  "mindvault_subscribe_resource",
   "mindvault_support_bundle",
   "mindvault_switch_network_profile",
   "mindvault_terms",
@@ -13724,6 +14117,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_verify_attestation",
   "mindvault_verify_deployment",
   "mindvault_verify_install",
+  "mindvault_verify_publisher",
   "mindvault_verify_receipt",
   "mindvault_wallet_allowance",
   "mindvault_wallet_balances",

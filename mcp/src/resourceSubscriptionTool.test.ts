@@ -6,12 +6,20 @@ import {
   subscribeResource,
   type ResourceSubscriptionSnapshot,
 } from "./resourceSubscriptionTool.js";
+import { createResourceChangeCursor } from "./resourceChangeCursor.js";
 import { jsonFetch } from "./runtime.js";
 
 vi.mock("./runtime.js", () => ({
   BASE_URL: "https://api.test.com",
   jsonFetch: vi.fn(),
 }));
+
+const TEST_CONTEXT = {
+  profile: "default",
+  network: "testnet",
+  contractId: "CMOCKCONTRACT",
+  apiOrigin: "https://api.test.com",
+};
 
 describe("resourceSubscriptionTool", () => {
   beforeEach(() => {
@@ -149,6 +157,7 @@ describe("resourceSubscriptionTool", () => {
       const result = await subscribeResource(
         {
           resourceId: "res-1",
+          context: TEST_CONTEXT,
           wait: false,
           timeoutMs: 60_000,
           intervalMs: 5_000,
@@ -200,6 +209,7 @@ describe("resourceSubscriptionTool", () => {
       const result = await subscribeResource(
         {
           resourceId: "res-1",
+          context: TEST_CONTEXT,
           wait: true,
           timeoutMs: 10_000,
           intervalMs: 100,
@@ -255,6 +265,7 @@ describe("resourceSubscriptionTool", () => {
       const result = await subscribeResource(
         {
           resourceId: "res-1",
+          context: TEST_CONTEXT,
           wait: true,
           timeoutMs: 10_000,
           intervalMs: 100,
@@ -308,6 +319,7 @@ describe("resourceSubscriptionTool", () => {
       const result = await subscribeResource(
         {
           resourceId: "res-1",
+          context: TEST_CONTEXT,
           wait: true,
           timeoutMs: 10_000,
           intervalMs: 100,
@@ -344,6 +356,7 @@ describe("resourceSubscriptionTool", () => {
       const result = await subscribeResource(
         {
           resourceId: "res-1",
+          context: TEST_CONTEXT,
           wait: true,
           timeoutMs: 200,
           intervalMs: 100,
@@ -377,6 +390,7 @@ describe("resourceSubscriptionTool", () => {
       await subscribeResource(
         {
           resourceId: "res-1",
+          context: TEST_CONTEXT,
           wait: true,
           timeoutMs: 200,
           intervalMs: 100,
@@ -410,6 +424,7 @@ describe("resourceSubscriptionTool", () => {
       const result = await subscribeResource(
         {
           resourceId: "res-1",
+          context: TEST_CONTEXT,
           wait: true,
           timeoutMs: 200,
           intervalMs: 100,
@@ -423,5 +438,74 @@ describe("resourceSubscriptionTool", () => {
 
       expect(result.resourceId).toBe("res-1");
     });
+  });
+
+  it("reports changes that happened while disconnected", async () => {
+    let clock = 1_000;
+    vi.mocked(jsonFetch).mockResolvedValue({
+      ok: true,
+      data: {
+        id: "res-1",
+        title: "Test Resource",
+        price: "8.00",
+        verificationStatus: "verified",
+        listed: false,
+      },
+    });
+    const cursor = createResourceChangeCursor(
+      "res-1",
+      { price: "5.00", verificationStatus: "verified", listed: true },
+      TEST_CONTEXT,
+      () => 500,
+    );
+
+    const result = await subscribeResource(
+      {
+        resourceId: "res-1",
+        cursor,
+        context: TEST_CONTEXT,
+        wait: false,
+        timeoutMs: 60_000,
+        intervalMs: 5_000,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+        now: () => clock,
+      },
+      undefined,
+    );
+
+    expect(result.resumed).toBe(true);
+    expect(result.lastDetectedAt).toBe(1_000);
+    expect(result.changes).toEqual([
+      { field: "price", oldValue: "5.00", newValue: "8.00", detectedAt: 1_000 },
+      { field: "listed", oldValue: true, newValue: false, detectedAt: 1_000 },
+    ]);
+    expect(result.message).toContain("Resumed from cursor");
+    expect(result.cursor).not.toBe(cursor);
+  });
+
+  it("rejects a cursor bound to another resource", async () => {
+    const cursor = createResourceChangeCursor(
+      "res-2",
+      { price: null, verificationStatus: null, listed: null },
+      TEST_CONTEXT,
+      () => 0,
+    );
+
+    await expect(
+      subscribeResource(
+        {
+          resourceId: "res-1",
+          cursor,
+          context: TEST_CONTEXT,
+          wait: false,
+          timeoutMs: 60_000,
+          intervalMs: 5_000,
+          sleep: async () => {},
+        },
+        undefined,
+      ),
+    ).rejects.toThrow(/Invalid or stale resource subscription cursor/);
   });
 });

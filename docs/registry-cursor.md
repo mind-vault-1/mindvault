@@ -9,10 +9,10 @@ and how to use them correctly.
 
 ## Two cursor families
 
-| Family | Type | Used by | MCP exposure |
-|---|---|---|---|
-| **Catalog index** | `u32` integer | `mindvault_registry_list`, `mindvault_registry_tag_search` | plain integer |
-| **Id cursor** | opaque base64url token | `mindvault_registry_creator_page` | opaque string token |
+| Family            | Type                   | Used by                                                    | MCP exposure        |
+| ----------------- | ---------------------- | ---------------------------------------------------------- | ------------------- |
+| **Catalog index** | `u32` integer          | `mindvault_registry_list`, `mindvault_registry_tag_search` | plain integer       |
+| **Id cursor**     | opaque base64url token | `mindvault_registry_creator_page`                          | opaque string token |
 
 Both families enforce the same page-size cap. The families are not
 interchangeable: passing an id-cursor token to `mindvault_registry_list` or an
@@ -25,24 +25,25 @@ integer to `mindvault_registry_creator_page` is a validation error.
 ### What it is
 
 A `u32` offset into the global registration catalog. Slot 0 is the first
-resource ever registered; slot *n* is the *(n+1)*th. The offset is 0-based and
+resource ever registered; slot _n_ is the *(n+1)*th. The offset is 0-based and
 points to the first slot that has not been scanned yet, not to a count of
 matched results.
 
 ### Which tools use it
 
-| MCP tool | Contract method | First-page value | Continuation value |
-|---|---|---|---|
-| `mindvault_registry_list` | `list_page` | `start: 0` (or omit) | `next_cursor` from previous response |
-| `mindvault_registry_tag_search` | `search_by_tag_prefix` | `cursor: 0` (or omit) | `nextCursor` from previous response |
+| MCP tool                        | Contract method               | First-page value      | Continuation value                   |
+| ------------------------------- | ----------------------------- | --------------------- | ------------------------------------ |
+| `mindvault_registry_list`       | `list_page`                   | `start: 0` (or omit)  | `next_cursor` from previous response |
+| `mindvault_registry_tag_search` | `search_by_tag_prefix`        | `cursor: 0` (or omit) | `nextCursor` from previous response  |
+| —                               | `list_by_verification_status` | `cursor: 0`           | `next_cursor` from previous response |
 
 ### Limits
 
-| Constant | Value | Source |
-|---|---|---|
-| `LIST_PAGE_CAP` | 20 | `contract/contracts/vault-registry/src/lib.rs` line 99 |
-| `REGISTRY_LIST_MAX_LIMIT` | 20 | `mcp/src/registryPagination.ts` |
-| `REGISTRY_LIST_DEFAULT_LIMIT` | 20 | `mcp/src/registryPagination.ts` |
+| Constant                      | Value | Source                                                 |
+| ----------------------------- | ----- | ------------------------------------------------------ |
+| `LIST_PAGE_CAP`               | 20    | `contract/contracts/vault-registry/src/lib.rs` line 99 |
+| `REGISTRY_LIST_MAX_LIMIT`     | 20    | `mcp/src/registryPagination.ts`                        |
+| `REGISTRY_LIST_DEFAULT_LIMIT` | 20    | `mcp/src/registryPagination.ts`                        |
 
 The `limit` argument is clamped to `LIST_PAGE_CAP` (20) in the contract before
 any storage is read. The MCP layer rejects `limit > 20` with a validation error
@@ -65,12 +66,31 @@ The catalog index cursor is stable across filter changes between pages:
   page 2.
 - A resource registered between page 1 and page 2 at a slot above the cursor
   will be seen on a later page.
-- A resource registered at a slot *below* the cursor is not seen on subsequent
+- A resource registered at a slot _below_ the cursor is not seen on subsequent
   pages (it was already past the scan point).
 
 This is correct for append-only catalog walks. The contract achieves it because
 the cursor is a slot index, not a count of matches: if slot 7 is delisted and
 the cursor is at slot 8, the scan simply does not revisit slot 7.
+
+### Verification-status filtering specifics
+
+`list_by_verification_status(status, cursor, limit)` returns resources whose
+current `verified` value matches the requested status. The `VerificationStatus`
+variants are ordered `Pending`, `Verified`, `Rejected`; within a query, matching
+resources retain registration (catalog index) order.
+
+The method reads at most 20 catalog slots per call, even when few or no slots
+match the requested status. `limit` is clamped to `1..=20` and bounds the
+number of returned matches; it does not determine the scan window. Therefore,
+a page can be empty or shorter than `limit` and still have a continuation
+cursor. Always continue from `next_cursor`, which is the next catalog slot to
+scan, not the number of matches returned.
+
+This query is not snapshot-isolated. Each slot is tested against its status
+when scanned: a status change to an unscanned slot is reflected on a later
+page, while a change to an already-scanned slot is not revisited during that
+pass. Start again at cursor 0 to perform a fresh pass after changes.
 
 ### Tag search specifics
 
@@ -135,11 +155,11 @@ resume correctly when entries are removed between pages.
 
 The contract defines three variants internally:
 
-| Variant | Meaning |
-|---|---|
-| `Start` | Beginning of the index — use for the first page |
-| `After(position, id, created_at)` | Resume after a specific entry |
-| `End` | Past the last entry — an additional call returns empty |
+| Variant                           | Meaning                                                |
+| --------------------------------- | ------------------------------------------------------ |
+| `Start`                           | Beginning of the index — use for the first page        |
+| `After(position, id, created_at)` | Resume after a specific entry                          |
+| `End`                             | Past the last entry — an additional call returns empty |
 
 The MCP layer never exposes this internal shape. It wraps every `IdCursor` as
 an opaque base64url token before returning it, and unwraps it before sending it
@@ -147,8 +167,8 @@ to the contract.
 
 ### Which tools use it
 
-| MCP tool | Contract method | First-page value |
-|---|---|---|
+| MCP tool                          | Contract method                 | First-page value                    |
+| --------------------------------- | ------------------------------- | ----------------------------------- |
 | `mindvault_registry_creator_page` | `list_by_creator_page_filtered` | omit `cursor` (defaults to `Start`) |
 
 ### Token format
@@ -161,21 +181,21 @@ The token is base64url-encoded JSON with this shape:
 { "v": 1, "t": "a", "p": 7, "i": "res-abc", "c": 12345 }  // After
 ```
 
-| Field | Type | Meaning |
-|---|---|---|
-| `v` | integer | Token format version. Currently `1`. |
-| `t` | `"s"` / `"e"` / `"a"` | Variant: start, end, after. |
-| `p` | integer | Creator-index position of the last returned entry. |
-| `i` | string | Resource id of the last returned entry. |
-| `c` | integer | Creation ledger of the last returned entry. |
+| Field | Type                  | Meaning                                            |
+| ----- | --------------------- | -------------------------------------------------- |
+| `v`   | integer               | Token format version. Currently `1`.               |
+| `t`   | `"s"` / `"e"` / `"a"` | Variant: start, end, after.                        |
+| `p`   | integer               | Creator-index position of the last returned entry. |
+| `i`   | string                | Resource id of the last returned entry.            |
+| `c`   | integer               | Creation ledger of the last returned entry.        |
 
 ### Limits
 
-| Constant | Value | Source |
-|---|---|---|
-| `LIST_PAGE_CAP` | 20 | `contract/contracts/vault-registry/src/lib.rs` line 99 |
-| `REGISTRY_CURSOR_MAX_LENGTH` | 512 | `mcp/src/registryPagination.ts` |
-| `REGISTRY_TAG_MAX_LENGTH` | 32 | `mcp/src/registryPagination.ts` |
+| Constant                     | Value | Source                                                 |
+| ---------------------------- | ----- | ------------------------------------------------------ |
+| `LIST_PAGE_CAP`              | 20    | `contract/contracts/vault-registry/src/lib.rs` line 99 |
+| `REGISTRY_CURSOR_MAX_LENGTH` | 512   | `mcp/src/registryPagination.ts`                        |
+| `REGISTRY_TAG_MAX_LENGTH`    | 32    | `mcp/src/registryPagination.ts`                        |
 
 A token longer than 512 bytes is rejected by the MCP validation layer. In
 practice, the encoded JSON is well under 100 bytes.
@@ -225,10 +245,10 @@ surviving entry appears exactly once and no entry is repeated.
 
 `mindvault_registry_creator_page` accepts two optional filters:
 
-| Argument | Type | Effect |
-|---|---|---|
+| Argument | Type    | Effect                                                                     |
+| -------- | ------- | -------------------------------------------------------------------------- |
 | `listed` | boolean | `true` = only `Listed` state; `false` = only non-listed states; omit = all |
-| `state` | string | One of `Listed`, `Delisted`, `Frozen`, `Disputed`, `Tombstoned` |
+| `state`  | string  | One of `Listed`, `Delisted`, `Frozen`, `Disputed`, `Tombstoned`            |
 
 The two filters combine with AND. A contradictory pair (`listed: true` with
 `state: "Delisted"`) returns an empty page rather than an error. `state:
@@ -289,12 +309,12 @@ argument produces undefined results.
 
 ## Limits quick-reference
 
-| Constant | Value | Applies to |
-|---|---|---|
-| `LIST_PAGE_CAP` | 20 | Maximum entries per page (all listing methods) |
-| `REGISTRY_LIST_MAX_LIMIT` | 20 | MCP validation ceiling for `limit` argument |
-| `REGISTRY_CURSOR_MAX_LENGTH` | 512 bytes | Maximum id-cursor token length |
-| `REGISTRY_TAG_MAX_LENGTH` | 32 chars | Maximum tag or prefix length |
+| Constant                     | Value     | Applies to                                     |
+| ---------------------------- | --------- | ---------------------------------------------- |
+| `LIST_PAGE_CAP`              | 20        | Maximum entries per page (all listing methods) |
+| `REGISTRY_LIST_MAX_LIMIT`    | 20        | MCP validation ceiling for `limit` argument    |
+| `REGISTRY_CURSOR_MAX_LENGTH` | 512 bytes | Maximum id-cursor token length                 |
+| `REGISTRY_TAG_MAX_LENGTH`    | 32 chars  | Maximum tag or prefix length                   |
 
 ---
 

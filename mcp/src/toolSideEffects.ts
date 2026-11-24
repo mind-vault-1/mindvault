@@ -103,6 +103,8 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   // Pure offline validation: no signature, payment, API call, or file write.
   mindvault_publish_batch_preview: READ,
   mindvault_publish_status: READ,
+  mindvault_verify_publisher: READ,
+  mindvault_subscribe_resource: READ,
   mindvault_buy: { local: "write", remote: "chain", payment: "usdc" },
   mindvault_buy_lease: { local: "write", remote: "chain", payment: "usdc" },
   mindvault_lease_status: READ,

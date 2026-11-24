@@ -32,8 +32,8 @@ pub const LEASE_HOUR_LEDGERS: u32 = 720;
 pub const LEASE_DAY_LEDGERS: u32 = 17_280;
 pub const LEASE_WEEK_LEDGERS: u32 = 120_960;
 pub const LEASE_HOUR_MULTIPLIER: i128 = 1;
-pub const LEASE_DAY_MULTIPLIER: i128 = 3;
-pub const LEASE_WEEK_MULTIPLIER: i128 = 7;
+pub const LEASE_DAY_MULTIPLIER: i128 = 5;
+pub const LEASE_WEEK_MULTIPLIER: i128 = 20;
 /// Default creator refund window, matching the ADR's example dispute window.
 pub const DEFAULT_REFUND_WINDOW_LEDGERS: u32 = DAY_IN_LEDGERS;
 /// Maximum refund window leaves one day of TTL beyond the 30-day storage bump.
@@ -394,6 +394,8 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("lease_price", "—"),
     // ── TTL ───────────────────────────────────────────────────────────────
     ("extend_resource_ttl", "creator"),
+    // ── Lease renewal ─────────────────────────────────────────────────────
+    ("renew_lease", "holder"),
     // ── Creator earnings estimator (#804) ─────────────────────────────────
     ("creator_earnings_estimate", "—"),
     // ── Verifier status history (#805) ────────────────────────────────────
@@ -1279,6 +1281,12 @@ pub enum DataKey {
     /// metadata or price change. Absent (read as `0`) until the first such
     /// mutation. Read by `get_revision`.
     Revision(String),
+    /// A page of creator earnings for indexer reconciliation.
+    CreatorEarnings(Address),
+    /// A bounded history of verifier status changes.
+    VerifierHistory(Address),
+    /// The most recent moderator to act on a resource dispute.
+    FlagModerator(String),
 }
 
 /// Storage keys that no longer fit in [`DataKey`].
@@ -1735,6 +1743,21 @@ pub struct Lease {
     pub state: LeaseState,
     /// Ledger sequence at which the lease was recorded.
     pub recorded_at: u32,
+}
+
+/// Read-only quote for a lease on a resource: price (in USDC stroops) and
+/// duration (in ledgers) for a given tier. Returned by `lease_quote`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeaseQuote {
+    /// The resource being quoted.
+    pub resource_id: String,
+    /// The lease tier this quote applies to.
+    pub tier: LeaseTier,
+    /// Price in USDC stroops (resource price × tier multiplier).
+    pub price: i128,
+    /// Duration in ledgers (e.g., 720 for Hour, 17_280 for Day).
+    pub duration_ledgers: u32,
 }
 
 // Spec export is disabled because this enum exceeds the XDR limit of 50
@@ -3310,13 +3333,20 @@ impl VaultRegistry {
         result
     }
 
-    /// Paginated list of resources filtered by verification status.
+    /// Paginated list of resources filtered by verification status, in
+    /// registration order.
     ///
-    /// Returns resources whose `verified` field matches `status`.
-    /// `cursor` is a global catalog index (same semantics as `list_page`).
-    /// `limit` is capped at 20.
-    /// Returns a `CatalogPage` with `items` (matching resources) and
-    /// `next_cursor` (next catalog position, or `None` at end-of-list).
+    /// Each call scans at most `LIST_PAGE_CAP` catalog slots and returns at
+    /// most the effective page size (`limit` clamped to `1..=LIST_PAGE_CAP`).
+    /// `cursor` is the next global catalog slot to scan, independent of the
+    /// requested status. Consequently, a page may contain fewer than the
+    /// effective page size, including no items, while still returning a
+    /// continuation cursor.
+    ///
+    /// Status is evaluated when each slot is read; pagination is not a
+    /// snapshot. A status change to a slot before the cursor will not be seen
+    /// by that traversal, while a change to an unscanned slot is reflected.
+    /// Restart from cursor 0 for a fresh pass.
     pub fn list_by_verification_status(
         env: Env,
         status: VerificationStatus,
@@ -3324,10 +3354,11 @@ impl VaultRegistry {
         limit: u32,
     ) -> CatalogPage {
         let total: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
-        let page_size = limit.min(LIST_PAGE_CAP);
+        let page_size = limit.clamp(1, LIST_PAGE_CAP);
+        let scan_end = cursor.saturating_add(LIST_PAGE_CAP).min(total);
         let mut items: Vec<Resource> = Vec::new(&env);
         let mut i = cursor;
-        while i < total && items.len() < page_size {
+        while i < scan_end && items.len() < page_size {
             let idx_key = DataKey::Index(i);
             if let Some(id) = env.storage().persistent().get::<DataKey, String>(&idx_key) {
                 Self::bump_persistent(&env, &idx_key);
@@ -6567,6 +6598,27 @@ impl VaultRegistry {
         Self::tier_price(resource.price, tier)
     }
 
+    /// Read-only quote for a lease: returns both price (in USDC stroops) and
+    /// duration (in ledgers) for the given tier on the specified resource.
+    /// Errors `NotFound` for an unknown resource.
+    ///
+    /// This is a convenience wrapper combining `lease_price` and tier duration
+    /// calculation in a single call, useful for clients that need both values
+    /// to display lease options before initiating a purchase.
+    pub fn lease_quote(env: Env, resource_id: String, tier: LeaseTier) -> Result<LeaseQuote, Error> {
+        Self::validate_resource_id(&resource_id)?;
+        let resource = Self::load(&env, &resource_id)?;
+        let price = Self::tier_price(resource.price, tier)?;
+        let duration_ledgers = Self::tier_ledgers(tier);
+        
+        Ok(LeaseQuote {
+            resource_id,
+            tier,
+            price,
+            duration_ledgers,
+        })
+    }
+
     /// Record a lease bought by `holder` in `Pending` state, awaiting a
     /// settler's confirmation of the USDC transfer identified by `tx_hash`
     /// (`settle_lease`). The resource must be `Listed` (`ResourceNotListed`),
@@ -6840,6 +6892,104 @@ impl VaultRegistry {
             items,
             next_cursor: if end < index.len() { Some(end) } else { None },
         }
+    }
+
+    /// Renew an active, unexpired lease. Only the holder may renew it.
+    /// Renewal extends the existing expiry by the selected tier's duration and
+    /// requires the exact current tier price. Emits `leasernew`.
+    pub fn renew_lease(
+        env: Env,
+        holder: Address,
+        resource_id: String,
+        tier: LeaseTier,
+        amount: i128,
+        tx_hash: String,
+    ) -> Result<Lease, Error> {
+        holder.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&resource_id)?;
+        Self::validate_payment_amount(amount)?;
+        Self::validate_tx_hash(&tx_hash)?;
+
+        let resource = Self::load(&env, &resource_id)?;
+        if resource.state != ResourceState::Listed {
+            return Err(Error::ResourceNotMutable);
+        }
+
+        let key = DataKey::Lease(resource_id.clone(), holder.clone());
+        let mut lease: Lease = env.storage().persistent().get(&key).ok_or(Error::NotFound)?;
+        if !Self::lease_grants_access(&env, &lease) {
+            return Err(Error::InvalidPaymentTransition);
+        }
+
+        let renewal_price = Self::tier_price(resource.price, tier)?;
+        if amount != renewal_price {
+            return Err(Error::PaymentAmountMismatch);
+        }
+
+        let now = env.ledger().sequence();
+        lease.tier = tier;
+        lease.expiry_ledger = lease.expiry_ledger.saturating_add(Self::tier_ledgers(tier));
+        lease.amount = amount;
+        lease.tx_hash = tx_hash;
+        lease.recorded_at = now;
+
+        env.storage().persistent().set(&key, &lease);
+        Self::bump_persistent(&env, &key);
+        env.events().publish((symbol_short!("leasernew"), resource_id), lease.clone());
+        Ok(lease)
+    }
+
+    /// Check if a lease is eligible for renewal and return renewal pricing
+    /// information. A lease is renewable if it exists, is `Active`, has not
+    /// expired, and the resource is still `Listed`.
+    ///
+    /// Returns `LeaseRenewalInfo` with:
+    /// - `renewable`: `true` if the lease can be renewed now
+    /// - `renewal_price`: current price for renewal at the same tier
+    /// - `renewal_duration`: ledgers that would be added
+    /// - `new_expiry_after_renewal`: what expiry would become after renewal
+    ///
+    /// Errors `NotFound` if no lease exists for the pair, or `InvalidResourceId`
+    /// if the resource_id format is invalid. Never errors for expired or
+    /// revoked leases; instead returns `renewable: false`.
+    pub fn check_lease_renewal_eligibility(
+        env: Env,
+        resource_id: String,
+        holder: Address,
+    ) -> Result<LeaseRenewalInfo, Error> {
+        Self::validate_resource_id(&resource_id)?;
+
+        let key = DataKey::Lease(resource_id.clone(), holder.clone());
+        let lease: Lease = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::NotFound)?;
+
+        // Check if the resource still exists and is listed
+        let resource = Self::load(&env, &resource_id)?;
+        let resource_listed = resource.state == ResourceState::Listed;
+
+        // A lease is renewable if it's active, unexpired, and resource is listed
+        let is_active = Self::lease_grants_access(&env, &lease);
+        let renewable = is_active && resource_listed;
+
+        // Calculate renewal price and duration
+        let renewal_price = Self::tier_price(resource.price, lease.tier)?;
+        let renewal_duration = Self::tier_ledgers(lease.tier);
+        let new_expiry_after_renewal = lease.expiry_ledger.saturating_add(renewal_duration);
+
+        Ok(LeaseRenewalInfo {
+            resource_id,
+            holder,
+            current_tier: lease.tier,
+            renewable,
+            current_expiry: lease.expiry_ledger,
+            renewal_price,
+            renewal_duration,
+            new_expiry_after_renewal,
+        })
     }
 
     /// Extend the TTL of a resource's persistent storage entry.
