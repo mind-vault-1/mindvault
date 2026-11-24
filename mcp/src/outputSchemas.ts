@@ -526,6 +526,33 @@ export const PUBLISH_STATUS_OUTPUT_SCHEMA = {
   ],
 } as const;
 
+export const PUBLISHER_VERIFICATION_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    walletAddress: { type: "string" },
+    registered: { type: "boolean" },
+    publisherId: { type: ["string", "null"] },
+    name: { type: ["string", "null"] },
+    createdAt: { type: ["string", "null"] },
+    credentialPresent: { type: "boolean" },
+    credentialStatus: {
+      type: "string",
+      enum: ["missing", "ready", "different_wallet", "revoked"],
+    },
+    message: { type: "string" },
+  },
+  required: [
+    "walletAddress",
+    "registered",
+    "publisherId",
+    "name",
+    "createdAt",
+    "credentialPresent",
+    "credentialStatus",
+    "message",
+  ],
+} as const;
+
 export const PURCHASE_HISTORY_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -1004,6 +1031,7 @@ export const PUBLISH_BATCH_OUTPUT_SCHEMA = {
     txHash: { type: ["string", "null"] },
     items: { type: "array", items: BATCH_PUBLISH_ITEM_SCHEMA },
     statusLookup: TX_STATUS_LOOKUP_SCHEMA,
+    reason: { type: "string", enum: ["confirmation_timeout", "rpc_unavailable"] },
   },
   required: ["requested", "verified", "rejected", "errored", "onchainStatus", "txHash", "items"],
 } as const;
@@ -1134,14 +1162,50 @@ export const PUBLISH_TEMPLATE_OUTPUT_SCHEMA = {
 } as const;
 
 /** Output schema for mindvault_subscribe_resource. */
+export const RESOURCE_CHANGE_SCHEMA = {
+  type: "object",
+  properties: {
+    field: { type: "string", enum: ["price", "verificationStatus", "listed"] },
+    oldValue: { type: ["string", "boolean"] },
+    newValue: { type: ["string", "boolean"] },
+    detectedAt: { type: "number" },
+  },
+  required: ["field", "oldValue", "newValue", "detectedAt"],
+} as const;
+
 export const RESOURCE_SUBSCRIPTION_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
     resourceId: { type: "string" },
-    snapshot: { type: "object" },
+    title: { type: ["string", "null"] },
+    price: { type: "string" },
+    verificationStatus: { type: "string" },
+    listed: { type: "boolean" },
+    changes: { type: "array", items: RESOURCE_CHANGE_SCHEMA },
+    polled: { type: "boolean" },
+    attempts: { type: "number" },
+    settled: { type: "boolean" },
+    timedOut: { type: "boolean" },
+    resumed: { type: "boolean" },
+    lastDetectedAt: { type: "number" },
+    cursor: { type: "string" },
     message: { type: "string" },
   },
-  required: ["resourceId"],
+  required: [
+    "resourceId",
+    "price",
+    "verificationStatus",
+    "listed",
+    "changes",
+    "polled",
+    "attempts",
+    "settled",
+    "timedOut",
+    "resumed",
+    "lastDetectedAt",
+    "cursor",
+    "message",
+  ],
 } as const;
 
 /** Output schema for credentials-free profile export/import. */

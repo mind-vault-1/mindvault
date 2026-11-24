@@ -66,12 +66,17 @@ import {
   assertMainnetMutationAllowed,
   formatMainnetBanner,
   formatMainnetDiagnostics,
+  isTruthyConfirm,
   mainnetAllowedFromEnv,
 } from "./mainnetGuardrails.js";
 import {
   assertPaidOperationConfirmed,
   formatPaidConfirmationDiagnostics,
 } from "./paidOperations.js";
+import {
+  assertDestructiveOperationConfirmed,
+  formatDestructiveConfirmationDiagnostics,
+} from "./destructiveOperations.js";
 import { assertToolAllowedInReadOnlyMode, readOnlyModeEnabled } from "./readOnlyMode.js";
 import { assertToolAllowedInAllowlist } from "./toolAllowlist.js";
 import {
@@ -187,6 +192,7 @@ import {
   type ResourceProgressReporter,
   type ResourceSubscriptionSnapshot,
 } from "./resourceSubscriptionTool.js";
+import { verifyPublisherStatus } from "./publisherStatus.js";
 import { type ApiResponse } from "./apiResponse.js";
 import { readBoundedResponse, resolveMaxResponseBytes } from "./responseSize.js";
 import { parseUpstreamErrorBody, responseHeaderBag } from "./malformedResponse.js";
@@ -1151,7 +1157,12 @@ export function mainnetBanner(): string {
     registryContractId: REGISTRY_CONTRACT_ID,
     allowMainnetEnv: mainnetAllowedFromEnv(),
   });
-  return [banner, "", formatPaidConfirmationDiagnostics()].join("\n");
+  return [
+    banner,
+    "",
+    formatPaidConfirmationDiagnostics(),
+    formatDestructiveConfirmationDiagnostics(),
+  ].join("\n");
 }
 
 const API_MUTATION_TOOLS = new Set([
@@ -2857,6 +2868,7 @@ export async function publishStatus(
 export async function subscribeResourceHandler(
   args: {
     resourceId?: string;
+    cursor?: string;
     wait?: unknown;
     timeoutMs?: unknown;
     intervalMs?: unknown;
@@ -2877,6 +2889,8 @@ export async function subscribeResourceHandler(
   const snapshot: ResourceSubscriptionSnapshot = await subscribeResource(
     {
       resourceId,
+      cursor: args.cursor?.trim() || undefined,
+      context: catalogCacheContext(),
       wait,
       timeoutMs,
       intervalMs,
@@ -4056,6 +4070,7 @@ export async function setTags(resourceId: string, tags: string[]): Promise<strin
         `Tags submitted for resource "${resourceId}" but not confirmed.`,
         `Tags: ${tags.length > 0 ? tags.join(", ") : "(none)"}`,
         `Tx hash: ${err.txHash}`,
+        `Reason: ${err.reason}`,
         submittedUnconfirmedResult("Set tags", resourceId, err).message,
       ].join("\n");
     }
@@ -5172,6 +5187,9 @@ async function executeTool(
   // `mindvault_terms` is gated as the setter it can be; its `get` branch is a
   // plain registry read and is exempt from both spend guardrails.
   const isTermsRead = name === "mindvault_terms" && rawRecord.operation === "get";
+  const isDestructivePreview =
+    (name === "mindvault_reset" || name === "mindvault_import_wallet") &&
+    !isTruthyConfirm(rawRecord.confirm);
   if (!isTermsRead) {
     assertMainnetMutationAllowed(NETWORK, name, rawRecord);
   }
@@ -5185,6 +5203,14 @@ async function executeTool(
       toolName: name,
       args: rawRecord,
       dryRun: isDryRunCall,
+      env: process.env,
+    });
+  }
+
+  if (!isTermsRead && !isDestructivePreview) {
+    assertDestructiveOperationConfirmed({
+      toolName: name,
+      args: rawRecord,
       env: process.env,
     });
   }
@@ -5235,6 +5261,15 @@ async function executeTool(
           requiredString(args, "email"),
           optionalString(args, "walletAddress"),
         );
+      case "mindvault_verify_publisher": {
+        const result = await verifyPublisherStatus({
+          walletAddress: optionalString(args, "walletAddress"),
+        });
+        return {
+          text: JSON.stringify(result, null, 2),
+          structured: result as unknown as Record<string, unknown>,
+        };
+      }
       case "mindvault_publish":
         return publish({
           title: requiredString(dryRunArgs, "title"),
@@ -5245,6 +5280,17 @@ async function executeTool(
         });
       case "mindvault_publish_status":
         return publishStatus(rawRecord, onProgress, signal);
+      case "mindvault_subscribe_resource":
+        return subscribeResourceHandler(
+          {
+            resourceId: args.resourceId as string,
+            cursor: args.cursor as string | undefined,
+            wait: args.wait,
+            timeoutMs: args.timeoutMs,
+            intervalMs: args.intervalMs,
+          },
+          onProgress,
+        );
       case "mindvault_publish_batch": {
         const batchItems = rawRecord.items;
         if (!Array.isArray(batchItems) || batchItems.length === 0) {
