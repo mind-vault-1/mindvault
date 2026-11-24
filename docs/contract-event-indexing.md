@@ -67,6 +67,7 @@ emits more than one event is listed under [Ordering](#ordering).
 | `setptrs`   | resource id      | `MetadataPointers { pointers, primary }`                                                             | `set_metadata_pointers`                                                                       |
 | `settags`   | resource id      | `(prev_tags: Vec<String>, next_tags: Vec<String>)`                                                   | `set_tags`                                                                                    |
 | `setroyal`  | resource id      | `(old_recipient: Option<Address>, new_recipient: Option<Address>)`                                   | `set_royalty_recipient`                                                                       |
+| `royopt`    | resource id      | `(creator: Address, previous: bool, opt_out: bool)`                                                  | `set_royalty_opt_out`                                                                         |
 | `setlisted` | resource id      | `(old_listed: bool, new_listed: bool)`                                                               | `set_listed`                                                                                  |
 | `freeze`    | resource id      | `()`                                                                                                 | `freeze_metadata`                                                                             |
 | `reactive`  | resource id      | `()`                                                                                                 | `reactivate_resource`                                                                         |
@@ -89,30 +90,30 @@ emits more than one event is listed under [Ordering](#ordering).
 
 ### Moderation
 
-| Topic     | Extra topics | Data                                        | Emitted by             |
-| --------- | ------------ | ------------------------------------------- | ---------------------- |
-| `flag`    | resource id  | `FlagEvent { id, moderator, reason }`       | `flag_resource`        |
-| `unflag`  | resource id  | resource id (`String`)                      | `unflag_resource`      |
-| `flagrsn` | resource id  | `(moderator: Address, reason_hash: String)` | `set_flag_reason_hash` |
-| `flagwin` | —            | `window_ledgers: u32`                        | `set_flag_resolution_window` |
-| `flagfrc` | resource id  | `(admin: Address, deadline: u32)`            | `force_resolve_flag` |
+| Topic     | Extra topics | Data                                        | Emitted by                   |
+| --------- | ------------ | ------------------------------------------- | ---------------------------- |
+| `flag`    | resource id  | `FlagEvent { id, moderator, reason }`       | `flag_resource`              |
+| `unflag`  | resource id  | resource id (`String`)                      | `unflag_resource`            |
+| `flagrsn` | resource id  | `(moderator: Address, reason_hash: String)` | `set_flag_reason_hash`       |
+| `flagwin` | —            | `window_ledgers: u32`                       | `set_flag_resolution_window` |
+| `flagfrc` | resource id  | `(admin: Address, deadline: u32)`           | `force_resolve_flag`         |
 
 ### Payments, refunds and receipts
 
-| Topic       | Extra topics       | Data                                                                                                                                                     | Emitted by                                                                                                                        |
-| ----------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `payment`   | receipt id         | `PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at, ledger }`                                                         | `record_payment`, `record_payment_idempotent` (first call only)                                                                   |
-| `nomemo`    | —                  | `(receipt_id: String, tx_hash: String)`, a provenance warning                                                                                            | `record_payment`, after its `payment`                                                                                             |
-| `settle`    | receipt id         | `PaymentReceipt { .. }` with `state` `Settled`                                                                                                           | `settle_payment`                                                                                                                  |
+| Topic       | Extra topics       | Data                                                                                                                                                                  | Emitted by                                                                                                                        |
+| ----------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `payment`   | receipt id         | `PaymentReceipt { receipt_id, resource_id, payer, amount, state, tx_hash, recorded_at, ledger }`                                                                      | `record_payment`, `record_payment_idempotent` (first call only)                                                                   |
+| `nomemo`    | —                  | `(receipt_id: String, tx_hash: String)`, a provenance warning                                                                                                         | `record_payment`, after its `payment`                                                                                             |
+| `settle`    | receipt id         | `PaymentReceipt { .. }` with `state` `Settled`                                                                                                                        | `settle_payment`                                                                                                                  |
 | `refund`    | refund id          | `RefundReceipt { refund_id, payment_receipt_id, resource_id, recipient, amount, tx_hash, initiated_by, recorded_at, admin_override, remaining_balance, reason_hash }` | `record_creator_refund`, `record_admin_refund`                                                                                    |
-| `refwin`    | admin              | `(old_window: u32, new_window: u32)` in ledgers                                                                                                          | `set_refund_window`                                                                                                               |
-| `simvalid`  | —                  | `(passed: bool, error_code: Option<u32>)`                                                                                                                | `simulate_record_payment` (only if someone submits it)                                                                            |
-| `anchor`    | resource id        | `PurchaseReceiptAnchor { resource_id, buyer, receipt_hash, ledger }`                                                                                     | `anchor_purchase_receipt`, `attempt_anchor_purchase_receipt`, `retry_anchor_purchase_receipt`, `override_purchase_receipt_anchor` |
-| `anchrfail` | resource id        | `AnchorFailure { resource_id, buyer, receipt_hash, reason, ledger }`                                                                                     | `attempt_anchor_purchase_receipt`, `retry_anchor_purchase_receipt`                                                                |
-| `anchrxhst` | resource id, buyer | `AnchorAttempts { attempts, last_attempt_ledger }`, the final count                                                                                      | `attempt_anchor_purchase_receipt`, when attempts are exhausted                                                                    |
-| `lease`     | resource id        | `Lease { resource_id, holder, tier, start_ledger, expiry_ledger, amount, tx_hash, state, recorded_at }`                                                  | `buy_lease`, `record_lease`                                                                                                       |
-| `leasesetl` | resource id        | `Lease` with `state` `Active`                                                                                                                            | `settle_lease`                                                                                                                    |
-| `leaserevk` | resource id        | `Lease` with `state` `Revoked`                                                                                                                           | `revoke_lease`                                                                                                                    |
+| `refwin`    | admin              | `(old_window: u32, new_window: u32)` in ledgers                                                                                                                       | `set_refund_window`                                                                                                               |
+| `simvalid`  | —                  | `(passed: bool, error_code: Option<u32>)`                                                                                                                             | `simulate_record_payment` (only if someone submits it)                                                                            |
+| `anchor`    | resource id        | `PurchaseReceiptAnchor { resource_id, buyer, receipt_hash, ledger }`                                                                                                  | `anchor_purchase_receipt`, `attempt_anchor_purchase_receipt`, `retry_anchor_purchase_receipt`, `override_purchase_receipt_anchor` |
+| `anchrfail` | resource id        | `AnchorFailure { resource_id, buyer, receipt_hash, reason, ledger }`                                                                                                  | `attempt_anchor_purchase_receipt`, `retry_anchor_purchase_receipt`                                                                |
+| `anchrxhst` | resource id, buyer | `AnchorAttempts { attempts, last_attempt_ledger }`, the final count                                                                                                   | `attempt_anchor_purchase_receipt`, when attempts are exhausted                                                                    |
+| `lease`     | resource id        | `Lease { resource_id, holder, tier, start_ledger, expiry_ledger, amount, tx_hash, state, recorded_at }`                                                               | `buy_lease`, `record_lease`                                                                                                       |
+| `leasesetl` | resource id        | `Lease` with `state` `Active`                                                                                                                                         | `settle_lease`                                                                                                                    |
+| `leaserevk` | resource id        | `Lease` with `state` `Revoked`                                                                                                                                        | `revoke_lease`                                                                                                                    |
 
 ### Fees
 
@@ -124,25 +125,26 @@ emits more than one event is listed under [Ordering](#ordering).
 
 ### Roles and governance
 
-| Topic       | Extra topics | Data                                                             | Emitted by                                                         |
-| ----------- | ------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------ |
-| `addverif`  | verifier     | `RoleChange { admin, target, granted: true }`                    | `add_verifier`, `rotate_verifier`                                  |
-| `rmverif`   | verifier     | `RoleChange { admin, target, granted: false }`                   | `remove_verifier`, `rotate_verifier`                               |
-| `verrot`    | old verifier | `VerifierRotation { admin, old_verifier, new_verifier, ledger }` | `rotate_verifier`                                                  |
-| `verprop`   | old verifier | `PendingVerifierRotation { admin, old_verifier, new_verifier, nominated_at, expiry }` | `propose_verifier_rotation` |
-| `veracc`    | old verifier | `VerifierRotation { admin, old_verifier, new_verifier, ledger }` | `accept_verifier_rotation` |
-| `vercncl`   | —            | `(old_verifier: Address, new_verifier: Address, admin: Address)` | `cancel_verifier_rotation` |
-| `addmod`    | moderator    | `RoleChange { admin, target, granted: true }`                    | `add_moderator`                                                    |
-| `rmmod`     | moderator    | `RoleChange { admin, target, granted: false }`                   | `remove_moderator`                                                 |
-| `addsettlr` | settler      | `RoleChange { admin, target, granted: true }`                    | `add_settler`                                                      |
-| `rmsettlr`  | settler      | `RoleChange { admin, target, granted: false }`                   | `remove_settler`                                                   |
-| `setadmin`  | —            | `admin: Address`                                                 | the first `nominate_new_admin` (bootstrap), `bootstrap_dual_admin` |
-| `nomadmin`  | —            | `new_admin: Address`, the nominee                                | `nominate_new_admin` once an admin exists                          |
-| `nomcncl`   | —            | `(nominee: Address, admin: Address)`                             | `cancel_admin_nomination`                                          |
-| `accadmin`  | —            | `new_admin: Address`                                             | `accept_admin`                                                     |
-| `setrecov`  | —            | `recovery_admin: Option<Address>`                                | `set_recovery_admin`, `bootstrap_dual_admin`                       |
-| `recover`   | —            | `(old_admin: Address, new_admin: Address)`                       | `recover_admin`                                                    |
-| `netinit`   | —            | `network_id: BytesN<32>`                                         | `initialize_network` (once per deployment)                         |
+| Topic       | Extra topics | Data                                                                                  | Emitted by                                                         |
+| ----------- | ------------ | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `addverif`  | verifier     | `RoleChange { admin, target, granted: true }`                                         | `add_verifier`, `rotate_verifier`                                  |
+| `rmverif`   | verifier     | `RoleChange { admin, target, granted: false }`                                        | `remove_verifier`, `rotate_verifier`                               |
+| `verrot`    | old verifier | `VerifierRotation { admin, old_verifier, new_verifier, ledger }`                      | `rotate_verifier`                                                  |
+| `vercfg`    | —            | `VerifierConfigChange { version, action, admin, verifier, previous, ledger }`         | `add_verifier`, `remove_verifier`, `rotate_verifier`               |
+| `verprop`   | old verifier | `PendingVerifierRotation { admin, old_verifier, new_verifier, nominated_at, expiry }` | `propose_verifier_rotation`                                        |
+| `veracc`    | old verifier | `VerifierRotation { admin, old_verifier, new_verifier, ledger }`                      | `accept_verifier_rotation`                                         |
+| `vercncl`   | —            | `(old_verifier: Address, new_verifier: Address, admin: Address)`                      | `cancel_verifier_rotation`                                         |
+| `addmod`    | moderator    | `RoleChange { admin, target, granted: true }`                                         | `add_moderator`                                                    |
+| `rmmod`     | moderator    | `RoleChange { admin, target, granted: false }`                                        | `remove_moderator`                                                 |
+| `addsettlr` | settler      | `RoleChange { admin, target, granted: true }`                                         | `add_settler`                                                      |
+| `rmsettlr`  | settler      | `RoleChange { admin, target, granted: false }`                                        | `remove_settler`                                                   |
+| `setadmin`  | —            | `admin: Address`                                                                      | the first `nominate_new_admin` (bootstrap), `bootstrap_dual_admin` |
+| `nomadmin`  | —            | `new_admin: Address`, the nominee                                                     | `nominate_new_admin` once an admin exists                          |
+| `nomcncl`   | —            | `(nominee: Address, admin: Address)`                                                  | `cancel_admin_nomination`                                          |
+| `accadmin`  | —            | `new_admin: Address`                                                                  | `accept_admin`                                                     |
+| `setrecov`  | —            | `recovery_admin: Option<Address>`                                                     | `set_recovery_admin`, `bootstrap_dual_admin`                       |
+| `recover`   | —            | `(old_admin: Address, new_admin: Address)`                                            | `recover_admin`                                                    |
+| `netinit`   | —            | `network_id: BytesN<32>`                                                              | `initialize_network` (once per deployment)                         |
 
 ### Pause and maintenance
 
