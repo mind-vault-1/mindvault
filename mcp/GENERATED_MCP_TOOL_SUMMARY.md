@@ -5,7 +5,7 @@
 
 This file is a generated, human-readable summary of the MCP tool surface (ListTools). It is scoped to the `mcp/` package and intended as a quick reference for integrators and reviewers.
 
-Generated from `mcp/src/tools.ts` (79 tools).
+Generated from `mcp/src/tools.ts` (83 tools).
 
 ## Tools
 
@@ -20,7 +20,7 @@ Generated from `mcp/src/tools.ts` (79 tools).
 - `mindvault_import_profiles`: Import a versioned, non-secret profile setup payload. It merges profile names and preferences without overwriting wallet credentials or publisher API keys. Network bindings are validated before merging: an unknown network, or one that would rebind a profile whose wallet is already bound to the other network, rejects the whole payload with a per-profile list and merges nothing.
 - `mindvault_switch_network_profile`: Switch the active wallet profile and Stellar network together, then re-run install verification for the selected network.
 - `mindvault_browse`: List resources in the MindVault catalog with the same optional filters as mindvault_search and GET /resources: keyword, price range, verification status, resource type, owner, sort, pagination, tags, and listed state. Sort accepts newest, price_asc, price_desc, or title; results are ordered client-side too, so the order holds even when the backend ignores the parameter.
-- `mindvault_search`: Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries. Use nextCursor for pagination; cursors are bound to the active profile and exact filter set. Set bypassCache=true for a fresh per-call read.
+- `mindvault_search`: Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries. Use nextCursor for pagination; signed cursors expire after 15 minutes and are bound to the active profile and exact filter set. An expired, malformed, or edited cursor returns a structured cursor error with a documented error code. Set bypassCache=true for a fresh per-call read.
 - `mindvault_preview`: Get details and price for a specific resource before purchasing. Returns title, description, price, type, verification status, and access URL.
 - `mindvault_register`: Register as a publisher using the agent wallet. The API key is persisted to ~/.mindvault/state.json (mode 0600, key not shown in output) and reloaded on restart so mindvault_publish works across sessions.
 - `mindvault_publish`: Publish a link resource to the MindVault catalog. The resource undergoes AI verification (agent wallet pays ~$0.10 USDC via x402) and is automatically registered on-chain if verified. Returns resource ID, access URL, verification result, and on-chain registration status. Pass dryRun: true to validate inputs without submitting payment.

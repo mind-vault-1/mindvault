@@ -12,11 +12,16 @@ and how to use them correctly.
 | Family            | Type                   | Used by                                                    | MCP exposure        |
 | ----------------- | ---------------------- | ---------------------------------------------------------- | ------------------- |
 | **Catalog index** | `u32` integer          | `mindvault_registry_list`, `mindvault_registry_tag_search` | plain integer       |
-| **Id cursor**     | opaque base64url token | `mindvault_registry_creator_page`                          | opaque string token |
+| **Id cursor**     | signed base64url token | `mindvault_registry_creator_page`                          | opaque string token |
 
 Both families enforce the same page-size cap. The families are not
 interchangeable: passing an id-cursor token to `mindvault_registry_list` or an
 integer to `mindvault_registry_creator_page` is a validation error.
+
+The MCP server also issues opaque tokens for `mindvault_browse` /
+`mindvault_search` (catalog offset) and `mindvault_subscribe_resource`
+(subscription resume state). All string tokens share one format and one set of
+errors from [`cursorToken.ts`](../mcp/src/cursorToken.ts).
 
 ---
 
@@ -173,17 +178,39 @@ to the contract.
 
 ### Token format
 
-The token is base64url-encoded JSON with this shape:
+Every string cursor is a base64url-encoded JSON envelope with the same fields:
 
 ```json
-{ "v": 1, "t": "s" }                             // Start
-{ "v": 1, "t": "e" }                             // End
-{ "v": 1, "t": "a", "p": 7, "i": "res-abc", "c": 12345 }  // After
+{
+  "v": 2,
+  "k": "registry",
+  "iat": 1764000000000,
+  "exp": 1764000900000,
+  "p": { "v": 1, "t": "a", "p": 7, "i": "res-abc", "c": 12345 },
+  "sig": "…"
+}
+```
+
+| Field | Type    | Meaning                                                        |
+| ----- | ------- | -------------------------------------------------------------- |
+| `v`   | integer | Envelope version, currently `2`. Older envelopes are rejected. |
+| `k`   | string  | Issuing tool family: `catalog`, `registry`, or `subscription`. |
+| `iat` | integer | Issue time in milliseconds.                                    |
+| `exp` | integer | Expiry time, `iat + 900000` (15 minutes).                      |
+| `p`   | object  | Tool-specific payload, shown below for the id cursor.          |
+| `sig` | string  | HMAC-SHA256 of the other fields, hex encoded.                  |
+
+The inner id payload keeps the contract's three variants:
+
+```json
+{ "v": 1, "t": "s" }
+{ "v": 1, "t": "e" }
+{ "v": 1, "t": "a", "p": 7, "i": "res-abc", "c": 12345 }
 ```
 
 | Field | Type                  | Meaning                                            |
 | ----- | --------------------- | -------------------------------------------------- |
-| `v`   | integer               | Token format version. Currently `1`.               |
+| `v`   | integer               | Inner payload version. Currently `1`.              |
 | `t`   | `"s"` / `"e"` / `"a"` | Variant: start, end, after.                        |
 | `p`   | integer               | Creator-index position of the last returned entry. |
 | `i`   | string                | Resource id of the last returned entry.            |
@@ -191,29 +218,34 @@ The token is base64url-encoded JSON with this shape:
 
 ### Limits
 
-| Constant                     | Value | Source                                                 |
-| ---------------------------- | ----- | ------------------------------------------------------ |
-| `LIST_PAGE_CAP`              | 20    | `contract/contracts/vault-registry/src/lib.rs` line 99 |
-| `REGISTRY_CURSOR_MAX_LENGTH` | 512   | `mcp/src/registryPagination.ts`                        |
-| `REGISTRY_TAG_MAX_LENGTH`    | 32    | `mcp/src/registryPagination.ts`                        |
+| Constant                     | Value  | Source                                                 |
+| ---------------------------- | ------ | ------------------------------------------------------ |
+| `LIST_PAGE_CAP`              | 20     | `contract/contracts/vault-registry/src/lib.rs` line 99 |
+| `REGISTRY_CURSOR_MAX_LENGTH` | 512    | `mcp/src/registryPagination.ts`                        |
+| `REGISTRY_TAG_MAX_LENGTH`    | 32     | `mcp/src/registryPagination.ts`                        |
+| Cursor TTL                   | 15 min | `mcp/src/cursorToken.ts`                               |
 
 A token longer than 512 bytes is rejected by the MCP validation layer. In
-practice, the encoded JSON is well under 100 bytes.
+practice, the encoded JSON is well under 512 bytes.
 
-### Token versioning
+### Expiry, tampering, and versioning
 
-The token carries a version field (`v`). If the token format ever changes —
-for example a new field is added or the encoding changes — `CURSOR_VERSION` is
-bumped in `mcp/src/registryIdCursor.ts`. A token from an older version is
-rejected with:
+All three string-token tools — catalog browse/search, creator page, and resource
+subscription — classify a rejected cursor the same way and return a structured
+`MV_CURSOR_*` error with an actionable recovery step.
 
-> Stale registry cursor. The cursor format changed since it was issued; start a new page.
+| Reason   | Code                 | Trigger                                                             |
+| -------- | -------------------- | ------------------------------------------------------------------- |
+| expired  | `MV_CURSOR_EXPIRED`  | `exp` has passed (15 minutes after issue).                          |
+| tampered | `MV_CURSOR_TAMPERED` | Signature does not verify: payload edited or wrong HMAC key.        |
+| invalid  | `MV_CURSOR_INVALID`  | Malformed token, wrong tool family, old version, or wrong bindings. |
 
-A hand-edited or truncated token is rejected with:
+Omitting `cursor` always starts a fresh page or subscription and is the recovery
+for every one of these errors.
 
-> Invalid registry cursor. Cursors are opaque tokens returned by a previous call; start a new page instead of editing one.
-
-Both errors are actionable: restart the page from the beginning (omit `cursor`).
+By default the HMAC key is random per server process, so cursors do not survive
+a restart. Set [`MINDVAULT_CURSOR_SIGNING_KEY`](mcp-env-variables.md) (at least
+32 characters) to the same value on every process that must share cursors.
 
 ### Resume logic and stability guarantees
 

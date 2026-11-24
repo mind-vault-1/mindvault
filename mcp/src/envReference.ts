@@ -35,6 +35,7 @@ import { DEFAULT_TOOL_DURATION_BUDGET_MS } from "./metrics.js";
 import { DEFAULT_COOLDOWN_MS, DEFAULT_MAX_ATTEMPTS } from "./rpcFailover.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_FILES } from "./auditLogRotation.js";
 import { DEFAULT_CATALOG_CACHE_CONFIG } from "./catalogCache.js";
+import { CURSOR_TTL_MS } from "./cursorToken.js";
 import { DEFAULT_MAX_RESPONSE_BYTES } from "./responseSize.js";
 import {
   DEFAULT_STATE_BACKUP_MAX_AGE_DAYS,
@@ -236,6 +237,12 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
   },
 
   // ── Catalog & cache ────────────────────────────────────────────────────────
+  {
+    name: "MINDVAULT_CURSOR_SIGNING_KEY",
+    description: `HMAC key for paginated tool cursors, at least 32 characters. Cursors are signed and expire after ${CURSOR_TTL_MS / 60_000} minutes. Without this setting a fresh key is generated per server process, so cursors do not survive a restart; set the same value for every process that must share cursors.`,
+    default: "random key per server process",
+    source: "mcp/src/cursorToken.ts",
+  },
   {
     name: "MINDVAULT_CATALOG_CACHE_TTL_MS",
     description:
