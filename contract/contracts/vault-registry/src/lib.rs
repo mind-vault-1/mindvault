@@ -1737,6 +1737,21 @@ pub struct Lease {
     pub recorded_at: u32,
 }
 
+/// Read-only quote for a lease on a resource: price (in USDC stroops) and
+/// duration (in ledgers) for a given tier. Returned by `lease_quote`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeaseQuote {
+    /// The resource being quoted.
+    pub resource_id: String,
+    /// The lease tier this quote applies to.
+    pub tier: LeaseTier,
+    /// Price in USDC stroops (resource price × tier multiplier).
+    pub price: i128,
+    /// Duration in ledgers (e.g., 720 for Hour, 17_280 for Day).
+    pub duration_ledgers: u32,
+}
+
 // Spec export is disabled because this enum exceeds the XDR limit of 50
 // `ScSpecUdtErrorEnumCaseV0` entries; the discriminants and names below remain
 // the on-wire contract error codes documented in `contract/README.md`.
@@ -6565,6 +6580,27 @@ impl VaultRegistry {
         Self::validate_resource_id(&resource_id)?;
         let resource = Self::load(&env, &resource_id)?;
         Self::tier_price(resource.price, tier)
+    }
+
+    /// Read-only quote for a lease: returns both price (in USDC stroops) and
+    /// duration (in ledgers) for the given tier on the specified resource.
+    /// Errors `NotFound` for an unknown resource.
+    ///
+    /// This is a convenience wrapper combining `lease_price` and tier duration
+    /// calculation in a single call, useful for clients that need both values
+    /// to display lease options before initiating a purchase.
+    pub fn lease_quote(env: Env, resource_id: String, tier: LeaseTier) -> Result<LeaseQuote, Error> {
+        Self::validate_resource_id(&resource_id)?;
+        let resource = Self::load(&env, &resource_id)?;
+        let price = Self::tier_price(resource.price, tier)?;
+        let duration_ledgers = Self::tier_ledgers(tier);
+        
+        Ok(LeaseQuote {
+            resource_id,
+            tier,
+            price,
+            duration_ledgers,
+        })
     }
 
     /// Record a lease bought by `holder` in `Pending` state, awaiting a
