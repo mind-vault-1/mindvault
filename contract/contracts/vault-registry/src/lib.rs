@@ -32,8 +32,8 @@ pub const LEASE_HOUR_LEDGERS: u32 = 720;
 pub const LEASE_DAY_LEDGERS: u32 = 17_280;
 pub const LEASE_WEEK_LEDGERS: u32 = 120_960;
 pub const LEASE_HOUR_MULTIPLIER: i128 = 1;
-pub const LEASE_DAY_MULTIPLIER: i128 = 3;
-pub const LEASE_WEEK_MULTIPLIER: i128 = 7;
+pub const LEASE_DAY_MULTIPLIER: i128 = 5;
+pub const LEASE_WEEK_MULTIPLIER: i128 = 20;
 /// Default creator refund window, matching the ADR's example dispute window.
 pub const DEFAULT_REFUND_WINDOW_LEDGERS: u32 = DAY_IN_LEDGERS;
 /// Maximum refund window leaves one day of TTL beyond the 30-day storage bump.
@@ -394,6 +394,8 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("lease_price", "—"),
     // ── TTL ───────────────────────────────────────────────────────────────
     ("extend_resource_ttl", "creator"),
+    // ── Lease renewal ─────────────────────────────────────────────────────
+    ("renew_lease", "holder"),
     // ── Creator earnings estimator (#804) ─────────────────────────────────
     ("creator_earnings_estimate", "—"),
     // ── Verifier status history (#805) ────────────────────────────────────
@@ -1279,6 +1281,12 @@ pub enum DataKey {
     /// metadata or price change. Absent (read as `0`) until the first such
     /// mutation. Read by `get_revision`.
     Revision(String),
+    /// A page of creator earnings for indexer reconciliation.
+    CreatorEarnings(Address),
+    /// A bounded history of verifier status changes.
+    VerifierHistory(Address),
+    /// The most recent moderator to act on a resource dispute.
+    FlagModerator(String),
 }
 
 /// Storage keys that no longer fit in [`DataKey`].
@@ -6876,6 +6884,104 @@ impl VaultRegistry {
             items,
             next_cursor: if end < index.len() { Some(end) } else { None },
         }
+    }
+
+    /// Renew an active, unexpired lease. Only the holder may renew it.
+    /// Renewal extends the existing expiry by the selected tier's duration and
+    /// requires the exact current tier price. Emits `leasernew`.
+    pub fn renew_lease(
+        env: Env,
+        holder: Address,
+        resource_id: String,
+        tier: LeaseTier,
+        amount: i128,
+        tx_hash: String,
+    ) -> Result<Lease, Error> {
+        holder.require_auth();
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&resource_id)?;
+        Self::validate_payment_amount(amount)?;
+        Self::validate_tx_hash(&tx_hash)?;
+
+        let resource = Self::load(&env, &resource_id)?;
+        if resource.state != ResourceState::Listed {
+            return Err(Error::ResourceNotMutable);
+        }
+
+        let key = DataKey::Lease(resource_id.clone(), holder.clone());
+        let mut lease: Lease = env.storage().persistent().get(&key).ok_or(Error::NotFound)?;
+        if !Self::lease_grants_access(&env, &lease) {
+            return Err(Error::InvalidPaymentTransition);
+        }
+
+        let renewal_price = Self::tier_price(resource.price, tier)?;
+        if amount != renewal_price {
+            return Err(Error::PaymentAmountMismatch);
+        }
+
+        let now = env.ledger().sequence();
+        lease.tier = tier;
+        lease.expiry_ledger = lease.expiry_ledger.saturating_add(Self::tier_ledgers(tier));
+        lease.amount = amount;
+        lease.tx_hash = tx_hash;
+        lease.recorded_at = now;
+
+        env.storage().persistent().set(&key, &lease);
+        Self::bump_persistent(&env, &key);
+        env.events().publish((symbol_short!("leasernew"), resource_id), lease.clone());
+        Ok(lease)
+    }
+
+    /// Check if a lease is eligible for renewal and return renewal pricing
+    /// information. A lease is renewable if it exists, is `Active`, has not
+    /// expired, and the resource is still `Listed`.
+    ///
+    /// Returns `LeaseRenewalInfo` with:
+    /// - `renewable`: `true` if the lease can be renewed now
+    /// - `renewal_price`: current price for renewal at the same tier
+    /// - `renewal_duration`: ledgers that would be added
+    /// - `new_expiry_after_renewal`: what expiry would become after renewal
+    ///
+    /// Errors `NotFound` if no lease exists for the pair, or `InvalidResourceId`
+    /// if the resource_id format is invalid. Never errors for expired or
+    /// revoked leases; instead returns `renewable: false`.
+    pub fn check_lease_renewal_eligibility(
+        env: Env,
+        resource_id: String,
+        holder: Address,
+    ) -> Result<LeaseRenewalInfo, Error> {
+        Self::validate_resource_id(&resource_id)?;
+
+        let key = DataKey::Lease(resource_id.clone(), holder.clone());
+        let lease: Lease = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::NotFound)?;
+
+        // Check if the resource still exists and is listed
+        let resource = Self::load(&env, &resource_id)?;
+        let resource_listed = resource.state == ResourceState::Listed;
+
+        // A lease is renewable if it's active, unexpired, and resource is listed
+        let is_active = Self::lease_grants_access(&env, &lease);
+        let renewable = is_active && resource_listed;
+
+        // Calculate renewal price and duration
+        let renewal_price = Self::tier_price(resource.price, lease.tier)?;
+        let renewal_duration = Self::tier_ledgers(lease.tier);
+        let new_expiry_after_renewal = lease.expiry_ledger.saturating_add(renewal_duration);
+
+        Ok(LeaseRenewalInfo {
+            resource_id,
+            holder,
+            current_tier: lease.tier,
+            renewable,
+            current_expiry: lease.expiry_ledger,
+            renewal_price,
+            renewal_duration,
+            new_expiry_after_renewal,
+        })
     }
 
     /// Extend the TTL of a resource's persistent storage entry.
