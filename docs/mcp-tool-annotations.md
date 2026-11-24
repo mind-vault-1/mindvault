@@ -123,6 +123,8 @@ controls described in [`mcp-client-configs.md`](mcp-client-configs.md) and
 | `mindvault_publish`                  | `write`     | `chain` | `usdc`  | no           | no           | no              |
 | `mindvault_publish_batch`            | `none`      | `chain` | `usdc`  | no           | no           | no              |
 | `mindvault_publish_status`           | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_verify_publisher`         | `none`      | `none`  | `none`  | no           | yes          | no              |
+| `mindvault_subscribe_resource`       | `none`      | `none`  | `none`  | no           | yes          | no              |
 | `mindvault_buy`                      | `write`     | `chain` | `usdc`  | no           | no           | no              |
 | `mindvault_buy_lease`                | `write`     | `chain` | `usdc`  | no           | no           | no              |
 | `mindvault_lease_status`             | `none`      | `none`  | `none`  | no           | yes          | no              |

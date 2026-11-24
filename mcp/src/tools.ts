@@ -49,6 +49,7 @@ import {
   PUBLISH_BATCH_OUTPUT_SCHEMA,
   PUBLISH_STATUS_OUTPUT_SCHEMA,
   PUBLISH_TEMPLATE_OUTPUT_SCHEMA,
+  PUBLISHER_VERIFICATION_OUTPUT_SCHEMA,
   PROFILE_EXPORT_OUTPUT_SCHEMA,
   PROFILE_IMPORT_OUTPUT_SCHEMA,
   PURCHASE_HISTORY_OUTPUT_SCHEMA,
@@ -137,6 +138,12 @@ export interface ToolDefinition {
   annotations: ToolAnnotations;
 }
 
+const CONFIRM_DESTRUCTIVE_PROPERTY = {
+  type: "boolean",
+  description:
+    "Required when MINDVAULT_CONFIRM_DESTRUCTIVE_OPERATIONS is enabled: explicitly confirm that this tool may replace local wallet/profile/state data or make an irreversible on-chain change.",
+} as const;
+
 const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_setup_wallet",
@@ -156,6 +163,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
         },
+        confirmDestructive: CONFIRM_DESTRUCTIVE_PROPERTY,
       },
       required: [],
     },
@@ -235,6 +243,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm restoring credentials for the public Stellar network.",
         },
+        confirmDestructive: CONFIRM_DESTRUCTIVE_PROPERTY,
       },
       required: ["secretKey"],
     },
@@ -427,6 +436,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
         },
+        confirmDestructive: CONFIRM_DESTRUCTIVE_PROPERTY,
       },
       required: ["name", "email"],
     },
@@ -856,8 +866,23 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_network_profile",
     description:
-      "Report current Stellar/x402 network configuration (testnet/mainnet), RPC URLs, registry contract ID, and warnings for custom overrides. Use this to verify which network the MCP is connected to and diagnose configuration issues.",
-    inputSchema: { type: "object", properties: {}, required: [] },
+      "Inspect the effective Stellar/x402 configuration without making network calls or changing state. Reports preset versus environment overrides, sanitized endpoints and RPC failover URLs, contract identities, timeout/retry policies, read-only guardrails, and startup diagnostics. Optionally filter the response with sections.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sections: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["network", "endpoints", "contracts", "policies", "diagnostics"],
+          },
+          description:
+            "Optional sections to return: network, endpoints, contracts, policies, diagnostics. Omit for all sections.",
+          examples: [["network", "diagnostics"]],
+        },
+      },
+      required: [],
+    },
     outputSchema: NETWORK_PROFILE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Network Profile",
@@ -1285,6 +1310,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation/payment on the public Stellar network.",
         },
+        confirmDestructive: CONFIRM_DESTRUCTIVE_PROPERTY,
       },
       required: [],
     },
@@ -1397,6 +1423,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           type: "string",
           description: "Passphrase used when the backup was created (min 8 characters).",
         },
+        confirmDestructive: CONFIRM_DESTRUCTIVE_PROPERTY,
       },
       required: ["blob", "passphrase"],
     },
@@ -1769,6 +1796,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
         },
         confirmPaid: { ...CONFIRM_PAID_PROPERTY },
+        confirmDestructive: CONFIRM_DESTRUCTIVE_PROPERTY,
       },
       required: ["resourceId", "confirm"],
     },
@@ -2021,6 +2049,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
         },
+        confirmDestructive: CONFIRM_DESTRUCTIVE_PROPERTY,
       },
       required: [],
     },
@@ -2050,6 +2079,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
           description:
             "Required on mainnet (or set MINDVAULT_ALLOW_MAINNET=1). Explicitly confirm this mutation on the public Stellar network.",
         },
+        confirmDestructive: CONFIRM_DESTRUCTIVE_PROPERTY,
       },
       required: [],
     },
@@ -2160,6 +2190,76 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: PUBLISH_STATUS_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Publish Status",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_verify_publisher",
+    description:
+      "Check whether a Stellar wallet is registered as a MindVault publisher and whether the active profile has a usable publisher API key for that wallet. Read-only: queries the public publisher lookup and the authenticated publisher profile when a key is present, and never returns the key. Omit walletAddress to check the active profile wallet.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        walletAddress: {
+          type: "string",
+          description:
+            "Optional Stellar public key (G...) to verify. Defaults to the active profile wallet.",
+          examples: ["GABC..."],
+        },
+      },
+      required: [],
+    },
+    outputSchema: PUBLISHER_VERIFICATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Verify Publisher",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_subscribe_resource",
+    description:
+      "Watch a resource's price, verificationStatus, and listed metadata for changes. Returns the latest snapshot and detected changes, plus an opaque cursor. Pass that cursor on a later call to resume after a disconnect and report changes that happened while away; cursors are bound to the resource, profile, network, contract, and API origin. Read-only; it polls the public resource endpoint and never mutates state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description:
+            "Resource id to watch, from mindvault_browse, mindvault_search, or mindvault_preview. Example: 'cm7x8y9z'",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+        cursor: {
+          type: "string",
+          description:
+            "Opaque cursor from a previous mindvault_subscribe_resource call. Resumes from the last observed state; omit to start a new subscription.",
+        },
+        wait: {
+          type: "boolean",
+          description:
+            "When true, poll until timeoutMs elapses. Default false (single check). Cursor reporting works in either mode.",
+        },
+        timeoutMs: {
+          type: "number",
+          description:
+            "Max wait time in milliseconds when wait is true (default 120000, max 600000). 0 returns after the first poll.",
+          examples: [0, 30000, 120000],
+        },
+        intervalMs: {
+          type: "number",
+          description:
+            "Delay between polls in milliseconds when wait is true (default 5000, min 1000).",
+          examples: [1000, 5000, 10000],
+        },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: RESOURCE_SUBSCRIPTION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Subscribe Resource",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

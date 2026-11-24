@@ -179,6 +179,7 @@ const PROBE_OVERRIDES: Record<string, Record<string, unknown>> = {
   mindvault_compare_state_backup: { blob: "not-a-backup", passphrase: "probe-passphrase" },
   mindvault_debug_bundle: { includeEnvironment: true },
   mindvault_publish_status: { resourceId: "mock-1" },
+  mindvault_subscribe_resource: { resourceId: "mock-1" },
   mindvault_purchase_history: {},
   mindvault_export_receipts: { format: "csv" },
   mindvault_explain_error_code: { code: 1 },

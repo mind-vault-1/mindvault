@@ -101,6 +101,8 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_publish: { local: "write", remote: "chain", payment: "usdc" },
   mindvault_publish_batch: { local: "none", remote: "chain", payment: "usdc" },
   mindvault_publish_status: READ,
+  mindvault_verify_publisher: READ,
+  mindvault_subscribe_resource: READ,
   mindvault_buy: { local: "write", remote: "chain", payment: "usdc" },
   mindvault_buy_lease: { local: "write", remote: "chain", payment: "usdc" },
   mindvault_lease_status: READ,

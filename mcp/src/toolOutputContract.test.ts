@@ -152,6 +152,34 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
         { polled: false, attempts: 1, timedOut: false },
       ),
     ),
+  mindvault_verify_publisher: () =>
+    json({
+      walletAddress: ADDRESS,
+      registered: true,
+      publisherId: "pub-1",
+      name: "Agent",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      credentialPresent: true,
+      credentialStatus: "ready",
+      message: "Publisher is registered and the active profile credential matches this wallet.",
+    }),
+  mindvault_subscribe_resource: () =>
+    json({
+      resourceId: "mock-1",
+      title: "Test Resource",
+      price: "5.00",
+      verificationStatus: "verified",
+      listed: true,
+      changes: [],
+      polled: false,
+      attempts: 1,
+      settled: false,
+      timedOut: false,
+      resumed: false,
+      lastDetectedAt: 0,
+      cursor: "cursor-token",
+      message: "Single check completed.",
+    }),
   mindvault_metrics: () => json(createMetricsRecorder(true, 1000).snapshot()),
   mindvault_debug_bundle: () => debugBundleTool({}, new Date(0)),
   mindvault_onchain_preflight: () => onchainPreflightTool({}),
@@ -446,13 +474,51 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
     }),
   mindvault_network_profile: () =>
     json({
+      schema: "mindvault.network-profile/v1",
+      sections: ["network", "endpoints", "contracts", "policies", "diagnostics"],
       stellarNetwork: "testnet",
       x402Network: NETWORK,
       sorobanRpcUrl: "https://soroban-testnet.stellar.org",
       horizonUrl: "https://horizon-testnet.stellar.org",
       registryContractId: CONTRACT,
-      usdcContractId: null,
+      usdcContractId: CONTRACT,
+      timeouts: "http=12000ms",
+      retries: "attempts=3",
       warnings: [],
+      network: {
+        stellarNetwork: "testnet",
+        x402Network: { value: NETWORK, source: "preset_default" },
+        networkPassphrase: "Test SDF Network ; September 2015",
+      },
+      endpoints: {
+        baseUrl: { value: "https://mindvault.example.com", source: "preset_default" },
+        sorobanRpc: {
+          value: {
+            url: "https://soroban-testnet.stellar.org",
+            failoverUrls: ["https://soroban-testnet.stellar.org"],
+          },
+          source: "preset_default",
+        },
+        horizonUrl: {
+          value: "https://horizon-testnet.stellar.org",
+          source: "preset_default",
+        },
+        sponsoredAccountUrl: {
+          value: "https://mindvault.example.com/api/sponsored-account",
+          source: "preset_default",
+        },
+      },
+      contracts: {
+        registryContractId: { value: CONTRACT, source: "preset_default" },
+        usdcContractId: { value: CONTRACT, source: "preset_default" },
+      },
+      policies: {
+        readOnly: true,
+        mainnetMutationConfirmationRequired: false,
+        timeouts: "http=12000ms",
+        retries: "attempts=3",
+      },
+      diagnostics: [],
     }),
   mindvault_check_consistency: () =>
     json({

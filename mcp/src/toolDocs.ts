@@ -66,6 +66,7 @@ export function groupOf(name: string): string {
       "mindvault_batch_catalog_lookup",
       "mindvault_preview_metadata_hash",
       "mindvault_prewarm_catalog",
+      "mindvault_subscribe_resource",
     ].includes(name)
   )
     return "Catalog";
@@ -121,6 +122,7 @@ export function groupOf(name: string): string {
       "mindvault_resource_provenance",
       "mindvault_resource_change_log",
       "mindvault_fee_config",
+      "mindvault_verify_publisher",
     ].includes(name)
   )
     return "Registry & Diagnostics";

@@ -66,12 +66,17 @@ import {
   assertMainnetMutationAllowed,
   formatMainnetBanner,
   formatMainnetDiagnostics,
+  isTruthyConfirm,
   mainnetAllowedFromEnv,
 } from "./mainnetGuardrails.js";
 import {
   assertPaidOperationConfirmed,
   formatPaidConfirmationDiagnostics,
 } from "./paidOperations.js";
+import {
+  assertDestructiveOperationConfirmed,
+  formatDestructiveConfirmationDiagnostics,
+} from "./destructiveOperations.js";
 import { assertToolAllowedInReadOnlyMode, readOnlyModeEnabled } from "./readOnlyMode.js";
 import { assertToolAllowedInAllowlist } from "./toolAllowlist.js";
 import {
@@ -124,6 +129,7 @@ import { applyRetentionPolicies } from "./retention.js";
 import { exportReceiptsToolWithTimeout } from "./receipts.js";
 import { verifyPaymentReceipt, type PaymentReceiptExpectations } from "./receiptVerification.js";
 import { normalizeToolResult, outcomeText, type ToolOutcome } from "./toolResult.js";
+import { buildNetworkProfile, type NetworkProfile } from "./networkProfile.js";
 import { advertisedTools, hasOutputSchema, outputSchemaFor } from "./toolSurface.js";
 import { enforceOutputContract } from "./outputValidation.js";
 import { dryRunPublish, dryRunBuy, type DryRunPublishLive } from "./dryRun.js";
@@ -186,6 +192,7 @@ import {
   type ResourceProgressReporter,
   type ResourceSubscriptionSnapshot,
 } from "./resourceSubscriptionTool.js";
+import { verifyPublisherStatus } from "./publisherStatus.js";
 import { type ApiResponse } from "./apiResponse.js";
 import { readBoundedResponse, resolveMaxResponseBytes } from "./responseSize.js";
 import { parseUpstreamErrorBody, responseHeaderBag } from "./malformedResponse.js";
@@ -258,7 +265,7 @@ import {
   type TimeoutService,
 } from "./httpTimeout.js";
 import { resolveToolTimeouts, timeoutForTool } from "./toolTimeoutOverrides.js";
-import { describeProxyConfig, resolveProxyConfig, withProxy } from "./proxy.js";
+import { resolveProxyConfig, withProxy } from "./proxy.js";
 import {
   describeRetryPolicy,
   formatRetryLog,
@@ -1150,7 +1157,12 @@ export function mainnetBanner(): string {
     registryContractId: REGISTRY_CONTRACT_ID,
     allowMainnetEnv: mainnetAllowedFromEnv(),
   });
-  return [banner, "", formatPaidConfirmationDiagnostics()].join("\n");
+  return [
+    banner,
+    "",
+    formatPaidConfirmationDiagnostics(),
+    formatDestructiveConfirmationDiagnostics(),
+  ].join("\n");
 }
 
 const API_MUTATION_TOOLS = new Set([
@@ -2856,6 +2868,7 @@ export async function publishStatus(
 export async function subscribeResourceHandler(
   args: {
     resourceId?: string;
+    cursor?: string;
     wait?: unknown;
     timeoutMs?: unknown;
     intervalMs?: unknown;
@@ -2876,6 +2889,8 @@ export async function subscribeResourceHandler(
   const snapshot: ResourceSubscriptionSnapshot = await subscribeResource(
     {
       resourceId,
+      cursor: args.cursor?.trim() || undefined,
+      context: catalogCacheContext(),
       wait,
       timeoutMs,
       intervalMs,
@@ -4055,6 +4070,7 @@ export async function setTags(resourceId: string, tags: string[]): Promise<strin
         `Tags submitted for resource "${resourceId}" but not confirmed.`,
         `Tags: ${tags.length > 0 ? tags.join(", ") : "(none)"}`,
         `Tx hash: ${err.txHash}`,
+        `Reason: ${err.reason}`,
         submittedUnconfirmedResult("Set tags", resourceId, err).message,
       ].join("\n");
     }
@@ -4920,56 +4936,12 @@ export async function verifyAttestation(
  * USDC contract IDs, and warnings for environment variable overrides that
  * diverge from presets.
  */
-export function networkProfile(): string {
-  const warnings: string[] = [];
-
-  const usdcContractId = process.env.USDC_CONTRACT_ID ?? networkPreset.usdcSacContractId;
-  if (
-    process.env.USDC_CONTRACT_ID &&
-    process.env.USDC_CONTRACT_ID !== networkPreset.usdcSacContractId
-  ) {
-    warnings.push(
-      `USDC_CONTRACT_ID overrides preset (${networkPreset.usdcSacContractId} → ${process.env.USDC_CONTRACT_ID})`,
-    );
-  }
-  if (process.env.SOROBAN_RPC_URL && process.env.SOROBAN_RPC_URL !== networkPreset.sorobanRpcUrl) {
-    warnings.push(
-      `SOROBAN_RPC_URL overrides preset (${networkPreset.sorobanRpcUrl} → ${process.env.SOROBAN_RPC_URL})`,
-    );
-  }
-  if (process.env.HORIZON_URL && process.env.HORIZON_URL !== networkPreset.horizonUrl) {
-    warnings.push(
-      `HORIZON_URL overrides preset (${networkPreset.horizonUrl} → ${process.env.HORIZON_URL})`,
-    );
-  }
-  if (
-    process.env.VAULT_REGISTRY_CONTRACT_ID &&
-    networkPreset.defaultRegistryContractId &&
-    process.env.VAULT_REGISTRY_CONTRACT_ID !== networkPreset.defaultRegistryContractId
-  ) {
-    warnings.push(
-      `VAULT_REGISTRY_CONTRACT_ID overrides preset (${networkPreset.defaultRegistryContractId} → ${process.env.VAULT_REGISTRY_CONTRACT_ID})`,
-    );
-  }
-  if (process.env.NETWORK && process.env.NETWORK !== networkPreset.x402Network) {
-    warnings.push(
-      `NETWORK overrides preset (${networkPreset.x402Network} → ${process.env.NETWORK})`,
-    );
-  }
-
-  const profile = {
-    stellarNetwork: STELLAR_NETWORK,
-    x402Network: NETWORK,
-    sorobanRpcUrl: SOROBAN_RPC_URL,
-    horizonUrl: HORIZON_URL,
-    registryContractId: REGISTRY_CONTRACT_ID,
-    usdcContractId,
+export function networkProfile(sections?: readonly string[]): string {
+  const profile = buildNetworkProfile(process.env, {
+    sections,
     timeouts: describeTimeouts(TIMEOUTS),
     retries: describeRetryPolicy(RETRY_POLICY),
-    proxy: describeProxyConfig(PROXY_CONFIG),
-    warnings,
-  };
-
+  }) as NetworkProfile;
   return JSON.stringify(profile, null, 2);
 }
 
@@ -5215,6 +5187,9 @@ async function executeTool(
   // `mindvault_terms` is gated as the setter it can be; its `get` branch is a
   // plain registry read and is exempt from both spend guardrails.
   const isTermsRead = name === "mindvault_terms" && rawRecord.operation === "get";
+  const isDestructivePreview =
+    (name === "mindvault_reset" || name === "mindvault_import_wallet") &&
+    !isTruthyConfirm(rawRecord.confirm);
   if (!isTermsRead) {
     assertMainnetMutationAllowed(NETWORK, name, rawRecord);
   }
@@ -5228,6 +5203,14 @@ async function executeTool(
       toolName: name,
       args: rawRecord,
       dryRun: isDryRunCall,
+      env: process.env,
+    });
+  }
+
+  if (!isTermsRead && !isDestructivePreview) {
+    assertDestructiveOperationConfirmed({
+      toolName: name,
+      args: rawRecord,
       env: process.env,
     });
   }
@@ -5278,6 +5261,15 @@ async function executeTool(
           requiredString(args, "email"),
           optionalString(args, "walletAddress"),
         );
+      case "mindvault_verify_publisher": {
+        const result = await verifyPublisherStatus({
+          walletAddress: optionalString(args, "walletAddress"),
+        });
+        return {
+          text: JSON.stringify(result, null, 2),
+          structured: result as unknown as Record<string, unknown>,
+        };
+      }
       case "mindvault_publish":
         return publish({
           title: requiredString(dryRunArgs, "title"),
@@ -5288,6 +5280,17 @@ async function executeTool(
         });
       case "mindvault_publish_status":
         return publishStatus(rawRecord, onProgress, signal);
+      case "mindvault_subscribe_resource":
+        return subscribeResourceHandler(
+          {
+            resourceId: args.resourceId as string,
+            cursor: args.cursor as string | undefined,
+            wait: args.wait,
+            timeoutMs: args.timeoutMs,
+            intervalMs: args.intervalMs,
+          },
+          onProgress,
+        );
       case "mindvault_publish_batch": {
         const batchItems = rawRecord.items;
         if (!Array.isArray(batchItems) || batchItems.length === 0) {
@@ -5378,7 +5381,7 @@ async function executeTool(
           flag(args, "confirmMainnet"),
         );
       case "mindvault_network_profile":
-        return networkProfile();
+        return networkProfile(Array.isArray(args.sections) ? args.sections : undefined);
       case "mindvault_check_bindings":
         return checkBindings();
       case "mindvault_check_consistency":

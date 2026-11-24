@@ -89,6 +89,7 @@ describe("publishBatch when register_batch cannot be confirmed", () => {
       verified: 2,
       onchainStatus: "submitted",
       txHash: HASH,
+      reason: "rpc_unavailable",
       statusLookup: { tool: "mindvault_tx_status", arguments: { txHash: HASH }, retryable: true },
     });
     expect(summary.items.map((i: any) => i.onchainStatus)).toEqual(["submitted", "submitted"]);

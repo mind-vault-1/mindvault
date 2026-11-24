@@ -1760,29 +1760,6 @@ pub struct LeaseQuote {
     pub duration_ledgers: u32,
 }
 
-/// Renewal eligibility and pricing information for an active lease.
-/// Returned by `check_lease_renewal_eligibility`.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct LeaseRenewalInfo {
-    /// The resource being renewed.
-    pub resource_id: String,
-    /// The holder of the lease.
-    pub holder: Address,
-    /// Current lease tier.
-    pub current_tier: LeaseTier,
-    /// Whether the lease is currently active and renewable.
-    pub renewable: bool,
-    /// Current expiry ledger of the existing lease.
-    pub current_expiry: u32,
-    /// Price for renewal at the same tier (resource price × tier multiplier).
-    pub renewal_price: i128,
-    /// Duration that would be added upon renewal (in ledgers).
-    pub renewal_duration: u32,
-    /// What the new expiry ledger would be after renewal.
-    pub new_expiry_after_renewal: u32,
-}
-
 // Spec export is disabled because this enum exceeds the XDR limit of 50
 // `ScSpecUdtErrorEnumCaseV0` entries; the discriminants and names below remain
 // the on-wire contract error codes documented in `contract/README.md`.
@@ -6625,7 +6602,7 @@ impl VaultRegistry {
         let resource = Self::load(&env, &resource_id)?;
         let price = Self::tier_price(resource.price, tier)?;
         let duration_ledgers = Self::tier_ledgers(tier);
-
+        
         Ok(LeaseQuote {
             resource_id,
             tier,
