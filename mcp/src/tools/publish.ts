@@ -61,6 +61,7 @@ import {
   signAndSendTracked,
   submittedUnconfirmedResult,
   txStatusLookup,
+  type UnconfirmedReason,
 } from "../submittedTransaction.js";
 import { txPhaseFields } from "../txPhases.js";
 /**
@@ -844,6 +845,7 @@ export interface BatchPublishSummary {
    * (`onchainStatus: "submitted"`): how to check its outcome (#1060).
    */
   statusLookup?: ReturnType<typeof txStatusLookup>;
+  reason?: UnconfirmedReason;
 }
 
 /**
@@ -1027,6 +1029,7 @@ export async function publishBatch(
   let txHash: string | null = null;
   let batchOnchainStatus = "skipped";
   let unconfirmed = false;
+  let unconfirmedReason: UnconfirmedReason | undefined;
 
   if (verifiedItems.length > 0) {
     const client = createLimitedRegistryClient({
@@ -1100,6 +1103,7 @@ export async function publishBatch(
       txHash = err.txHash;
       batchOnchainStatus = "submitted";
       unconfirmed = true;
+      unconfirmedReason = err.reason;
     }
 
     // Update per-item onchain status from the batch result data. An
@@ -1151,6 +1155,7 @@ export async function publishBatch(
     txHash,
     items: results,
     ...(unconfirmed && txHash ? { statusLookup: txStatusLookup(txHash) } : {}),
+    ...(unconfirmedReason ? { reason: unconfirmedReason } : {}),
   };
 
   return JSON.stringify(summary, null, 2);

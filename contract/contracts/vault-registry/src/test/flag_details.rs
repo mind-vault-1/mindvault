@@ -188,7 +188,7 @@ fn flag_moderator_entry_gets_a_ttl_on_write() {
     let ttl = env.as_contract(&client.address, || {
         env.storage()
             .persistent()
-            .get_ttl(&DataKey::FlagModerator(id.clone()))
+            .get_ttl(&DataKeyExt::FlagModerator(id.clone()))
     });
     assert!(
         ttl >= LIFETIME_THRESHOLD,

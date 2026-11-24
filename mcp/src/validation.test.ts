@@ -83,6 +83,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_batch_catalog_lookup: { resourceIds: ["res-001"] },
   mindvault_preview_metadata_hash: { resourceId: "res-001" },
   mindvault_register: { name: "Agent A", email: "agent@example.com" },
+  mindvault_verify_publisher: {},
   mindvault_publish: {
     title: "Dataset",
     price: "5.00",
@@ -97,8 +98,10 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_import_profiles: { data: "{}" },
   mindvault_export_profiles: {},
   mindvault_purchase_history: {},
+  mindvault_subscribe_resource: { resourceId: "res-001" },
   mindvault_export_receipts: {},
   mindvault_verify_receipt: { receipt: {} },
+  mindvault_query_audit_log: {},
   mindvault_register_onchain: { resourceId: "res-001" },
   mindvault_agent_status: {},
   mindvault_registry_info: {},
@@ -106,7 +109,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
     operation: "get",
     creator: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
   },
-  mindvault_network_profile: {},
+  mindvault_network_profile: { sections: ["network", "diagnostics"] },
   mindvault_check_bindings: {},
   mindvault_check_consistency: { resourceId: "res-001" },
   mindvault_metadata_diff: { resourceId: "res-001" },
@@ -115,6 +118,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
     attestationHash: "a".repeat(64),
   },
   mindvault_registry_lookup: { resourceId: "res-001" },
+  mindvault_cache_chain_diff: {},
   mindvault_registry_list: {},
   mindvault_registry_count: {},
   mindvault_explain_error_code: { code: 1 },
@@ -152,8 +156,10 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
     royaltyRecipient: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
   },
   mindvault_check_state_permissions: {},
+  mindvault_state_diagnostics: {},
   mindvault_registry_health: {},
   mindvault_rpc_health: {},
+  mindvault_upstream_health: {},
   mindvault_prewarm_catalog: {},
   mindvault_client_config: {},
   mindvault_mainnet_banner: {},
@@ -884,6 +890,10 @@ describe("mindvault_export_receipts arguments", () => {
         limit: 50,
       }),
     ).not.toThrow();
+  });
+
+  it("accepts jsonl as an alias for ndjson", () => {
+    expect(() => validateToolArgs("mindvault_export_receipts", { format: "jsonl" })).not.toThrow();
   });
 
   it("rejects a format it cannot produce", () => {

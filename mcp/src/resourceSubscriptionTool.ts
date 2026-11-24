@@ -7,6 +7,12 @@
  */
 
 import { BASE_URL, jsonFetch } from "./runtime.js";
+import type { CatalogCacheContext } from "./catalogCache.js";
+import {
+  createResourceChangeCursor,
+  resolveResourceChangeCursor,
+  type ResourceChangeCursorState,
+} from "./resourceChangeCursor.js";
 import {
   pollResourceSubscription,
   type ResourceSubscriptionPollResult,
@@ -24,6 +30,9 @@ export type ResourceSubscriptionSnapshot = {
   attempts: number;
   settled: boolean;
   timedOut: boolean;
+  resumed: boolean;
+  lastDetectedAt: number;
+  cursor: string;
   message: string;
 };
 
@@ -70,6 +79,14 @@ export function normalizeIntervalMs(raw: unknown): number {
   return Math.max(Math.floor(n), MIN_POLL_INTERVAL_MS);
 }
 
+function cursorStateFromData(data: ResourceFetchData): ResourceChangeCursorState {
+  return {
+    price: data.price ?? null,
+    verificationStatus: data.verificationStatus ?? null,
+    listed: data.listed ?? null,
+  };
+}
+
 export function normalizeWaitFlag(raw: unknown): boolean {
   if (raw === undefined || raw === null || raw === "") return false;
   if (raw === true || raw === 1) return true;
@@ -103,6 +120,8 @@ export type ResourceSubscriptionOptions = {
   timeoutMs: number;
   intervalMs: number;
   sleep: (ms: number) => Promise<void>;
+  cursor?: string;
+  context: CatalogCacheContext;
   now?: () => number;
 };
 
@@ -117,9 +136,18 @@ export async function subscribeResource(
   onProgress?: ResourceProgressReporter,
 ): Promise<ResourceSubscriptionSnapshot> {
   const now = opts.now ?? Date.now;
-  const startedAt = now();
+  const resolvedCursor = resolveResourceChangeCursor(opts.cursor, opts.resourceId, opts.context);
+  if (!resolvedCursor.ok) throw new Error(resolvedCursor.error);
 
-  let previousData: ResourceFetchData | null = null;
+  const startedAt = now();
+  const resumed = resolvedCursor.lastDetectedAt > 0;
+  let previousData: ResourceFetchData | null = resumed
+    ? {
+        price: resolvedCursor.state.price ?? undefined,
+        verificationStatus: resolvedCursor.state.verificationStatus ?? undefined,
+        listed: resolvedCursor.state.listed ?? undefined,
+      }
+    : null;
   const changes: ResourceChange[] = [];
   let total = opts.wait ? Math.ceil(opts.timeoutMs / opts.intervalMs) + 1 : 1;
   let step = 0;
@@ -190,14 +218,22 @@ export async function subscribeResource(
 
   const finalData = result.snapshot;
   const elapsedMs = now() - startedAt;
+  const lastDetectedAt = now();
+  const cursor = createResourceChangeCursor(
+    opts.resourceId,
+    cursorStateFromData(finalData),
+    opts.context,
+    () => lastDetectedAt,
+  );
 
+  const resumePrefix = resumed ? "Resumed from cursor. " : "";
   let message: string;
   if (result.timedOut) {
-    message = `Subscription timed out after ${elapsedMs}ms. Detected ${changes.length} change(s).`;
+    message = `${resumePrefix}Subscription timed out after ${elapsedMs}ms. Detected ${changes.length} change(s).`;
   } else if (!opts.wait) {
-    message = `Single check completed. No polling. Detected ${changes.length} change(s) from initial state.`;
+    message = `${resumePrefix}Single check completed. No polling. Detected ${changes.length} change(s) from the last known state.`;
   } else {
-    message = `Monitoring completed after ${elapsedMs}ms. Detected ${changes.length} change(s).`;
+    message = `${resumePrefix}Monitoring completed after ${elapsedMs}ms. Detected ${changes.length} change(s).`;
   }
 
   return {
@@ -211,6 +247,9 @@ export async function subscribeResource(
     attempts: result.attempts,
     settled: result.settled,
     timedOut: result.timedOut,
+    resumed,
+    lastDetectedAt,
+    cursor,
     message,
   };
 }

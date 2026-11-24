@@ -21,8 +21,11 @@
  * changes in code changes the generated reference in the same PR.
  */
 
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
+import { MCP_PROTOCOL_VERSION_ENV } from "./diagnostics.js";
 import { DEFAULT_MAX_AUTO_FEE_STROOPS, DEFAULT_MAX_AUTO_PAY_USDC } from "./paymentCeiling.js";
 import { DEFAULT_PAID_CONFIRMATION_POLICY } from "./paidOperations.js";
+import { DEFAULT_DESTRUCTIVE_CONFIRMATION_POLICY } from "./destructiveOperations.js";
 import { DEFAULT_MAINNET_MUTATION_POLICY } from "./mainnetGuardrails.js";
 import { DEFAULT_RETRY_POLICY, DEFAULT_TOOL_RETRY_BUDGET, RETRY_BUDGET_ENV } from "./retry.js";
 import { DEFAULT_UPSTREAM_CONCURRENCY, UPSTREAM_CONCURRENCY_ENV } from "./upstreamConcurrency.js";
@@ -173,6 +176,16 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     source: "mcp/src/proxy.ts",
   },
 
+  // ── MCP protocol ───────────────────────────────────────────────────────────
+  {
+    name: MCP_PROTOCOL_VERSION_ENV,
+    description:
+      "Optional pin for the MCP protocol version used by the initialize handshake. An unsupported value is a blocking startup error instead of silently negotiating a different version. Unset means negotiate normally (#1202).",
+    default: "unset — negotiate from the client's initialize request",
+    values: [...SUPPORTED_PROTOCOL_VERSIONS],
+    source: "mcp/src/diagnostics.ts",
+  },
+
   // ── Guardrails & policies ──────────────────────────────────────────────────
   {
     name: "MINDVAULT_ALLOW_MAINNET",
@@ -205,6 +218,14 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     default: DEFAULT_PAID_CONFIRMATION_POLICY,
     values: ["off", "usdc", "all"],
     source: "mcp/src/paidOperations.ts",
+  },
+  {
+    name: "MINDVAULT_CONFIRM_DESTRUCTIVE_OPERATIONS",
+    description:
+      "Require an explicit confirmDestructive: true before tools replace local wallet/profile/state data or submit permanent on-chain changes. An unrecognized value is an error, not a fallback to off.",
+    default: DEFAULT_DESTRUCTIVE_CONFIRMATION_POLICY,
+    values: ["off", "local", "chain", "all"],
+    source: "mcp/src/destructiveOperations.ts",
   },
   {
     name: "MINDVAULT_MAX_AUTO_PAY_USDC",

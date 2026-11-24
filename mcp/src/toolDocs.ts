@@ -66,6 +66,7 @@ export function groupOf(name: string): string {
       "mindvault_batch_catalog_lookup",
       "mindvault_preview_metadata_hash",
       "mindvault_prewarm_catalog",
+      "mindvault_subscribe_resource",
     ].includes(name)
   )
     return "Catalog";
@@ -75,6 +76,7 @@ export function groupOf(name: string): string {
       "mindvault_publish",
       "mindvault_publish_status",
       "mindvault_publish_batch",
+      "mindvault_publish_batch_preview",
       "mindvault_buy",
       "mindvault_buy_lease",
       "mindvault_lease_status",
@@ -121,6 +123,7 @@ export function groupOf(name: string): string {
       "mindvault_resource_provenance",
       "mindvault_resource_change_log",
       "mindvault_fee_config",
+      "mindvault_verify_publisher",
     ].includes(name)
   )
     return "Registry & Diagnostics";
@@ -154,6 +157,7 @@ export function groupOf(name: string): string {
       "mindvault_verify_install",
       "mindvault_debug_bundle",
       "mindvault_support_bundle",
+      "mindvault_query_audit_log",
       "mindvault_client_config",
       "mindvault_mainnet_banner",
       "mindvault_server_endpoints",

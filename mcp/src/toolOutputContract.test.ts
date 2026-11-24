@@ -15,7 +15,7 @@
  * logged by tool name and schema path without the payload, and sent as an
  * `isError` result that still validates.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
+import { queryAuditLogTool } from "./auditQuery.js";
+import { previewPublishBatch } from "./publishBatchPreview.js";
 import { debugBundleTool } from "./debugBundle.js";
 import {
   DEFAULT_DEPLOYMENT_MANIFESTS,
@@ -92,6 +94,10 @@ beforeAll(() => {
     txHash: TX,
     receiptRef: "x402:mock",
   });
+  writeFileSync(
+    join(stateDir, "audit.jsonl"),
+    `${JSON.stringify({ timestamp: "2026-01-01T00:00:00Z", toolName: "browse", status: "success" })}\n`,
+  );
 });
 
 afterAll(() => {
@@ -116,6 +122,10 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
   mindvault_set_listed: () => mockSetListed("mock-1", false),
   mindvault_publish_batch: () =>
     mockPublishBatch([{ title: "One", price: "1", externalUrl: "https://example.com/1" }]),
+  mindvault_publish_batch_preview: () =>
+    previewPublishBatch({
+      items: [{ title: "One", price: "1.00", externalUrl: "https://example.com/1" }],
+    }),
   mindvault_registry_lookup: () => mockRegistryLookup("mock-1", CONTRACT, ADDRESS),
   mindvault_registry_list: () => mockRegistryList(0, 10, CONTRACT, ADDRESS),
   mindvault_registry_count: () => mockRegistryCount(undefined, CONTRACT),
@@ -152,6 +162,34 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
         { polled: false, attempts: 1, timedOut: false },
       ),
     ),
+  mindvault_verify_publisher: () =>
+    json({
+      walletAddress: ADDRESS,
+      registered: true,
+      publisherId: "pub-1",
+      name: "Agent",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      credentialPresent: true,
+      credentialStatus: "ready",
+      message: "Publisher is registered and the active profile credential matches this wallet.",
+    }),
+  mindvault_subscribe_resource: () =>
+    json({
+      resourceId: "mock-1",
+      title: "Test Resource",
+      price: "5.00",
+      verificationStatus: "verified",
+      listed: true,
+      changes: [],
+      polled: false,
+      attempts: 1,
+      settled: false,
+      timedOut: false,
+      resumed: false,
+      lastDetectedAt: 0,
+      cursor: "cursor-token",
+      message: "Single check completed.",
+    }),
   mindvault_metrics: () => json(createMetricsRecorder(true, 1000).snapshot()),
   mindvault_debug_bundle: () => debugBundleTool({}, new Date(0)),
   mindvault_onchain_preflight: () => onchainPreflightTool({}),
@@ -212,6 +250,8 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
   mindvault_migration_preview: () => migrationPreviewTool({}),
   mindvault_support_bundle: () =>
     supportBundleTool({ incidentId: "mv-01hq7x9k2m4p6r8t0v2w4y6a8c", auditLines: 25 }),
+  mindvault_query_audit_log: () =>
+    queryAuditLogTool({}, { MINDVAULT_AUDIT_LOG_FILE: join(stateDir, "audit.jsonl") }),
 
   // ── Payloads in the shape the network-backed handlers build ────────────
   mindvault_setup_wallet: () => json({ profile: "default", address: ADDRESS, persisted: true }),
@@ -446,13 +486,51 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
     }),
   mindvault_network_profile: () =>
     json({
+      schema: "mindvault.network-profile/v1",
+      sections: ["network", "endpoints", "contracts", "policies", "diagnostics"],
       stellarNetwork: "testnet",
       x402Network: NETWORK,
       sorobanRpcUrl: "https://soroban-testnet.stellar.org",
       horizonUrl: "https://horizon-testnet.stellar.org",
       registryContractId: CONTRACT,
-      usdcContractId: null,
+      usdcContractId: CONTRACT,
+      timeouts: "http=12000ms",
+      retries: "attempts=3",
       warnings: [],
+      network: {
+        stellarNetwork: "testnet",
+        x402Network: { value: NETWORK, source: "preset_default" },
+        networkPassphrase: "Test SDF Network ; September 2015",
+      },
+      endpoints: {
+        baseUrl: { value: "https://mindvault.example.com", source: "preset_default" },
+        sorobanRpc: {
+          value: {
+            url: "https://soroban-testnet.stellar.org",
+            failoverUrls: ["https://soroban-testnet.stellar.org"],
+          },
+          source: "preset_default",
+        },
+        horizonUrl: {
+          value: "https://horizon-testnet.stellar.org",
+          source: "preset_default",
+        },
+        sponsoredAccountUrl: {
+          value: "https://mindvault.example.com/api/sponsored-account",
+          source: "preset_default",
+        },
+      },
+      contracts: {
+        registryContractId: { value: CONTRACT, source: "preset_default" },
+        usdcContractId: { value: CONTRACT, source: "preset_default" },
+      },
+      policies: {
+        readOnly: true,
+        mainnetMutationConfirmationRequired: false,
+        timeouts: "http=12000ms",
+        retries: "attempts=3",
+      },
+      diagnostics: [],
     }),
   mindvault_check_consistency: () =>
     json({

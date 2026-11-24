@@ -42,7 +42,14 @@ import {
   REGISTRY_TAG_MAX_LENGTH,
 } from "./registryPagination.js";
 import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_ROW_FIELDS } from "./receipts.js";
+import { CACHE_CHAIN_DIFF_MAX_RESOURCES } from "./cacheChainDiff.js";
+import {
+  UPSTREAM_IDS,
+  UPSTREAM_PROBE_MAX_TIMEOUT_MS,
+  UPSTREAM_PROBE_MIN_TIMEOUT_MS,
+} from "./upstreamProbe.js";
 import { DEBUG_BUNDLE_MAX_AUDIT_LINES } from "./debugBundleSchema.js";
+import { MAX_AUDIT_QUERY_RESULTS } from "./auditQuery.js";
 import { SUPPORT_BUNDLE_MAX_AUDIT_LINES } from "./supportBundle.js";
 import { TOOL_DEFINITIONS } from "./tools.js";
 import {
@@ -206,6 +213,7 @@ const CONFIRM_MAINNET: ArgumentSpec = { kind: "flag" };
 
 /** Confirmation flag for paid operations (see paidOperations.ts). */
 const CONFIRM_PAID: ArgumentSpec = { kind: "flag" };
+const CONFIRM_DESTRUCTIVE: ArgumentSpec = { kind: "flag" };
 
 /** Preview flag: publish/buy report what they would do without paying. */
 const DRY_RUN: ArgumentSpec = { kind: "flag" };
@@ -294,6 +302,9 @@ export const TOOLS_WITHOUT_ARG_VALIDATION: readonly string[] = [
   // string/flag/hash/integer/enum/tag_array fields. Argument shape is enforced
   // by the input schema in tools.ts and validated inline in the dispatch handler.
   "mindvault_publish_batch",
+  // Same reason as publish_batch: items is an array of objects, validated by
+  // publishBatchPreview.ts before any signing or payment.
+  "mindvault_publish_batch_preview",
 ];
 
 /**
@@ -301,7 +312,11 @@ export const TOOLS_WITHOUT_ARG_VALIDATION: readonly string[] = [
  * which problems are reported, which keeps multi-issue errors deterministic.
  */
 export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
-  mindvault_setup_wallet: { profile: PROFILE_NAME, confirmMainnet: CONFIRM_MAINNET },
+  mindvault_setup_wallet: {
+    profile: PROFILE_NAME,
+    confirmMainnet: CONFIRM_MAINNET,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
+  },
   mindvault_repair_sponsored_account: {
     secretKey: {
       kind: "stellar_secret",
@@ -309,6 +324,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     },
     profile: PROFILE_NAME,
     confirmMainnet: CONFIRM_MAINNET,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
   mindvault_wallet_info: {},
   mindvault_wallet_allowance: {},
@@ -336,7 +352,9 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     },
     walletAddress: STELLAR_ADDRESS,
     confirmMainnet: CONFIRM_MAINNET,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
+  mindvault_verify_publisher: { walletAddress: STELLAR_ADDRESS },
   mindvault_publish: {
     title: { kind: "string", required: true, maxLength: 256 },
     description: { kind: "string", maxLength: 2048 },
@@ -367,14 +385,25 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     },
     intervalMs: { kind: "integer", min: MIN_SETTLEMENT_INTERVAL_MS },
   },
+  mindvault_subscribe_resource: {
+    resourceId: RESOURCE_ID,
+    cursor: { kind: "string", maxLength: 4096 },
+    wait: { kind: "flag" },
+    timeoutMs: { kind: "integer", min: 0, max: 600_000 },
+    intervalMs: { kind: "integer", min: 1_000 },
+  },
   mindvault_purchase_history: {
     resourceId: { ...RESOURCE_ID, required: false },
     network: { kind: "string", maxLength: 64 },
     query: { kind: "string" },
     idempotencyKey: { kind: "string" },
   },
+  mindvault_verify_receipt: {
+    receipt: { kind: "object", required: true },
+    expected: { kind: "object" },
+  },
   mindvault_export_receipts: {
-    format: { kind: "enum", values: ["json", "csv", "ndjson"] },
+    format: { kind: "enum", values: ["json", "csv", "ndjson", "jsonl"] },
     resourceId: { ...RESOURCE_ID, required: false },
     network: { kind: "string", maxLength: 64 },
     since: { kind: "string", maxLength: 64 },
@@ -415,7 +444,9 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     confirmMainnet: CONFIRM_MAINNET,
     confirmPaid: CONFIRM_PAID,
   },
-  mindvault_network_profile: {},
+  mindvault_network_profile: {
+    sections: { kind: "string_array", maxLength: 5 },
+  },
   mindvault_check_bindings: {},
   mindvault_check_consistency: {
     resourceId: RESOURCE_ID,
@@ -491,6 +522,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     confirm: { kind: "flag" },
     all: { kind: "flag" },
     confirmMainnet: CONFIRM_MAINNET,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
   mindvault_backup_state: { passphrase: PASSPHRASE, confirm: { kind: "flag" } },
   mindvault_compare_state_backup: {
@@ -502,6 +534,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_restore_state: {
     blob: { kind: "string", required: true, maxLength: 1_048_576 },
     passphrase: PASSPHRASE,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
   mindvault_metrics: {
     reset: { kind: "flag" },
@@ -521,6 +554,14 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_support_bundle: {
     incidentId: { kind: "string", required: true, minLength: 1, maxLength: 128 },
     auditLines: { kind: "integer", min: 0, max: SUPPORT_BUNDLE_MAX_AUDIT_LINES },
+  },
+  mindvault_query_audit_log: {
+    since: { kind: "string", maxLength: 64 },
+    until: { kind: "string", maxLength: 64 },
+    tool: { kind: "string", maxLength: 128 },
+    outcome: { kind: "enum", values: ["start", "success", "error"] },
+    offset: { kind: "integer", min: 0 },
+    limit: { kind: "integer", min: 1, max: MAX_AUDIT_QUERY_RESULTS },
   },
   mindvault_set_tags: {
     resourceId: RESOURCE_ID,
@@ -579,6 +620,7 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     },
     confirmMainnet: CONFIRM_MAINNET,
     confirmPaid: CONFIRM_PAID,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
   mindvault_fee_config: {},
   mindvault_royalty: {
@@ -621,10 +663,12 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     profile: PROFILE_NAME,
     confirm: { kind: "flag" },
     confirmMainnet: CONFIRM_MAINNET,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
   mindvault_rotate_publisher_key: {
     profile: PROFILE_NAME,
     confirmMainnet: CONFIRM_MAINNET,
+    confirmDestructive: CONFIRM_DESTRUCTIVE,
   },
   mindvault_verify_install: {},
   mindvault_recover_catalog_cache: {},

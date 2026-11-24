@@ -5069,6 +5069,31 @@ fn full_workflow_emits_exactly_the_documented_events() {
     client.remove_verifier(&verifier); // -> "rmverif"
     record(&env, &client, &mut observed);
 
+    // Two-step verifier rotation (#1239): propose → accept (emits `verprop`,
+    // `veracc`) and propose → cancel (emits `verprop`, `vercncl`).
+    let v_two_step = Address::generate(&env);
+    let v_two_step_next = Address::generate(&env);
+    let v_cancel_next = Address::generate(&env);
+    client.add_verifier(&v_two_step); // -> "addverif"
+    record(&env, &client, &mut observed);
+    let seq_before_prop = env.ledger().sequence();
+    client.propose_verifier_rotation(&v_two_step, &v_two_step_next); // -> "verprop"
+    record(&env, &client, &mut observed);
+    env.ledger()
+        .set_sequence_number(seq_before_prop + VERIFIER_ROTATION_MIN_GAP);
+    client.accept_verifier_rotation(&v_two_step_next); // -> "veracc"
+    record(&env, &client, &mut observed);
+    // Now v_two_step_next holds the role; propose and cancel for `vercncl`.
+    let seq_before_prop2 = env.ledger().sequence();
+    client.propose_verifier_rotation(&v_two_step_next, &v_cancel_next); // -> "verprop"
+    record(&env, &client, &mut observed);
+    env.ledger()
+        .set_sequence_number(seq_before_prop2 + 1);
+    client.cancel_verifier_rotation(&admin2); // -> "vercncl"
+    record(&env, &client, &mut observed);
+    client.remove_verifier(&v_two_step_next); // -> "rmverif"
+    record(&env, &client, &mut observed);
+
     client.freeze_metadata(&r2); // -> "freeze"
     record(&env, &client, &mut observed);
 
@@ -5287,7 +5312,8 @@ fn fee_preview_floor_matches_accrued_fee_at_truncation_boundaries() {
 
     // 1 base unit of fee sits exactly on the floor boundary; 99 units are
     // rounded away. Both must agree with the persisted accrued fee.
-    for (index, (price, expected_fee)) in [(101i128, 1i128), (99i128, 0i128)]
+    // Prices must exceed combined_fee_bps (100) per validate_price.
+    for (index, (price, expected_fee)) in [(201i128, 2i128), (199i128, 1i128)]
         .into_iter()
         .enumerate()
     {
@@ -10383,7 +10409,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 59] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 48] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -10416,10 +10442,13 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 59] {
         (DataKey::RefundDeadline(id.clone()), "RefundDeadline", 2),
         (DataKey::RefundedAmount(id.clone()), "RefundedAmount", 2),
         (DataKey::RefundWindow, "RefundWindow", 1),
-        (DataKey::VerifierHistory(who.clone()), "VerifierHistory", 2),
         (DataKey::CreatorEarnings(who.clone()), "CreatorEarnings", 2),
-        (DataKey::FlagModerator(id.clone()), "FlagModerator", 2),
         (DataKey::Lease(id.clone(), who.clone()), "Lease", 3),
+        (
+            DataKey::HolderLeaseIndex(who.clone()),
+            "HolderLeaseIndex",
+            2,
+        ),
         (
             DataKey::AnchorAttempts(id.clone(), who.clone()),
             "AnchorAttempts",
@@ -10464,20 +10493,50 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 59] {
         (DataKey::MetadataPointers(id.clone()), "MetadataPointers", 2),
         (DataKey::RecoveryAdmin, "RecoveryAdmin", 1),
         (DataKey::Revision(id.clone()), "Revision", 2),
-        (DataKey::MaintenanceStatus, "MaintenanceStatus", 1),
+    ]
+}
+
+/// Decompose a `DataKeyExt` storage key into the vec Soroban encodes it as.
+fn storage_key_parts_ext(env: &Env, key: &DataKeyExt) -> Vec<Val> {
+    let val: Val = key.into_val(env);
+    Vec::try_from_val(env, &val).expect("a #[contracttype] enum key encodes as a vec")
+}
+
+/// The variant name a `DataKeyExt` storage key is addressed by on the ledger.
+fn storage_key_variant_ext(env: &Env, key: &DataKeyExt) -> Symbol {
+    let parts = storage_key_parts_ext(env, key);
+    Symbol::try_from_val(env, &parts.get(0).expect("key has a discriminant"))
+        .expect("key discriminant is a symbol")
+}
+
+/// Every `DataKeyExt` variant, with the name and arity it must keep across
+/// upgrades. Adding a variant means adding a row here — the exhaustive match in
+/// `storage_key_migration_covers_every_ext_variant` will not compile until you do.
+fn storage_key_wire_contract_ext(env: &Env) -> [(DataKeyExt, &'static str, u32); 17] {
+    let id = String::from_str(env, "migkey");
+    let who = Address::generate(env);
+    [
+        (DataKeyExt::MaintenanceStatus, "MaintenanceStatus", 1),
         (
-            DataKey::RevocationReasonHash(id.clone()),
+            DataKeyExt::RevocationReasonHash(id.clone()),
             "RevocationReasonHash",
             2,
         ),
-        (DataKey::AccruedFees, "AccruedFees", 1),
-        (DataKey::PaymentMemo(id.clone()), "PaymentMemo", 2),
-        (DataKey::FlagResolutionWindow, "FlagResolutionWindow", 1),
-        (DataKey::FlagDeadline(id.clone()), "FlagDeadline", 2),
-        (DataKey::ActiveLeasePriceFloor, "ActiveLeasePriceFloor", 1),
-        (DataKey::RoleHolders(RoleKind::Verifier), "RoleHolders", 2),
-        (DataKey::PaymentPaused, "PaymentPaused", 1),
-        (DataKey::PaymentPauseUntil, "PaymentPauseUntil", 1),
+        (DataKeyExt::AccruedFees, "AccruedFees", 1),
+        (DataKeyExt::RoleHolders(RoleKind::Verifier), "RoleHolders", 2),
+        (DataKeyExt::PaymentPaused, "PaymentPaused", 1),
+        (DataKeyExt::PaymentPauseUntil, "PaymentPauseUntil", 1),
+        (DataKeyExt::ActiveLeasePriceFloor, "ActiveLeasePriceFloor", 1),
+        (DataKeyExt::VerifierKeyChangeCount, "VerifierKeyChangeCount", 1),
+        (DataKeyExt::VerifierKeyChange(0), "VerifierKeyChange", 2),
+        (DataKeyExt::PendingVerifierRotation, "PendingVerifierRotation", 1),
+        (DataKeyExt::VerifierHistory(who.clone()), "VerifierHistory", 2),
+        (DataKeyExt::PaymentMemo(id.clone()), "PaymentMemo", 2),
+        (DataKeyExt::RefundReasonHash(id.clone()), "RefundReasonHash", 2),
+        (DataKeyExt::FlagDeadline(id.clone()), "FlagDeadline", 2),
+        (DataKeyExt::FlagResolutionWindow, "FlagResolutionWindow", 1),
+        (DataKeyExt::ResourceHistory(id.clone()), "ResourceHistory", 2),
+        (DataKeyExt::FlagModerator(id.clone()), "FlagModerator", 2),
     ]
 }
 
@@ -10517,7 +10576,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        59,
+        48,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -10544,10 +10603,9 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::RefundDeadline(_) => "RefundDeadline",
             DataKey::RefundedAmount(_) => "RefundedAmount",
             DataKey::RefundWindow => "RefundWindow",
-            DataKey::VerifierHistory(_) => "VerifierHistory",
             DataKey::CreatorEarnings(_) => "CreatorEarnings",
-            DataKey::FlagModerator(_) => "FlagModerator",
             DataKey::Lease(_, _) => "Lease",
+            DataKey::HolderLeaseIndex(_) => "HolderLeaseIndex",
             DataKey::AnchorAttempts(_, _) => "AnchorAttempts",
             DataKey::RegistryTerms => "RegistryTerms",
             DataKey::Paused => "Paused",
@@ -10572,20 +10630,68 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::MetadataPointers(_) => "MetadataPointers",
             DataKey::RecoveryAdmin => "RecoveryAdmin",
             DataKey::Revision(_) => "Revision",
-            DataKey::MaintenanceStatus => "MaintenanceStatus",
-            DataKey::RevocationReasonHash(_) => "RevocationReasonHash",
-            DataKey::AccruedFees => "AccruedFees",
-            DataKey::PaymentMemo(_) => "PaymentMemo",
-            DataKey::FlagResolutionWindow => "FlagResolutionWindow",
-            DataKey::FlagDeadline(_) => "FlagDeadline",
-            DataKey::ActiveLeasePriceFloor => "ActiveLeasePriceFloor",
-            DataKey::RoleHolders(_) => "RoleHolders",
-            DataKey::PaymentPaused => "PaymentPaused",
-            DataKey::PaymentPauseUntil => "PaymentPauseUntil",
         };
         assert_eq!(
             matched, *name,
             "storage_key_wire_contract lists {name} against the wrong variant"
+        );
+    }
+}
+
+#[test]
+fn storage_key_variant_names_are_stable_ext() {
+    let env = Env::default();
+    for (key, name, _) in storage_key_wire_contract_ext(&env).iter() {
+        assert_eq!(
+            storage_key_variant_ext(&env, key),
+            Symbol::new(&env, name),
+            "DataKeyExt::{name} is addressed on-chain by its variant name."
+        );
+    }
+}
+
+#[test]
+fn storage_key_arity_is_stable_ext() {
+    let env = Env::default();
+    for (key, name, arity) in storage_key_wire_contract_ext(&env).iter() {
+        let parts = storage_key_parts_ext(&env, key);
+        assert_eq!(parts.len(), *arity, "DataKeyExt::{name} arity changed");
+    }
+}
+
+#[test]
+fn storage_key_migration_covers_every_ext_variant() {
+    let env = Env::default();
+    let contract = storage_key_wire_contract_ext(&env);
+    assert_eq!(
+        contract.len(),
+        17,
+        "storage_key_wire_contract_ext must list every DataKeyExt variant"
+    );
+
+    for (key, name, _) in contract.iter() {
+        let matched = match key {
+            DataKeyExt::MaintenanceStatus => "MaintenanceStatus",
+            DataKeyExt::RevocationReasonHash(_) => "RevocationReasonHash",
+            DataKeyExt::AccruedFees => "AccruedFees",
+            DataKeyExt::RoleHolders(_) => "RoleHolders",
+            DataKeyExt::PaymentPaused => "PaymentPaused",
+            DataKeyExt::PaymentPauseUntil => "PaymentPauseUntil",
+            DataKeyExt::ActiveLeasePriceFloor => "ActiveLeasePriceFloor",
+            DataKeyExt::VerifierKeyChangeCount => "VerifierKeyChangeCount",
+            DataKeyExt::VerifierKeyChange(_) => "VerifierKeyChange",
+            DataKeyExt::PendingVerifierRotation => "PendingVerifierRotation",
+            DataKeyExt::VerifierHistory(_) => "VerifierHistory",
+            DataKeyExt::PaymentMemo(_) => "PaymentMemo",
+            DataKeyExt::RefundReasonHash(_) => "RefundReasonHash",
+            DataKeyExt::FlagDeadline(_) => "FlagDeadline",
+            DataKeyExt::FlagResolutionWindow => "FlagResolutionWindow",
+            DataKeyExt::ResourceHistory(_) => "ResourceHistory",
+            DataKeyExt::FlagModerator(_) => "FlagModerator",
+        };
+        assert_eq!(
+            matched, *name,
+            "storage_key_wire_contract_ext lists {name} against the wrong variant"
         );
     }
 }
@@ -12215,7 +12321,7 @@ fn list_holder_leases_clamps_limit_and_skips_non_active_records() {
         );
     }
     let capped = client.list_holder_leases(&holder, &None::<u32>, &u32::MAX);
-    assert_eq!(capped.items.len(), LIST_PAGE_CAP as usize);
+    assert_eq!(capped.items.len(), LIST_PAGE_CAP);
     assert_eq!(capped.next_cursor, Some(LIST_PAGE_CAP));
 
     let tail = client.list_holder_leases(&holder, &capped.next_cursor, &20u32);
@@ -12269,7 +12375,7 @@ fn list_holder_leases_clamps_limit_and_skips_non_active_records() {
     }
 
     let filtered = client.list_holder_leases(&holder, &None::<u32>, &LIST_PAGE_CAP);
-    assert_eq!(filtered.items.len(), LIST_PAGE_CAP as usize);
+    assert_eq!(filtered.items.len(), LIST_PAGE_CAP);
     for lease in filtered.items.iter() {
         assert!(client.lease_is_active(&lease.resource_id, &holder));
     }
@@ -12302,6 +12408,7 @@ include!("test/stellar_wave_977_978_979_980.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
 include!("test/verifier_key_history.rs");
+include!("test/verifier_rotation_two_step.rs");
 include!("test/event_indexing_guide.rs");
 include!("test/pause_scope_matrix.rs");
 include!("test/fee_split_preview.rs");

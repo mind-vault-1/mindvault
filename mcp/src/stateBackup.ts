@@ -27,6 +27,8 @@ import {
 } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
+import { Keypair, StrKey } from "@stellar/stellar-sdk";
+import { inferNetworkFromX402 } from "@mindvault/registry-client";
 import {
   isProfileNetwork,
   profileNetworkName,

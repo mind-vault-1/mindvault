@@ -3,10 +3,9 @@
 // Read-only fee split preview: `preview_fee_split` exposes the exact integer
 // fee and creator remainder for a proposed sale amount, using the same
 // truncating arithmetic as `settle_payment`.
-
-use crate::test::setup_with_admin;
-use crate::{Error, FeeConfig, FeeSplitPreview, VaultRegistryClient};
-use soroban_sdk::{testutils::Address as _, Address, Env};
+//
+// All imports are already in scope via the `include!` of this file into
+// `test.rs`, which has `use super::*` and explicit `soroban_sdk` imports.
 
 /// Helper: create an env with admin + fee config set to `(platform_bps, royalty_bps)`.
 fn setup_with_fee_config<'a>(
