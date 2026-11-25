@@ -6910,6 +6910,7 @@ impl VaultRegistry {
 
         let key = DataKey::Lease(resource_id.clone(), holder.clone());
         let mut lease: Lease = env.storage().persistent().get(&key).ok_or(Error::NotFound)?;
+        Self::require_lease_binding(&lease, &resource_id, &holder)?;
         if !Self::lease_grants_access(&env, &lease) {
             return Err(Error::InvalidPaymentTransition);
         }

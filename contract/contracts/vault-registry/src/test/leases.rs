@@ -826,3 +826,64 @@ fn zero_fee_config_always_allowed() {
     
     assert!(result.is_ok());
 }
+
+#[test]
+fn renew_lease_is_allowed_before_expiry_and_rejected_at_exact_expiry() {
+    let (env, creator, settler, holder, client) = lease_setup();
+
+    env.ledger().set_sequence_number(100);
+    let exact_id = register_priced(&env, &creator, &client, "renewexact", 100i128);
+    let exact_original = client.record_lease(
+        &settler,
+        &holder,
+        &exact_id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "exact-origin"),
+    );
+
+    env.ledger().set_sequence_number(exact_original.expiry_ledger);
+    let before_rejection_events = env.events().all().len();
+    assert_eq!(
+        client.try_renew_lease(
+            &holder,
+            &exact_id,
+            &LeaseTier::Day,
+            &500i128,
+            &String::from_str(&env, "renew-at-expiry"),
+        ),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+    assert_eq!(client.get_lease(&exact_id, &holder), exact_original);
+    assert_eq!(env.events().all().len(), before_rejection_events);
+
+    env.ledger().set_sequence_number(100);
+    let before_id = register_priced(&env, &creator, &client, "renewbefore", 100i128);
+    let original = client.record_lease(
+        &settler,
+        &holder,
+        &before_id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "renew-origin"),
+    );
+
+    env.ledger().set_sequence_number(original.expiry_ledger - 1);
+    let renewed = client.renew_lease(
+        &holder,
+        &before_id,
+        &LeaseTier::Day,
+        &500i128,
+        &String::from_str(&env, "renew-before"),
+    );
+
+    assert_eq!(renewed.resource_id, before_id);
+    assert_eq!(renewed.holder, holder);
+    assert_eq!(renewed.tier, LeaseTier::Day);
+    assert_eq!(renewed.expiry_ledger, original.expiry_ledger + LEASE_DAY_LEDGERS);
+    assert_eq!(renewed.amount, 500i128);
+    assert_eq!(
+        last_lease_event(&env, symbol_short!("leasernew"), &before_id),
+        renewed
+    );
+}

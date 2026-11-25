@@ -10,7 +10,10 @@
  *      `Pending` until a settler confirms the transfer with `settle_lease`.
  *
  * `mindvault_lease_status` reads `get_lease` / `lease_is_active` so an agent
- * can check its window before re-buying. Both tools honour mock mode.
+ * can check its window before re-buying. The contract's holder-only
+ * `renew_lease` can extend an active window before expiry; status reflects the
+ * updated expiry and remains unchanged at the exact expiry boundary. Both tools
+ * honour mock mode.
  */
 
 import { createLimitedRegistryClient } from "../upstreamStellar.js";
