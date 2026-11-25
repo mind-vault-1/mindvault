@@ -40,6 +40,7 @@ import {
   CATALOG_LIST_OUTPUT_SCHEMA,
   CONSISTENCY_OUTPUT_SCHEMA,
   METADATA_DIFF_OUTPUT_SCHEMA,
+  CONTRACT_EVENT_HISTORY_OUTPUT_SCHEMA,
   FEE_CONFIG_OUTPUT_SCHEMA,
   LIST_PROFILES_OUTPUT_SCHEMA,
   METADATA_HASH_PREVIEW_OUTPUT_SCHEMA,
@@ -1051,6 +1052,53 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: REGISTRY_LOOKUP_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Registry Lookup",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_contract_event_history",
+    description:
+      "Read the vault-registry contract's Soroban event history for one resource id. Queries getEvents for the configured contract, decodes each event's ScVal topics and payload, and keeps the pages that mention the resource. Pass startLedger for a fresh search or the returned cursor to continue; never pass both. Events are ordered by ledger and event id, and the result reports how many events were scanned, how many matched, and whether more pages remain. Read-only: it never signs or submits a transaction. See docs/contract-event-indexing.md for the event catalog.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description:
+            "The resource id to find in registry event topics or payloads, as passed to register and other registry calls.",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+        startLedger: {
+          type: "integer",
+          minimum: 1,
+          description:
+            "First ledger to scan when starting a fresh history search. Omit it when continuing with cursor; mutually exclusive with cursor.",
+          examples: [123456],
+        },
+        cursor: {
+          type: "string",
+          minLength: 1,
+          maxLength: 256,
+          description:
+            "Pagination cursor returned by a previous call. Omit it when starting a fresh search with startLedger; mutually exclusive with startLedger.",
+          examples: ["123456-0000000000"],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 200,
+          description:
+            "Maximum number of raw contract events to scan per page (default 50, maximum 200). Matched events may be fewer than this limit.",
+          examples: [50],
+        },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: CONTRACT_EVENT_HISTORY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Contract Event History",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

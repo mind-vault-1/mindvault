@@ -1083,6 +1083,34 @@ export const PENDING_TRANSFER_OUTPUT_SCHEMA = {
   required: ["resourceId", "found", "message"],
 } as const;
 
+export const CONTRACT_EVENT_HISTORY_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    resourceId: { type: "string" },
+    contractId: { type: "string" },
+    events: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          ledger: { type: "integer" },
+          ledgerClosedAt: { type: ["string", "null"] },
+          txHash: { type: ["string", "null"] },
+          topic: { type: "array", items: {} },
+          value: {},
+        },
+        required: ["id", "ledger", "ledgerClosedAt", "txHash", "topic", "value"],
+      },
+    },
+    scanned: { type: "integer" },
+    cursor: { type: ["string", "null"] },
+    hasMore: { type: "boolean" },
+    notice: { type: ["string", "null"] },
+  },
+  required: ["resourceId", "contractId", "events", "scanned", "cursor", "hasMore", "notice"],
+} as const;
+
 /**
  * One entry of a batch catalog lookup result (#608).
  *
