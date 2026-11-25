@@ -1122,13 +1122,25 @@ const BATCH_CATALOG_ITEM_SCHEMA = {
   properties: {
     id: { type: ["string", "null"] },
     found: { type: "boolean" },
+    status: { type: "string", enum: ["found", "not_found", "cached"] },
+    reason: { type: "string", enum: ["live", "not_found", "offline_snapshot"] },
     title: { type: ["string", "null"] },
     price: { type: ["string", "number", "null"] },
     verificationStatus: { type: ["string", "null"] },
     resourceType: { type: ["string", "null"] },
     accessUrl: { type: ["string", "null"] },
   },
-  required: ["id", "found", "title", "price", "verificationStatus", "resourceType", "accessUrl"],
+  required: [
+    "id",
+    "found",
+    "status",
+    "reason",
+    "title",
+    "price",
+    "verificationStatus",
+    "resourceType",
+    "accessUrl",
+  ],
 } as const;
 
 export const BATCH_CATALOG_LOOKUP_OUTPUT_SCHEMA = {

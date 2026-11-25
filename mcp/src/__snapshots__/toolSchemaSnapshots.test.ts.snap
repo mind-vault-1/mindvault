@@ -442,11 +442,27 @@ exports[`tool schema snapshots > mindvault_batch_catalog_lookup > output schema 
                   "null",
                 ],
               },
+              "reason": {
+                "enum": [
+                  "live",
+                  "not_found",
+                  "offline_snapshot",
+                ],
+                "type": "string",
+              },
               "resourceType": {
                 "type": [
                   "string",
                   "null",
                 ],
+              },
+              "status": {
+                "enum": [
+                  "found",
+                  "not_found",
+                  "cached",
+                ],
+                "type": "string",
               },
               "title": {
                 "type": [
@@ -464,6 +480,8 @@ exports[`tool schema snapshots > mindvault_batch_catalog_lookup > output schema 
             "required": [
               "id",
               "found",
+              "status",
+              "reason",
               "title",
               "price",
               "verificationStatus",

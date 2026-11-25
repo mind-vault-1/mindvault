@@ -2748,6 +2748,8 @@ async function batchCatalogLookupOutcome(
     items.push({
       id,
       found: Boolean(r),
+      status: !r ? "not_found" : meta?.label ? "cached" : "found",
+      reason: !r ? "not_found" : meta?.label ? "offline_snapshot" : "live",
       title: r?.title ?? null,
       price: r?.price ?? null,
       verificationStatus: r?.verificationStatus ?? null,
