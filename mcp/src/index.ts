@@ -333,6 +333,7 @@ import {
 } from "./catalogCache.js";
 import { resetRegistrySchemaCache } from "./registrySchema.js";
 import { createCatalogCursor, resolveCatalogCursor } from "./catalogCursor.js";
+import { cursorMappedError } from "./cursorToken.js";
 import {
   acceptTransfer,
   cancelTransfer,
@@ -2513,7 +2514,15 @@ async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome>
   const cursorResult = filters.cursor
     ? resolveCatalogCursor(filters.cursor, filters, context)
     : { ok: true as const, offset: filters.offset };
-  if (!cursorResult.ok) return catalogOutcome([], cursorResult.error, null);
+  if (!cursorResult.ok) {
+    throw mcpError(
+      cursorMappedError({
+        operation: "Browse failed",
+        reason: cursorResult.reason,
+        error: cursorResult.error,
+      }),
+    );
+  }
   const requestFilters =
     cursorResult.offset === undefined ? filters : { ...filters, offset: cursorResult.offset };
   const qs = buildCatalogQueryString(requestFilters);
@@ -2619,7 +2628,15 @@ async function searchOutcome(filtersOrQuery: string | CatalogFilters): Promise<T
   const cursorResult = filters.cursor
     ? resolveCatalogCursor(filters.cursor, filters, context)
     : { ok: true as const, offset: filters.offset };
-  if (!cursorResult.ok) return catalogOutcome([], cursorResult.error, null);
+  if (!cursorResult.ok) {
+    throw mcpError(
+      cursorMappedError({
+        operation: "Search failed",
+        reason: cursorResult.reason,
+        error: cursorResult.error,
+      }),
+    );
+  }
   const requestFilters =
     cursorResult.offset === undefined ? filters : { ...filters, offset: cursorResult.offset };
   const requestQs = buildCatalogQueryString(requestFilters);
@@ -4436,13 +4453,14 @@ export async function registryCreatorPage(
       ? ({ ok: true, cursor: { tag: "Start", values: undefined } } as const)
       : decodeIdCursor(cursorToken);
   if (!decoded.ok) {
-    throw mcpError({
-      source: "soroban",
-      category: "validation",
-      summary: `Creator page rejected: ${decoded.error}`,
-      action:
-        "Call mindvault_registry_creator_page again without a cursor to start from the first page.",
-    });
+    throw mcpError(
+      cursorMappedError({
+        operation: "Creator page rejected",
+        reason: decoded.reason,
+        error: decoded.error,
+        source: "soroban",
+      }),
+    );
   }
 
   const client = createLimitedRegistryClient({

@@ -154,7 +154,7 @@ exports[`MCP tool metadata > mindvault_search inputSchema 1`] = `
       "type": "boolean",
     },
     "cursor": {
-      "description": "Opaque cursor returned as nextCursor. It is valid only with the same profile, network, API origin, and filters; discard it after switching profiles or changing filters.",
+      "description": "Signed, opaque cursor returned as nextCursor. Valid for 15 minutes and only with the same profile, network, API origin, and filters; an expired, malformed, or edited cursor returns a structured MV_CURSOR_* error. Omit it to start a new page.",
       "type": "string",
     },
     "limit": {

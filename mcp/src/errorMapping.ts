@@ -19,6 +19,7 @@ import { describeMalformedResponse, isMalformedResponseBody } from "./malformedR
 import type { MalformedResponseBody } from "./malformedResponse.js";
 import { redactSecrets, safeErrorMessage } from "./redaction.js";
 import { CLOCK_SKEW_WINDOW_MS, isClockSkewRejection } from "./requestSignature.js";
+import type { ErrorCode } from "./errorCodes.js";
 
 /** Which subsystem produced the failure. */
 export type ErrorSource = "api" | "x402" | "horizon" | "soroban" | "registry" | "sponsored";
@@ -49,6 +50,8 @@ export interface MappedError {
   detail?: string;
   /** One-line, imperative next step for the agent. */
   action: string;
+  /** Stable, specific code from errorCodes.ts when the caller classified one. */
+  code?: ErrorCode;
   /**
    * Set when the upstream answered with a body that was not JSON (#1019).
    *
@@ -73,6 +76,8 @@ export interface TroubleshootingHint {
   summary: string;
   detail: string | null;
   action: string;
+  /** Stable, specific code from errorCodes.ts, when one was assigned. */
+  code?: ErrorCode;
   /**
    * The upstream's own request id, when the failure carries one (#1019).
    *
@@ -92,6 +97,7 @@ export function troubleshootingHint(error: MappedError): TroubleshootingHint {
     summary: redactSecrets(error.summary),
     detail: error.detail === undefined ? null : redactSecrets(error.detail),
     action: redactSecrets(error.action),
+    ...(error.code ? { code: error.code } : {}),
     ...(error.malformed?.requestId ? { requestId: redactSecrets(error.malformed.requestId) } : {}),
   };
 }

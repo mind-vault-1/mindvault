@@ -371,7 +371,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_search",
     description:
-      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries. Use nextCursor for pagination; cursors are bound to the active profile and exact filter set. Set bypassCache=true for a fresh per-call read.",
+      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries. Use nextCursor for pagination; signed cursors expire after 15 minutes and are bound to the active profile and exact filter set. An expired, malformed, or edited cursor returns a structured cursor error with a documented error code. Set bypassCache=true for a fresh per-call read.",
     inputSchema: {
       type: "object",
       properties: { ...catalogFilterInputProperties },
@@ -1152,8 +1152,9 @@ const DEFINED_TOOLS: ToolDefinition[] = [
         },
         cursor: {
           type: "string",
-          description: "Opaque cursor from a previous page's nextCursor. Omit for the first page.",
-          examples: ["eyJ2IjoxLCJ0IjoiYSJ9"],
+          description:
+            "Signed cursor from a previous page's nextCursor, valid for 15 minutes. Editing it or reusing it after expiry returns a structured MV_CURSOR_* error. Omit for the first page.",
+          examples: ["eyJ2IjoyLCJrIjoicmVnaXN0cnkifQ"],
         },
         limit: {
           type: "integer",
@@ -2289,7 +2290,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
         cursor: {
           type: "string",
           description:
-            "Opaque cursor from a previous mindvault_subscribe_resource call. Resumes from the last observed state; omit to start a new subscription.",
+            "Signed cursor from a previous mindvault_subscribe_resource call, valid for 15 minutes. Resumes from the last observed state; an expired or edited cursor returns a structured MV_CURSOR_* error. Omit to start a new subscription.",
         },
         wait: {
           type: "boolean",

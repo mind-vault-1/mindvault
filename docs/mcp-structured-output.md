@@ -34,8 +34,10 @@ no `structuredContent`, no `outputSchema`.
 **Failure (thrown):** `{ "content": [{ "type": "text", "text": "Error: …" }], "isError": true }`.
 When the failure was classified (network, timeout, payment, …) it also carries
 `structuredContent: { "troubleshooting": { "schema": "mindvault.troubleshooting/v1", … } }`.
-Soft misses that already return JSON (registry `found: false`) stay successful
-results with a payload.
+When the caller assigns a specific code — currently the `MV_CURSOR_*` failures —
+the hint also carries `code`, so an agent can branch on the reason without
+parsing the summary. Soft misses that already return JSON (registry
+`found: false`) stay successful results with a payload.
 
 When a structured tool returns prose instead of JSON (insufficient funds,
 verification rejected, missing tx hash), the text is unchanged and
