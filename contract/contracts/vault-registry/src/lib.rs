@@ -50,6 +50,8 @@ const LIFETIME_THRESHOLD: u32 = BUMP_AMOUNT - DAY_IN_LEDGERS;
 /// The bound counts UTF-8 bytes, not Unicode scalar values, so multibyte
 /// pointers are rejected before any resource mutation or event emission.
 pub const MAX_METADATA_POINTER_LEN: u32 = 512;
+/// Maximum byte length of an off-chain metadata schema identifier.
+pub const MAX_METADATA_SCHEMA_ID_LEN: u32 = 64;
 pub const MAX_TERMS_HASH_LEN: u32 = 64;
 /// Max number of redundant metadata pointers (e.g. IPFS + Arweave + hosted)
 /// a resource may carry via `set_metadata_pointers`.
@@ -134,6 +136,8 @@ pub const MAX_BATCH_PRICE_UPDATES: u32 = 10;
 pub const MAX_BATCH_METADATA_UPDATES: u32 = 10;
 /// Maximum number of lifecycle states returned by `get_resource_states`.
 pub const MAX_BATCH_RESOURCE_STATES: u32 = 20;
+/// Maximum number of leases returned by a status lookup.
+pub const MAX_BATCH_LEASE_STATUSES: u32 = 20;
 /// Maximum number of resource ids accepted by `check_tag_index` in one call.
 pub const MAX_TAG_INDEX_CHECK: u32 = 20;
 /// Maximum number of resource ids accepted by `repair_tag_index` in one call.
@@ -240,6 +244,8 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("update_metadata_many", "creator"),
     ("freeze_metadata", "creator"),
     ("set_metadata_pointers", "creator"),
+    ("set_metadata_schema_id", "creator"),
+    ("get_metadata_schema_id", "—"),
     ("get_metadata_pointers", "—"),
     ("set_tags", "creator"),
     ("set_royalty_recipient", "creator"),
@@ -404,6 +410,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("revoke_lease", "creator"),
     ("get_lease", "—"),
     ("list_holder_leases", "—"),
+    ("get_lease_statuses", "—"),
     ("lease_is_active", "—"),
     ("lease_price", "—"),
     // ── TTL ───────────────────────────────────────────────────────────────
@@ -1411,6 +1418,8 @@ pub enum DataKeyExt {
     FlagDeadline(String),
     /// Configured flag resolution window length, in ledgers.
     FlagResolutionWindow,
+    /// Optional off-chain metadata schema identifier for a resource.
+    MetadataSchemaId(String),
     /// Bounded revision history for a resource, keyed by resource id (#1174).
     ResourceHistory(String),
     /// Last moderator to act on a resource's dispute flag.
@@ -1806,6 +1815,17 @@ pub enum LeaseTier {
 pub enum LeaseState {
     Pending,
     Active,
+    Revoked,
+}
+
+/// Effective lease status at the ledger of a batch lookup.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum LeaseStatus {
+    Missing,
+    Pending,
+    Active,
+    Expired,
     Revoked,
 }
 
@@ -2469,6 +2489,56 @@ impl VaultRegistry {
         Self::bump_persistent(&env, &key);
         env.events().publish((symbol_short!("setptrs"), id), record);
         Ok(())
+    }
+
+    /// Set or clear the resource's off-chain metadata schema identifier.
+    pub fn set_metadata_schema_id(
+        env: Env,
+        id: String,
+        schema_id: Option<String>,
+    ) -> Result<(), Error> {
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&id)?;
+        let resource = Self::load(&env, &id)?;
+        resource.creator.require_auth();
+        Self::ensure_mutable(&resource)?;
+        if resource.frozen || resource.content_hash.is_some() {
+            return Err(Error::MetadataFrozen);
+        }
+
+        let key = DataKeyExt::MetadataSchemaId(id.clone());
+        if let Some(value) = &schema_id {
+            Self::validate_bounded_string(
+                value,
+                1,
+                MAX_METADATA_SCHEMA_ID_LEN,
+                Error::EmptyMetadata,
+                Error::MetadataTooLong,
+            )?;
+        }
+        if env.storage().persistent().get::<_, String>(&key) == schema_id {
+            return Ok(());
+        }
+        Self::bump_listing_revision(&env, &id)?;
+        if let Some(value) = schema_id {
+            env.storage().persistent().set(&key, &value);
+            Self::bump_persistent(&env, &key);
+        } else {
+            env.storage().persistent().remove(&key);
+        }
+        Ok(())
+    }
+
+    /// Read the optional off-chain schema identifier for a registered resource.
+    pub fn get_metadata_schema_id(env: Env, id: String) -> Result<Option<String>, Error> {
+        Self::validate_resource_id(&id)?;
+        Self::load(&env, &id)?;
+        let key = DataKeyExt::MetadataSchemaId(id);
+        let value: Option<String> = env.storage().persistent().get(&key);
+        if value.is_some() {
+            Self::bump_persistent(&env, &key);
+        }
+        Ok(value)
     }
 
     /// All metadata pointers for a resource. Falls back to a single-entry list
@@ -6136,29 +6206,11 @@ impl VaultRegistry {
         }
 
         if let Some(reason) = Self::anchor_blocker(&env, &resource_id, &buyer, &receipt_hash) {
-            let attempts = Self::count_rejected_anchor_attempt(&env, &resource_id, &buyer);
-            let failure = AnchorFailure {
-                resource_id: resource_id.clone(),
-                buyer: buyer.clone(),
-                receipt_hash,
-                reason,
-                ledger: env.ledger().sequence(),
-            };
-            env.storage().persistent().set(
-                &DataKey::AnchorFailure(resource_id.clone(), buyer.clone()),
-                &failure,
-            );
-            Self::bump_persistent(
-                &env,
-                &DataKey::AnchorFailure(resource_id.clone(), buyer.clone()),
-            );
-            env.events()
-                .publish((symbol_short!("anchrfail"), resource_id.clone()), failure);
-            if attempts.attempts >= MAX_ANCHOR_ATTEMPTS {
-                env.events()
-                    .publish((symbol_short!("anchrxhst"), resource_id, buyer), attempts);
+            let key = DataKey::PurchaseReceipt(resource_id.clone(), buyer.clone());
+            if env.storage().persistent().has(&key) {
+                return Self::report_anchor_failure(&env, resource_id, buyer, receipt_hash, reason);
             }
-            return Ok(false);
+            return Self::counted_anchor_failure(&env, resource_id, buyer, receipt_hash, reason);
         }
 
         Self::write_anchor(&env, resource_id, buyer, receipt_hash);
@@ -6441,7 +6493,7 @@ impl VaultRegistry {
         {
             Some(id) => id,
             None => {
-                return Self::counted_retry_anchor_failure(
+                return Self::counted_anchor_failure(
                     &env,
                     resource_id,
                     buyer,
@@ -6457,7 +6509,7 @@ impl VaultRegistry {
         {
             Some(receipt) => receipt,
             None => {
-                return Self::counted_retry_anchor_failure(
+                return Self::counted_anchor_failure(
                     &env,
                     resource_id,
                     buyer,
@@ -6468,7 +6520,7 @@ impl VaultRegistry {
         };
 
         if receipt_hash != receipt.tx_hash {
-            return Self::counted_retry_anchor_failure(
+            return Self::counted_anchor_failure(
                 &env,
                 resource_id,
                 buyer,
@@ -7140,6 +7192,34 @@ impl VaultRegistry {
             Some(lease) => Self::lease_grants_access(&env, &lease),
             None => false,
         }
+    }
+
+    /// Read effective lease statuses for one holder in resource-id order.
+    pub fn get_lease_statuses(
+        env: Env,
+        holder: Address,
+        ids: Vec<String>,
+    ) -> Result<Vec<LeaseStatus>, Error> {
+        if ids.len() > MAX_BATCH_LEASE_STATUSES {
+            return Err(Error::BatchTooLarge);
+        }
+        let mut statuses = Vec::new(&env);
+        for id in ids.iter() {
+            let status = match Self::get_lease(env.clone(), id, holder.clone()) {
+                Ok(lease) => match lease.state {
+                    LeaseState::Pending => LeaseStatus::Pending,
+                    LeaseState::Revoked => LeaseStatus::Revoked,
+                    LeaseState::Active if Self::lease_grants_access(&env, &lease) => {
+                        LeaseStatus::Active
+                    }
+                    LeaseState::Active => LeaseStatus::Expired,
+                },
+                Err(Error::NotFound) => LeaseStatus::Missing,
+                Err(error) => return Err(error),
+            };
+            statuses.push_back(status);
+        }
+        Ok(statuses)
     }
 
     /// Return a bounded page of leases that currently grant `holder` access.
@@ -8745,9 +8825,13 @@ impl VaultRegistry {
 
     /// The purchase currently bound to `receipt_hash`, if any.
     fn anchor_hash_binding(env: &Env, receipt_hash: &String) -> Option<(String, Address)> {
-        env.storage()
+        let pair: (String, Address) = env
+            .storage()
             .persistent()
-            .get(&Self::anchor_hash_key(receipt_hash))
+            .get(&Self::anchor_hash_key(receipt_hash))?;
+        let key = DataKey::PurchaseReceipt(pair.0.clone(), pair.1.clone());
+        let anchor: PurchaseReceiptAnchor = env.storage().persistent().get(&key)?;
+        (anchor.receipt_hash == *receipt_hash).then_some(pair)
     }
 
     /// The reason this `(resource_id, buyer)` anchor cannot be written, or
@@ -8971,7 +9055,7 @@ impl VaultRegistry {
         attempts
     }
 
-    fn counted_retry_anchor_failure(
+    fn counted_anchor_failure(
         env: &Env,
         resource_id: String,
         buyer: Address,
@@ -9021,8 +9105,13 @@ impl VaultRegistry {
         {
             // An admin override changes the pair's hash: release the old hash
             // so it cannot keep blocking the purchase it no longer anchors.
-            let prev_hash_key = Self::anchor_hash_key(&prev.receipt_hash);
-            env.storage().persistent().remove(&prev_hash_key);
+            let previous_key = Self::anchor_hash_key(&prev.receipt_hash);
+            if prev.receipt_hash != receipt_hash
+                && env.storage().persistent().get(&previous_key)
+                    == Some((resource_id.clone(), buyer.clone()))
+            {
+                env.storage().persistent().remove(&previous_key);
+            }
         }
         let hash_key = Self::anchor_hash_key(&receipt_hash);
         env.storage()
