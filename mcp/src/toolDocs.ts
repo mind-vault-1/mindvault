@@ -105,6 +105,7 @@ export function groupOf(name: string): string {
     [
       "mindvault_registry_info",
       "mindvault_registry_lookup",
+      "mindvault_contract_event_history",
       "mindvault_registry_list",
       "mindvault_registry_health",
       "mindvault_cache_chain_diff",

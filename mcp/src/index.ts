@@ -347,6 +347,10 @@ import {
   _resetProfiles as _resetProfilesRuntime,
   setActiveProfileName as setActiveProfileNameRuntime,
 } from "./runtime.js";
+import {
+  CONTRACT_EVENT_HISTORY_DEFAULT_LIMIT,
+  contractEventHistoryOutcome,
+} from "./contractEventHistory.js";
 
 export { acceptTransfer, cancelTransfer };
 
@@ -2744,6 +2748,8 @@ async function batchCatalogLookupOutcome(
     items.push({
       id,
       found: Boolean(r),
+      status: !r ? "not_found" : meta?.label ? "cached" : "found",
+      reason: !r ? "not_found" : meta?.label ? "offline_snapshot" : "live",
       title: r?.title ?? null,
       price: r?.price ?? null,
       verificationStatus: r?.verificationStatus ?? null,
@@ -5401,6 +5407,16 @@ async function executeTool(
         );
       case "mindvault_registry_lookup":
         return registryLookup(requiredString(args, "resourceId"));
+      case "mindvault_contract_event_history":
+        return contractEventHistoryOutcome(
+          {
+            resourceId: requiredString(args, "resourceId"),
+            startLedger: optionalInt(args, "startLedger", 0) || undefined,
+            cursor: optionalString(args, "cursor"),
+            limit: optionalInt(args, "limit", CONTRACT_EVENT_HISTORY_DEFAULT_LIMIT),
+          },
+          { contractId: REGISTRY_CONTRACT_ID || undefined, fetch: sorobanRpcFetch },
+        );
       case "mindvault_explain_error_code":
         return explainErrorCode(
           args.code === undefined ? undefined : Number(args.code),
