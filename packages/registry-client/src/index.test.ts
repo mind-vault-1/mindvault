@@ -319,6 +319,23 @@ describe("generated bindings (drift guard)", () => {
     "update_metadata",
     "update_metadata_many",
     "verify_attestation_hash",
+    "accept_verifier_rotation",
+    "cancel_verifier_rotation",
+    "check_lease_renewal_eligibility",
+    "extend_lease",
+    "get_anchor_status",
+    "get_royalty_opt_out",
+    "is_payment_fully_refunded",
+    "lease_quote",
+    "list_holder_leases",
+    "pending_verifier_rotation",
+    "preview_fee_split",
+    "propose_verifier_rotation",
+    "record_admin_refund_with_reason",
+    "record_creator_refund_reason",
+    "renew_lease",
+    "set_royalty_opt_out",
+    "verifier_key_history",
   ];
 
   it("re-exports the generated Client and Errors", () => {

@@ -503,9 +503,10 @@ describe("resourceSubscriptionTool", () => {
           timeoutMs: 60_000,
           intervalMs: 5_000,
           sleep: async () => {},
+          now: () => 0,
         },
         undefined,
       ),
-    ).rejects.toThrow(/Invalid or stale resource subscription cursor/);
+    ).rejects.toThrow(/Invalid resource subscription cursor/);
   });
 });

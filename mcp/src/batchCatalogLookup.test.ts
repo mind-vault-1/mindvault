@@ -36,6 +36,8 @@ function mockResponse(data: unknown, ok = true, status = 200): Response {
 interface BatchItem {
   id: string;
   found: boolean;
+  status: "found" | "not_found" | "cached";
+  reason: "live" | "not_found" | "offline_snapshot";
   title: string | null;
   price: string | number | null;
   verificationStatus: string | null;
@@ -138,6 +140,8 @@ describe("mindvault_batch_catalog_lookup", () => {
       expect(out.items.map((i) => i.id)).toEqual(["res-001", "res-002"]);
       for (const item of out.items) {
         expect(item.found).toBe(true);
+        expect(item.status).toBe("found");
+        expect(item.reason).toBe("live");
         expect(item.title).toBeTruthy();
         expect(item.accessUrl).toBeTruthy();
       }
@@ -186,9 +190,13 @@ describe("mindvault_batch_catalog_lookup", () => {
       expect(out.missing).toEqual(["missing-id"]);
       const miss = out.items.find((i) => i.id === "missing-id");
       expect(miss?.found).toBe(false);
+      expect(miss?.status).toBe("not_found");
+      expect(miss?.reason).toBe("not_found");
       expect(miss?.title).toBeNull();
       const hit = out.items.find((i) => i.id === "res-001");
       expect(hit?.found).toBe(true);
+      expect(hit?.status).toBe("found");
+      expect(hit?.reason).toBe("live");
       // A live-answered batch carries no staleness notice even with a miss.
       expect(out.notice).toBeNull();
     });
@@ -199,6 +207,8 @@ describe("mindvault_batch_catalog_lookup", () => {
       expect(out.foundCount).toBe(2);
       const cached = out.items.find((i) => i.id === "stale-id");
       expect(cached?.found).toBe(true);
+      expect(cached?.status).toBe("cached");
+      expect(cached?.reason).toBe("offline_snapshot");
       expect(cached?.title).toBe("Cached One");
       // The notice names exactly the ids served from cache, not the batch.
       expect(out.notice).toContain("Offline catalog snapshot served");
@@ -250,6 +260,8 @@ describe("mindvault_batch_catalog_lookup", () => {
       const out = await callBatchStructured(harness, ["cached-1"]);
       expect(out.foundCount).toBe(1);
       expect(out.items[0].title).toBe("Cached Resource");
+      expect(out.items[0].status).toBe("cached");
+      expect(out.items[0].reason).toBe("offline_snapshot");
       expect(out.notice).toContain("Offline catalog snapshot served");
     });
 
@@ -258,6 +270,8 @@ describe("mindvault_batch_catalog_lookup", () => {
       const out = await callBatchStructured(harness, ["cached-1", "never-cached-id"]);
       expect(out.foundCount).toBe(1);
       expect(out.missing).toEqual(["never-cached-id"]);
+      expect(out.items.find((i) => i.id === "never-cached-id")?.status).toBe("not_found");
+      expect(out.items.find((i) => i.id === "never-cached-id")?.reason).toBe("not_found");
       expect(out.notice).toContain("Offline catalog snapshot served");
     });
 

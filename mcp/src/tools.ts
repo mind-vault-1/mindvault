@@ -40,6 +40,7 @@ import {
   CATALOG_LIST_OUTPUT_SCHEMA,
   CONSISTENCY_OUTPUT_SCHEMA,
   METADATA_DIFF_OUTPUT_SCHEMA,
+  CONTRACT_EVENT_HISTORY_OUTPUT_SCHEMA,
   FEE_CONFIG_OUTPUT_SCHEMA,
   LIST_PROFILES_OUTPUT_SCHEMA,
   METADATA_HASH_PREVIEW_OUTPUT_SCHEMA,
@@ -370,7 +371,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_search",
     description:
-      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries. Use nextCursor for pagination; cursors are bound to the active profile and exact filter set. Set bypassCache=true for a fresh per-call read.",
+      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries. Use nextCursor for pagination; signed cursors expire after 15 minutes and are bound to the active profile and exact filter set. An expired, malformed, or edited cursor returns a structured cursor error with a documented error code. Set bypassCache=true for a fresh per-call read.",
     inputSchema: {
       type: "object",
       properties: { ...catalogFilterInputProperties },
@@ -1057,6 +1058,53 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_contract_event_history",
+    description:
+      "Read the vault-registry contract's Soroban event history for one resource id. Queries getEvents for the configured contract, decodes each event's ScVal topics and payload, and keeps the pages that mention the resource. Pass startLedger for a fresh search or the returned cursor to continue; never pass both. Events are ordered by ledger and event id, and the result reports how many events were scanned, how many matched, and whether more pages remain. Read-only: it never signs or submits a transaction. See docs/contract-event-indexing.md for the event catalog.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description:
+            "The resource id to find in registry event topics or payloads, as passed to register and other registry calls.",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+        startLedger: {
+          type: "integer",
+          minimum: 1,
+          description:
+            "First ledger to scan when starting a fresh history search. Omit it when continuing with cursor; mutually exclusive with cursor.",
+          examples: [123456],
+        },
+        cursor: {
+          type: "string",
+          minLength: 1,
+          maxLength: 256,
+          description:
+            "Pagination cursor returned by a previous call. Omit it when starting a fresh search with startLedger; mutually exclusive with startLedger.",
+          examples: ["123456-0000000000"],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 200,
+          description:
+            "Maximum number of raw contract events to scan per page (default 50, maximum 200). Matched events may be fewer than this limit.",
+          examples: [50],
+        },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: CONTRACT_EVENT_HISTORY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Contract Event History",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_registry_list",
     description:
       "List resources registered in the on-chain vault-registry contract with pagination (Soroban list). Returns compact summaries directly from Stellar, not the MindVault API catalog. Use start/limit to page through insertion order; limit is capped at 20 to match the contract. Empty pages return a clear message and next-step hint.",
@@ -1104,8 +1152,9 @@ const DEFINED_TOOLS: ToolDefinition[] = [
         },
         cursor: {
           type: "string",
-          description: "Opaque cursor from a previous page's nextCursor. Omit for the first page.",
-          examples: ["eyJ2IjoxLCJ0IjoiYSJ9"],
+          description:
+            "Signed cursor from a previous page's nextCursor, valid for 15 minutes. Editing it or reusing it after expiry returns a structured MV_CURSOR_* error. Omit for the first page.",
+          examples: ["eyJ2IjoyLCJrIjoicmVnaXN0cnkifQ"],
         },
         limit: {
           type: "integer",
@@ -1209,7 +1258,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     // labelled cached answers instead of failing the whole batch.
     name: "mindvault_batch_catalog_lookup",
     description:
-      "Look up several catalog resources in one call. Accepts up to 25 resource ids and returns per-id results — title, price, verification status, type, and access URL — plus a missing list for ids the API does not know. A miss is a result, not an error, so one bad id cannot sink the batch. Serves the last cached snapshot (labelled) when the catalog API is unreachable, unless refetch is true. For on-chain registry data use mindvault_registry_lookup instead; for a single fresh id use mindvault_preview.",
+      "Look up several catalog resources in one call. Accepts up to 25 resource ids and returns per-id results — status (found, not_found, or cached), reason (live, not_found, or offline_snapshot), title, price, verification status, type, and access URL — plus a missing list for ids the API does not know. A miss is a result, not an error, so one bad id cannot sink the batch. Serves the last cached snapshot (labelled) when the catalog API is unreachable, unless refetch is true. For on-chain registry data use mindvault_registry_lookup instead; for a single fresh id use mindvault_preview.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2241,7 +2290,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
         cursor: {
           type: "string",
           description:
-            "Opaque cursor from a previous mindvault_subscribe_resource call. Resumes from the last observed state; omit to start a new subscription.",
+            "Signed cursor from a previous mindvault_subscribe_resource call, valid for 15 minutes. Resumes from the last observed state; an expired or edited cursor returns a structured MV_CURSOR_* error. Omit to start a new subscription.",
         },
         wait: {
           type: "boolean",
