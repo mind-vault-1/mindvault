@@ -470,6 +470,12 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     attestationHash: ATTESTATION_HASH,
   },
   mindvault_registry_lookup: { resourceId: RESOURCE_ID },
+  mindvault_contract_event_history: {
+    resourceId: RESOURCE_ID,
+    startLedger: { kind: "integer", min: 1 },
+    cursor: { kind: "string", minLength: 1, maxLength: 256 },
+    limit: { kind: "integer", min: 1, max: 200 },
+  },
   mindvault_explain_error_code: {
     // Exactly one of the two identifies the error. The spec marks neither as
     // required because the pair is an exclusive choice, and the validator's
