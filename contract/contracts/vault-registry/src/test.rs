@@ -4980,6 +4980,8 @@ fn full_workflow_emits_exactly_the_documented_events() {
     // `pause_until`).
     client.set_royalty_recipient(&r1, &Some(bob.clone())); // -> "setroyal"
     record(&env, &client, &mut observed);
+    client.set_royalty_opt_out(&r1, &true); // -> "royopt"
+    record(&env, &client, &mut observed);
     client.set_metadata_pointers(
         &r1,
         &Vec::from_array(
@@ -5087,8 +5089,7 @@ fn full_workflow_emits_exactly_the_documented_events() {
     let seq_before_prop2 = env.ledger().sequence();
     client.propose_verifier_rotation(&v_two_step_next, &v_cancel_next); // -> "verprop"
     record(&env, &client, &mut observed);
-    env.ledger()
-        .set_sequence_number(seq_before_prop2 + 1);
+    env.ledger().set_sequence_number(seq_before_prop2 + 1);
     client.cancel_verifier_rotation(&admin2); // -> "vercncl"
     record(&env, &client, &mut observed);
     client.remove_verifier(&v_two_step_next); // -> "rmverif"
@@ -5313,9 +5314,8 @@ fn fee_preview_floor_matches_accrued_fee_at_truncation_boundaries() {
     // 1 base unit of fee sits exactly on the floor boundary; 99 units are
     // rounded away. Both must agree with the persisted accrued fee.
     // Prices must exceed combined_fee_bps (100) per validate_price.
-    for (index, (price, expected_fee)) in [(201i128, 2i128), (199i128, 1i128)]
-        .into_iter()
-        .enumerate()
+    for (index, (price, expected_fee)) in
+        [(201i128, 2i128), (199i128, 1i128)].into_iter().enumerate()
     {
         let id = if index == 0 { "feebnd01" } else { "feebnd02" };
         let id = register_priced(&env, &creator, &client, id, price);
@@ -10512,7 +10512,7 @@ fn storage_key_variant_ext(env: &Env, key: &DataKeyExt) -> Symbol {
 /// Every `DataKeyExt` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_ext_variant` will not compile until you do.
-fn storage_key_wire_contract_ext(env: &Env) -> [(DataKeyExt, &'static str, u32); 17] {
+fn storage_key_wire_contract_ext(env: &Env) -> [(DataKeyExt, &'static str, u32); 19] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -10523,20 +10523,54 @@ fn storage_key_wire_contract_ext(env: &Env) -> [(DataKeyExt, &'static str, u32);
             2,
         ),
         (DataKeyExt::AccruedFees, "AccruedFees", 1),
-        (DataKeyExt::RoleHolders(RoleKind::Verifier), "RoleHolders", 2),
+        (
+            DataKeyExt::RoleHolders(RoleKind::Verifier),
+            "RoleHolders",
+            2,
+        ),
         (DataKeyExt::PaymentPaused, "PaymentPaused", 1),
         (DataKeyExt::PaymentPauseUntil, "PaymentPauseUntil", 1),
-        (DataKeyExt::ActiveLeasePriceFloor, "ActiveLeasePriceFloor", 1),
-        (DataKeyExt::VerifierKeyChangeCount, "VerifierKeyChangeCount", 1),
+        (
+            DataKeyExt::ActiveLeasePriceFloor,
+            "ActiveLeasePriceFloor",
+            1,
+        ),
+        (
+            DataKeyExt::VerifierKeyChangeCount,
+            "VerifierKeyChangeCount",
+            1,
+        ),
         (DataKeyExt::VerifierKeyChange(0), "VerifierKeyChange", 2),
-        (DataKeyExt::PendingVerifierRotation, "PendingVerifierRotation", 1),
-        (DataKeyExt::VerifierHistory(who.clone()), "VerifierHistory", 2),
+        (
+            DataKeyExt::PendingVerifierRotation,
+            "PendingVerifierRotation",
+            1,
+        ),
+        (
+            DataKeyExt::VerifierHistory(who.clone()),
+            "VerifierHistory",
+            2,
+        ),
         (DataKeyExt::PaymentMemo(id.clone()), "PaymentMemo", 2),
-        (DataKeyExt::RefundReasonHash(id.clone()), "RefundReasonHash", 2),
+        (
+            DataKeyExt::RefundReasonHash(id.clone()),
+            "RefundReasonHash",
+            2,
+        ),
         (DataKeyExt::FlagDeadline(id.clone()), "FlagDeadline", 2),
         (DataKeyExt::FlagResolutionWindow, "FlagResolutionWindow", 1),
-        (DataKeyExt::ResourceHistory(id.clone()), "ResourceHistory", 2),
+        (
+            DataKeyExt::ResourceHistory(id.clone()),
+            "ResourceHistory",
+            2,
+        ),
         (DataKeyExt::FlagModerator(id.clone()), "FlagModerator", 2),
+        (
+            DataKeyExt::PaymentFullyRefunded(id.clone()),
+            "PaymentFullyRefunded",
+            2,
+        ),
+        (DataKeyExt::RoyaltyOptOut(id.clone()), "RoyaltyOptOut", 2),
     ]
 }
 
@@ -10665,7 +10699,7 @@ fn storage_key_migration_covers_every_ext_variant() {
     let contract = storage_key_wire_contract_ext(&env);
     assert_eq!(
         contract.len(),
-        17,
+        19,
         "storage_key_wire_contract_ext must list every DataKeyExt variant"
     );
 
@@ -10688,6 +10722,8 @@ fn storage_key_migration_covers_every_ext_variant() {
             DataKeyExt::FlagResolutionWindow => "FlagResolutionWindow",
             DataKeyExt::ResourceHistory(_) => "ResourceHistory",
             DataKeyExt::FlagModerator(_) => "FlagModerator",
+            DataKeyExt::PaymentFullyRefunded(_) => "PaymentFullyRefunded",
+            DataKeyExt::RoyaltyOptOut(_) => "RoyaltyOptOut",
         };
         assert_eq!(
             matched, *name,
@@ -12412,3 +12448,4 @@ include!("test/verifier_rotation_two_step.rs");
 include!("test/event_indexing_guide.rs");
 include!("test/pause_scope_matrix.rs");
 include!("test/fee_split_preview.rs");
+include!("test/payment_refund_royalty_987_988_993.rs");

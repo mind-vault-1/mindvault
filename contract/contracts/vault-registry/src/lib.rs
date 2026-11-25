@@ -157,6 +157,8 @@ pub const ROLE_INVENTORY_PAGE_CAP: u32 = 20;
 /// Most entries `verifier_key_history` returns in one page. A `limit` above
 /// it (or `0`) is clamped to `1..=VERIFIER_KEY_HISTORY_PAGE_CAP`.
 pub const VERIFIER_KEY_HISTORY_PAGE_CAP: u32 = 20;
+/// Version of the `vercfg` event payload (`VerifierConfigChange`).
+pub const VERIFIER_CONFIG_EVENT_VERSION: u32 = 1;
 /// Maximum number of revision snapshots retained per resource in
 /// `ResourceHistory`. When the buffer is full the oldest entry is evicted
 /// so storage growth stays bounded (#1174).
@@ -243,6 +245,8 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("get_metadata_pointers", "—"),
     ("set_tags", "creator"),
     ("set_royalty_recipient", "creator"),
+    ("set_royalty_opt_out", "creator"),
+    ("get_royalty_opt_out", "—"),
     ("set_listed", "creator"),
     ("delist", "creator"),
     ("freeze_resource", "creator"),
@@ -390,6 +394,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("get_refunded_amount", "—"),
     ("get_remaining_refundable", "—"),
     ("get_refund_deadline", "—"),
+    ("is_payment_fully_refunded", "—"),
     ("anchor_purchase_receipt", "verifier"),
     ("attempt_anchor_purchase_receipt", "verifier"),
     ("override_purchase_receipt_anchor", "admin"),
@@ -528,6 +533,10 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
         "(prev_tags: Vec<String>, next_tags: Vec<String>)",
     ),
     ("setroyal", "(old_recipient: Option<Address>, new_recipient: Option<Address>)"),
+    (
+        "royopt",
+        "(creator: Address, previous: bool, opt_out: bool) — topic carries resource id",
+    ),
     ("transfer", "(previous_owner: Address, new_owner: Address)"),
     ("propose", "(owner: Address, proposed: Address)"),
     ("cancel", "owner: Address"),
@@ -553,6 +562,10 @@ pub const EVENT_SCHEMA: &[(&str, &str)] = &[
     ("addverif", "RoleChange { admin, target, granted: true }"),
     ("rmverif", "RoleChange { admin, target, granted: false }"),
     ("verrot", "VerifierRotation { admin, old_verifier, new_verifier, ledger }"),
+    (
+        "vercfg",
+        "VerifierConfigChange { version, action, admin, verifier, previous, ledger }",
+    ),
     ("verprop", "PendingVerifierRotation { admin, old_verifier, new_verifier, nominated_at, expiry }"),
     ("veracc", "VerifierRotation { admin, old_verifier, new_verifier, ledger }"),
     ("vercncl", "(old_verifier: Address, new_verifier: Address, admin: Address)"),
@@ -1180,6 +1193,20 @@ pub struct VerifierKeyChange {
     pub ledger: u32,
 }
 
+/// Versioned payload of the `vercfg` event emitted when verifier config
+/// changes. Kept separate from [`VerifierKeyChange`] so event consumers have a
+/// stable shape with an explicit version field.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct VerifierConfigChange {
+    pub version: u32,
+    pub action: VerifierKeyAction,
+    pub admin: Address,
+    pub verifier: Address,
+    pub previous: Option<Address>,
+    pub ledger: u32,
+}
+
 /// One page of [`VerifierKeyChange`] entries, oldest first. Returned by
 /// `verifier_key_history`.
 #[contracttype]
@@ -1347,12 +1374,6 @@ pub enum DataKey {
     /// metadata or price change. Absent (read as `0`) until the first such
     /// mutation. Read by `get_revision`.
     Revision(String),
-    /// A page of creator earnings for indexer reconciliation.
-    CreatorEarnings(Address),
-    /// A bounded history of verifier status changes.
-    VerifierHistory(Address),
-    /// The most recent moderator to act on a resource dispute.
-    FlagModerator(String),
 }
 
 /// Storage keys that no longer fit in [`DataKey`].
@@ -1415,6 +1436,12 @@ pub enum DataKeyExt {
     ResourceHistory(String),
     /// Last moderator to act on a resource's dispute flag.
     FlagModerator(String),
+    /// Whether a payment receipt has been fully refunded. Once set, neither
+    /// further refunds nor settlement may touch that receipt (#987).
+    PaymentFullyRefunded(String),
+    /// Per-resource royalty opt-out set by the creator (#993). Absent means
+    /// royalties remain enabled, preserving pre-existing resources.
+    RoyaltyOptOut(String),
 }
 
 /// Payload of every role grant/revoke event (`addverif`/`rmverif`,
@@ -1843,6 +1870,29 @@ pub struct LeaseQuote {
     pub price: i128,
     /// Duration in ledgers (e.g., 720 for Hour, 17_280 for Day).
     pub duration_ledgers: u32,
+}
+
+/// Eligibility and pricing information for renewing an existing lease.
+/// Returned by `check_lease_renewal_eligibility`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeaseRenewalInfo {
+    /// The resource being renewed.
+    pub resource_id: String,
+    /// The holder of the lease.
+    pub holder: Address,
+    /// Current lease tier.
+    pub current_tier: LeaseTier,
+    /// Whether the lease is currently active and renewable.
+    pub renewable: bool,
+    /// Current expiry ledger of the existing lease.
+    pub current_expiry: u32,
+    /// Price for renewal at the same tier (resource price × tier multiplier).
+    pub renewal_price: i128,
+    /// Duration that would be added upon renewal (in ledgers).
+    pub renewal_duration: u32,
+    /// What the new expiry ledger would be after renewal.
+    pub new_expiry_after_renewal: u32,
 }
 
 // Spec export is disabled because this enum exceeds the XDR limit of 50
@@ -2734,6 +2784,51 @@ impl VaultRegistry {
         env.events()
             .publish((symbol_short!("setroyal"), id), (old_recipient, recipient));
         Ok(())
+    }
+
+    /// Opt a resource out of future royalty routing. Only the resource's
+    /// current creator may change the flag. The default is `false` for every
+    /// resource, including those registered before this method existed, so
+    /// existing clients keep the same behavior.
+    ///
+    /// A `royopt` event records the creator, the previous value and the new
+    /// value on every real change, giving indexers an auditable history
+    /// without changing the `Resource` XDR schema. Clearing a royalty
+    /// recipient with `set_royalty_recipient(None)` is unaffected.
+    pub fn set_royalty_opt_out(env: Env, id: String, opt_out: bool) -> Result<(), Error> {
+        Self::require_not_paused(&env)?;
+        Self::validate_resource_id(&id)?;
+        let resource = Self::load(&env, &id)?;
+        resource.creator.require_auth();
+        Self::ensure_mutable(&resource)?;
+
+        let key = DataKeyExt::RoyaltyOptOut(id.clone());
+        let previous: bool = env
+            .storage()
+            .persistent()
+            .get::<DataKeyExt, bool>(&key)
+            .unwrap_or(false);
+        if previous != opt_out {
+            env.storage().persistent().set(&key, &opt_out);
+            Self::bump_persistent(&env, &key);
+            env.events().publish(
+                (symbol_short!("royopt"), id),
+                (resource.creator, previous, opt_out),
+            );
+        }
+        Ok(())
+    }
+
+    /// Whether future royalty routing is disabled for the resource. Absent
+    /// flags read as `false`. Errors `NotFound` for an unknown resource.
+    pub fn get_royalty_opt_out(env: Env, id: String) -> Result<bool, Error> {
+        Self::validate_resource_id(&id)?;
+        Self::load(&env, &id)?;
+        Ok(env
+            .storage()
+            .persistent()
+            .get::<DataKeyExt, bool>(&DataKeyExt::RoyaltyOptOut(id))
+            .unwrap_or(false))
     }
 
     pub fn transfer_ownership(env: Env, id: String, new_creator: Address) -> Result<(), Error> {
@@ -4813,7 +4908,9 @@ impl VaultRegistry {
         // Enforce the mandatory ledger gap so propose and accept cannot be
         // batched into a single transaction.
         if env.ledger().sequence()
-            < proposal.nominated_at.saturating_add(VERIFIER_ROTATION_MIN_GAP)
+            < proposal
+                .nominated_at
+                .saturating_add(VERIFIER_ROTATION_MIN_GAP)
         {
             return Err(Error::VerifierRotationExpired);
         }
@@ -4870,11 +4967,7 @@ impl VaultRegistry {
         Self::bump_instance(&env);
         env.events().publish(
             (symbol_short!("vercncl"),),
-            (
-                proposal.old_verifier,
-                proposal.new_verifier,
-                admin,
-            ),
+            (proposal.old_verifier, proposal.new_verifier, admin),
         );
         Ok(())
     }
@@ -5790,6 +5883,16 @@ impl VaultRegistry {
             .get(&receipt_key)
             .ok_or(Error::NotFound)?;
 
+        // A fully refunded receipt is terminal: a retry of `settle_payment`
+        // must not settle it again even if an older client still regards the
+        // receipt as escrowed.
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKeyExt::PaymentFullyRefunded(receipt_id.clone()))
+        {
+            return Err(Error::InvalidPaymentTransition);
+        }
         if receipt.state != PaymentState::Escrowed {
             return Err(Error::InvalidPaymentTransition);
         }
@@ -5902,6 +6005,7 @@ impl VaultRegistry {
         amount: i128,
         tx_hash: String,
     ) -> Result<(), Error> {
+        Self::validate_refund_ids(&refund_id, &payment_receipt_id)?;
         creator.require_auth();
         Self::record_refund(
             &env,
@@ -5928,6 +6032,7 @@ impl VaultRegistry {
         tx_hash: String,
         reason_hash: Option<String>,
     ) -> Result<(), Error> {
+        Self::validate_refund_ids(&refund_id, &payment_receipt_id)?;
         creator.require_auth();
         Self::record_refund(
             &env,
@@ -5953,6 +6058,7 @@ impl VaultRegistry {
         amount: i128,
         tx_hash: String,
     ) -> Result<(), Error> {
+        Self::validate_refund_ids(&refund_id, &payment_receipt_id)?;
         Self::require_current_admin(&env, &admin)?;
         Self::record_refund(
             &env,
@@ -5979,6 +6085,7 @@ impl VaultRegistry {
         tx_hash: String,
         reason_hash: Option<String>,
     ) -> Result<(), Error> {
+        Self::validate_refund_ids(&refund_id, &payment_receipt_id)?;
         Self::require_current_admin(&env, &admin)?;
         Self::record_refund(
             &env,
@@ -5991,6 +6098,17 @@ impl VaultRegistry {
             true,
             reason_hash,
         )
+    }
+
+    /// Whether a payment receipt has been fully refunded. Once `true`, the
+    /// receipt is terminal: settlement and later refunds are rejected with
+    /// `InvalidPaymentTransition`. Unknown ids read as `false`.
+    pub fn is_payment_fully_refunded(env: Env, receipt_id: String) -> Result<bool, Error> {
+        Self::validate_receipt_id(&receipt_id)?;
+        Ok(env
+            .storage()
+            .persistent()
+            .has(&DataKeyExt::PaymentFullyRefunded(receipt_id)))
     }
 
     /// Fetch a refund record by its caller-assigned `refund_id`.
@@ -6753,7 +6871,9 @@ impl VaultRegistry {
     /// Ledger sequence after which the active flag on `id` is overdue, or
     /// `None` if the resource is not flagged or was flagged with no window.
     pub fn get_flag_deadline(env: Env, id: String) -> Option<u32> {
-        env.storage().persistent().get(&DataKeyExt::FlagDeadline(id))
+        env.storage()
+            .persistent()
+            .get(&DataKeyExt::FlagDeadline(id))
     }
 
     /// Whether the active flag on `id` has passed its resolution deadline.
@@ -6901,12 +7021,16 @@ impl VaultRegistry {
     /// This is a convenience wrapper combining `lease_price` and tier duration
     /// calculation in a single call, useful for clients that need both values
     /// to display lease options before initiating a purchase.
-    pub fn lease_quote(env: Env, resource_id: String, tier: LeaseTier) -> Result<LeaseQuote, Error> {
+    pub fn lease_quote(
+        env: Env,
+        resource_id: String,
+        tier: LeaseTier,
+    ) -> Result<LeaseQuote, Error> {
         Self::validate_resource_id(&resource_id)?;
         let resource = Self::load(&env, &resource_id)?;
         let price = Self::tier_price(resource.price, tier)?;
         let duration_ledgers = Self::tier_ledgers(tier);
-        
+
         Ok(LeaseQuote {
             resource_id,
             tier,
@@ -7213,7 +7337,11 @@ impl VaultRegistry {
         }
 
         let key = DataKey::Lease(resource_id.clone(), holder.clone());
-        let mut lease: Lease = env.storage().persistent().get(&key).ok_or(Error::NotFound)?;
+        let mut lease: Lease = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::NotFound)?;
         if !Self::lease_grants_access(&env, &lease) {
             return Err(Error::InvalidPaymentTransition);
         }
@@ -7232,7 +7360,8 @@ impl VaultRegistry {
 
         env.storage().persistent().set(&key, &lease);
         Self::bump_persistent(&env, &key);
-        env.events().publish((symbol_short!("leasernew"), resource_id), lease.clone());
+        env.events()
+            .publish((symbol_short!("leasernew"), resource_id), lease.clone());
         Ok(lease)
     }
 
@@ -7552,10 +7681,20 @@ impl VaultRegistry {
         admin_override: bool,
         reason_hash: Option<String>,
     ) -> Result<(), Error> {
+        // Bound the two caller-supplied identifiers before any auth or
+        // storage work, matching the rules for payment receipt ids (#988).
+        Self::validate_refund_ids(&refund_id, &payment_receipt_id)?;
         Self::require_not_paused(env)?;
         Self::require_payment_not_paused(env)?;
-        Self::validate_receipt_id(&refund_id)?;
-        Self::validate_receipt_id(&payment_receipt_id)?;
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKeyExt::PaymentFullyRefunded(
+                payment_receipt_id.clone(),
+            ))
+        {
+            return Err(Error::InvalidPaymentTransition);
+        }
         Self::validate_payment_amount(amount)?;
         Self::validate_tx_hash(&tx_hash)?;
         if let Some(ref hash) = reason_hash {
@@ -7637,6 +7776,8 @@ impl VaultRegistry {
 
         // Calculate remaining balance after this refund
         let remaining_balance = payment.amount.saturating_sub(next_refunded).max(0);
+        let fully_refunded_key = DataKeyExt::PaymentFullyRefunded(payment_receipt_id.clone());
+        let fully_refunded = remaining_balance == 0;
 
         let stored = StoredRefundReceipt {
             refund_id: refund_id.clone(),
@@ -7676,6 +7817,10 @@ impl VaultRegistry {
         Self::bump_persistent(env, &refunded_key);
         env.storage().persistent().set(&refund_tx_key, &refund_id);
         Self::bump_persistent(env, &refund_tx_key);
+        if fully_refunded {
+            env.storage().persistent().set(&fully_refunded_key, &true);
+            Self::bump_persistent(env, &fully_refunded_key);
+        }
 
         env.events()
             .publish((symbol_short!("refund"), refund_id), refund);
@@ -7722,6 +7867,15 @@ impl VaultRegistry {
             return Err(Error::InvalidPaymentAmount);
         }
         Ok(())
+    }
+
+    /// Both ids on a refund call use the payment receipt-id rules: non-empty,
+    /// at most `MAX_RECEIPT_ID_LEN` UTF-8 bytes, stable `InvalidReceiptId` on
+    /// failure. Kept in one helper so the four public refund entry points can
+    /// reject bad ids before auth or any storage access (#988).
+    fn validate_refund_ids(refund_id: &String, payment_receipt_id: &String) -> Result<(), Error> {
+        Self::validate_receipt_id(refund_id)?;
+        Self::validate_receipt_id(payment_receipt_id)
     }
 
     /// Receipt ids are non-empty strings up to `MAX_RECEIPT_ID_LEN` bytes.
@@ -7857,7 +8011,9 @@ impl VaultRegistry {
         // and refunds are rejected if ownership later moves elsewhere, so a
         // receipt can never be replayed against a different resource binding.
         let recipient_key = DataKey::PaymentRecipient(receipt_id.clone());
-        env.storage().persistent().set(&recipient_key, &resource.creator);
+        env.storage()
+            .persistent()
+            .set(&recipient_key, &resource.creator);
         Self::bump_persistent(env, &recipient_key);
 
         env.storage().persistent().set(&tx_hash_key, &receipt_id);
