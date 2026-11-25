@@ -89,6 +89,7 @@ import {
   RECEIPT_EXPORT_OUTPUT_SCHEMA,
   RECEIPT_ROW_FIELDS,
 } from "./receipts.js";
+import { SPENDING_SUMMARY_OUTPUT_SCHEMA } from "./spendingSummary.js";
 import {
   DEBUG_BUNDLE_DEFAULT_AUDIT_LINES,
   DEBUG_BUNDLE_MAX_AUDIT_LINES,
@@ -771,6 +772,49 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: RECEIPT_VERIFICATION_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Verify Payment Receipt",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_spending_summary",
+    description:
+      "Summarize locally persisted purchase totals (~/.mindvault/purchases.json) for the active wallet profile, grouped by currency and time range using exact decimal arithmetic. Read-only. Filter by network, since, and until (ISO-8601 date or timestamp), and choose groupBy ('day', 'month', or 'none').",
+    inputSchema: {
+      type: "object",
+      properties: {
+        network: {
+          type: "string",
+          description:
+            "Optional. Only include receipts settled on this x402 network id. Example: 'stellar:testnet'",
+          examples: ["stellar:testnet", "stellar:pubnet"],
+        },
+        since: {
+          type: "string",
+          description:
+            "Inclusive lower bound on the purchase time (ISO-8601 date or timestamp; a bare date is read as midnight UTC).",
+          examples: ["2026-08-01", "2026-08-01T12:00:00Z"],
+        },
+        until: {
+          type: "string",
+          description:
+            "Inclusive upper bound on the purchase time (ISO-8601 date or timestamp; a bare date is read as midnight UTC).",
+          examples: ["2026-08-31", "2026-08-31T23:59:59Z"],
+        },
+        groupBy: {
+          type: "string",
+          enum: ["day", "month", "none"],
+          description:
+            'Time-range grouping: "month" (default, YYYY-MM UTC), "day" (YYYY-MM-DD UTC), or "none" (single "all" bucket).',
+          examples: ["month", "day", "none"],
+        },
+      },
+      required: [],
+    },
+    outputSchema: SPENDING_SUMMARY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Spending Summary",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
