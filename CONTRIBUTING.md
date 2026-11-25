@@ -3,9 +3,7 @@
 Thanks for your interest in building MindVault! This guide gets you from a fresh
 clone to a running stack and a first pull request.
 
-MindVault is a payment-protected vault for digital resources on Stellar, using
-HTTP 402 and the x402 protocol. Everything runs on **Stellar testnet** — no real
-funds are at risk.
+MindVault is a payment-protected vault for digital resources built on Stellar, using HTTP 402 and the x402 protocol. All operations run exclusively on **Stellar testnet**, ensuring no real funds are at risk.
 
 ## Repository layout
 

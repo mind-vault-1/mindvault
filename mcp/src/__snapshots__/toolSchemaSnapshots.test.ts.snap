@@ -448,11 +448,27 @@ exports[`tool schema snapshots > mindvault_batch_catalog_lookup > output schema 
                   "null",
                 ],
               },
+              "reason": {
+                "enum": [
+                  "live",
+                  "not_found",
+                  "offline_snapshot",
+                ],
+                "type": "string",
+              },
               "resourceType": {
                 "type": [
                   "string",
                   "null",
                 ],
+              },
+              "status": {
+                "enum": [
+                  "found",
+                  "not_found",
+                  "cached",
+                ],
+                "type": "string",
               },
               "title": {
                 "type": [
@@ -470,6 +486,8 @@ exports[`tool schema snapshots > mindvault_batch_catalog_lookup > output schema 
             "required": [
               "id",
               "found",
+              "status",
+              "reason",
               "title",
               "price",
               "verificationStatus",
@@ -2274,6 +2292,201 @@ exports[`tool schema snapshots > mindvault_compare_state_backup > input schema 1
 `;
 
 exports[`tool schema snapshots > mindvault_compare_state_backup > output schema 1`] = `null`;
+
+exports[`tool schema snapshots > mindvault_contract_event_history > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Contract Event History",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_contract_event_history > input schema 1`] = `
+{
+  "properties": {
+    "cursor": {
+      "description": "Pagination cursor returned by a previous call. Omit it when starting a fresh search with startLedger; mutually exclusive with startLedger.",
+      "examples": [
+        "123456-0000000000",
+      ],
+      "maxLength": 256,
+      "minLength": 1,
+      "type": "string",
+    },
+    "limit": {
+      "description": "Maximum number of raw contract events to scan per page (default 50, maximum 200). Matched events may be fewer than this limit.",
+      "examples": [
+        50,
+      ],
+      "maximum": 200,
+      "minimum": 1,
+      "type": "integer",
+    },
+    "resourceId": {
+      "description": "The resource id to find in registry event topics or payloads, as passed to register and other registry calls.",
+      "examples": [
+        "cm7x8y9z",
+        "res-001",
+      ],
+      "type": "string",
+    },
+    "startLedger": {
+      "description": "First ledger to scan when starting a fresh history search. Omit it when continuing with cursor; mutually exclusive with cursor.",
+      "examples": [
+        123456,
+      ],
+      "minimum": 1,
+      "type": "integer",
+    },
+  },
+  "required": [
+    "resourceId",
+  ],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_contract_event_history > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "contractId": {
+          "type": "string",
+        },
+        "cursor": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "events": {
+          "items": {
+            "properties": {
+              "id": {
+                "type": "string",
+              },
+              "ledger": {
+                "type": "integer",
+              },
+              "ledgerClosedAt": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "topic": {
+                "items": {},
+                "type": "array",
+              },
+              "txHash": {
+                "type": [
+                  "string",
+                  "null",
+                ],
+              },
+              "value": {},
+            },
+            "required": [
+              "id",
+              "ledger",
+              "ledgerClosedAt",
+              "txHash",
+              "topic",
+              "value",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "hasMore": {
+          "type": "boolean",
+        },
+        "notice": {
+          "type": [
+            "string",
+            "null",
+          ],
+        },
+        "resourceId": {
+          "type": "string",
+        },
+        "scanned": {
+          "type": "integer",
+        },
+      },
+      "required": [
+        "resourceId",
+        "contractId",
+        "events",
+        "scanned",
+        "cursor",
+        "hasMore",
+        "notice",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
 
 exports[`tool schema snapshots > mindvault_debug_bundle > annotations 1`] = `
 {
@@ -14536,6 +14749,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_check_state_permissions",
   "mindvault_client_config",
   "mindvault_compare_state_backup",
+  "mindvault_contract_event_history",
   "mindvault_debug_bundle",
   "mindvault_explain_error_code",
   "mindvault_export_profiles",

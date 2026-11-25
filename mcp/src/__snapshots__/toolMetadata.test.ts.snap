@@ -33,6 +33,7 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_cache_chain_diff",
   "mindvault_verify_attestation",
   "mindvault_registry_lookup",
+  "mindvault_contract_event_history",
   "mindvault_registry_list",
   "mindvault_registry_creator_page",
   "mindvault_registry_tag_search",
