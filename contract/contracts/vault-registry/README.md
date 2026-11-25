@@ -133,12 +133,14 @@ first day, any touch resets the entry to a full ~30 days.
   all extend the entries they write, so an actively-maintained resource is never
   archived.
 - **Most reads bump too.** `get_many`, `get_owner_many`, `exists_many`,
-  `list`, `list_by_tag` and `get_payment_receipt` extend the entries they
-  return, so a resource that is merely popular stays alive without its creator
-  doing anything. Single-id `get` and `get_owner` do **not** bump, and the
-  list calls do not bump the `TagIndex` / `CreatorResources` entries they read
-  from — see [`docs/contract-ttl-lifecycle.md`](../../../docs/contract-ttl-lifecycle.md)
-  for the full table and the operator runbook.
+  `list`, `list_by_tag`, `get_payment_receipt` and `payment_receipt_page` extend
+  the entries they return, so a resource that is merely popular stays alive
+  without its creator doing anything. Single-id `get` and `get_owner` do
+  **not** bump, and the list calls do not bump the `TagIndex` /
+  `CreatorResources` entries they read from — see
+  [`docs/contract-ttl-lifecycle.md`](../../../docs/contract-ttl-lifecycle.md)
+  for the full table and the operator runbook. `get_many` validates every id
+  before any bump, so an invalid id leaves TTLs and events unchanged.
 - **A cold resource has ~30 days.** An entry that is neither read nor written
   for `BUMP_AMOUNT` ledgers is archived and stops resolving.
 - **A creator can top up on demand.** `extend_resource_ttl(creator, id)` bumps a

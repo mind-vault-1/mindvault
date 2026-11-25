@@ -12603,6 +12603,197 @@ fn receipt_hash_index_follows_the_canonical_anchor_after_cleanup() {
     );
 }
 
+#[test]
+fn get_many_validates_all_ids_before_bumping_ttl() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "manyvld");
+    let contract = client.address.clone();
+    let ttl_before = resource_storage_ttl(&env, &contract, &id);
+    let events_before = env.events().all().len();
+    let ids = Vec::from_array(&env, [id.clone(), String::from_str(&env, "bad!")]);
+
+    assert_eq!(
+        client.try_get_many(&ids),
+        Err(Ok(Error::InvalidResourceId))
+    );
+    assert_eq!(resource_storage_ttl(&env, &contract, &id), ttl_before);
+    assert_eq!(env.events().all().len(), events_before);
+}
+
+#[test]
+fn creator_resource_state_count_tracks_lifecycle() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let frozen = register_default(&env, &creator, &client, "sttfrz");
+    let delisted = register_default(&env, &creator, &client, "sttdel");
+    let tombstoned = register_default(&env, &creator, &client, "stttmb");
+    let listed = register_default(&env, &creator, &client, "sttlst");
+
+    client.freeze_resource(&frozen);
+    client.delist(&delisted);
+    client.tombstone_resource(&tombstoned, &admin);
+
+    assert_eq!(
+        client.creator_resource_state_count(&creator, &ResourceState::Frozen),
+        1
+    );
+    assert_eq!(
+        client.creator_resource_state_count(&creator, &ResourceState::Delisted),
+        1
+    );
+    assert_eq!(
+        client.creator_resource_state_count(&creator, &ResourceState::Tombstoned),
+        1
+    );
+    assert_eq!(
+        client.creator_resource_state_count(&creator, &ResourceState::Listed),
+        1
+    );
+    assert_eq!(
+        client.creator_resource_state_count(&creator, &ResourceState::Disputed),
+        0
+    );
+    assert_eq!(
+        client.creator_resource_state_count(&Address::generate(&env), &ResourceState::Listed),
+        0
+    );
+}
+
+#[test]
+fn payment_receipt_page_filters_by_buyer_and_resource_and_paginates() {
+    let (env, creator, _admin, settler, client) = setup_with_settler();
+    let id = register_priced(&env, &creator, &client, "pageid1", 1_000_000);
+    let other_id = register_priced(&env, &creator, &client, "pageid2", 1_000_000);
+    let buyer = Address::generate(&env);
+    let other_buyer = Address::generate(&env);
+    let amount = 1_000_000i128;
+
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "page1"),
+        &id,
+        &buyer,
+        &amount,
+        &String::from_str(&env, "pagetx1"),
+    );
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "page2"),
+        &id,
+        &buyer,
+        &amount,
+        &String::from_str(&env, "pagetx2"),
+    );
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "pageother"),
+        &id,
+        &other_buyer,
+        &amount,
+        &String::from_str(&env, "pagetx3"),
+    );
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "pageres"),
+        &other_id,
+        &buyer,
+        &amount,
+        &String::from_str(&env, "pagetx4"),
+    );
+
+    let first = client.payment_receipt_page(&id, &buyer, &0, &1);
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(
+        first.items.get(0).unwrap().receipt_id,
+        String::from_str(&env, "page1")
+    );
+    assert_eq!(first.next_cursor, Some(1));
+
+    let second = client.payment_receipt_page(&id, &buyer, &1, &20);
+    assert_eq!(second.items.len(), 1);
+    assert_eq!(
+        second.items.get(0).unwrap().receipt_id,
+        String::from_str(&env, "page2")
+    );
+    assert_eq!(second.next_cursor, None);
+
+    assert_eq!(
+        client
+            .payment_receipt_page(&id, &other_buyer, &0, &20)
+            .items
+            .len(),
+        1
+    );
+    assert_eq!(
+        client
+            .payment_receipt_page(&other_id, &buyer, &0, &20)
+            .items
+            .len(),
+        1
+    );
+    assert_eq!(
+        client
+            .payment_receipt_page(&id, &buyer, &0, &0)
+            .items
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn revoked_lease_stays_inactive_through_resource_lifecycle() {
+    let (env, creator, admin, settler, client) = setup_with_settler();
+    let id = register_priced(&env, &creator, &client, "leaselcy", 1_000_000);
+    let holder = Address::generate(&env);
+    let amount = client.lease_price(&id, &LeaseTier::Hour);
+
+    client.buy_lease(
+        &holder,
+        &id,
+        &LeaseTier::Hour,
+        &amount,
+        &String::from_str(&env, "leasetx1"),
+    );
+    client.settle_lease(&settler, &id, &holder);
+    client.revoke_lease(&id, &holder);
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Revoked);
+    assert!(!client.lease_is_active(&id, &holder));
+
+    client.freeze_resource(&id);
+    client.reactivate_resource(&id);
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Revoked);
+    assert!(!client.lease_is_active(&id, &holder));
+
+    client.delist(&id);
+    client.reactivate_resource(&id);
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Revoked);
+    assert!(!client.lease_is_active(&id, &holder));
+
+    client.open_dispute(&id, &admin);
+    client.resolve_dispute(&id, &admin, &ResourceState::Frozen);
+    client.reactivate_resource(&id);
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Revoked);
+    assert!(!client.lease_is_active(&id, &holder));
+
+    assert_eq!(
+        client.try_settle_lease(&settler, &id, &holder),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+    assert_eq!(
+        client.try_extend_lease(
+            &holder,
+            &id,
+            &LeaseTier::Hour,
+            &amount,
+            &String::from_str(&env, "leasetx2")
+        ),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+
+    client.tombstone_resource(&id, &admin);
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Revoked);
+    assert!(!client.lease_is_active(&id, &holder));
+}
+
 include!("test/lifecycle_events.rs");
 include!("test/storage_footprint.rs");
 
