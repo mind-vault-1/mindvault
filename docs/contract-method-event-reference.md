@@ -531,6 +531,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<CatalogPage>`
 - **Summary:** `list_listed` with next-cursor metadata: `cursor` and `next_cursor` are global catalog indexes (same domain as `list_page`), so a page boundary is stable however many resources change state between c…
 
+### `migration_compatibility_report`
+
+- **Arguments:** `{cursor, limit}: {cursor: u32, limit: u32}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<MigrationCompatibilityReport>`
+- **Summary:** Bounded, read-only migration readiness report. Counts resources in catalog-index order by current, supported predecessor, and unsupported `schema_version`; returns `next_cursor` for pagination. Read-only and available while paused.
+
 ### `migrate_resource`
 
 - **Arguments:** `{id}: {id: string}, options?: MethodOptions`

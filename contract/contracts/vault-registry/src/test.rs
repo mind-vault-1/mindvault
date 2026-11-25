@@ -12446,7 +12446,7 @@ include!("test/tag_prefix_search.rs");
 include!("test/verifier_key_history.rs");
 include!("test/verifier_rotation_two_step.rs");
 include!("test/event_indexing_guide.rs");
-include!("test/stellar_address_validation.rs");
+include!("test/registry_migration_compatibility.rs");
 include!("test/pause_scope_matrix.rs");
 include!("test/fee_split_preview.rs");
 include!("test/payment_refund_royalty_987_988_993.rs");

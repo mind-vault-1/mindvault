@@ -122,6 +122,7 @@ pub const INDEX_REPAIR_PAGE_CAP: u32 = 20;
 /// removed, or changes meaning, independently of `RESOURCE_SCHEMA_VERSION`:
 /// the export view is a stable projection, not the storage layout.
 pub const EXPORT_VIEW_VERSION: u32 = 1;
+pub const MIGRATION_REPORT_VIEW_VERSION: u32 = 1;
 pub const TOP_TAGS_CAP: u32 = 20;
 /// Maximum number of resources that can be registered in a single batch
 /// via `register_batch`. Keeps execution bounded and prevents transaction
@@ -309,6 +310,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("registry_info", "—"),
     ("contract_version", "—"),
     ("resource_schema_version", "—"),
+    ("migration_compatibility_report", "—"),
     ("migrate_resource", "creator"),
     ("initialize_network", "—"),
     ("network_id", "—"),
@@ -961,6 +963,20 @@ pub struct ExportPage {
     pub items: Vec<ResourceExport>,
     /// First index slot to pass as `cursor` on the next call, or `None`
     /// when this page reaches the end of the catalog.
+    pub next_cursor: Option<u32>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MigrationCompatibilityReport {
+    pub report_version: u32,
+    pub resource_schema_version: u32,
+    pub previous_schema_version: u32,
+    pub total: u32,
+    pub scanned: u32,
+    pub current_count: u32,
+    pub supported_count: u32,
+    pub unsupported_count: u32,
     pub next_cursor: Option<u32>,
 }
 
@@ -3289,6 +3305,53 @@ impl VaultRegistry {
             resource_schema_version: RESOURCE_SCHEMA_VERSION,
             total,
             items,
+            next_cursor: if i < total { Some(i) } else { None },
+        }
+    }
+
+    pub fn migration_compatibility_report(
+        env: Env,
+        cursor: u32,
+        limit: u32,
+    ) -> MigrationCompatibilityReport {
+        let total: u32 = env.storage().instance().get(&DataKey::Count).unwrap_or(0);
+        let window = limit.clamp(1, EXPORT_PAGE_CAP);
+        let end = cursor.saturating_add(window).min(total);
+        let mut i = cursor;
+        let mut scanned = 0u32;
+        let mut current_count = 0u32;
+        let mut supported_count = 0u32;
+        let mut unsupported_count = 0u32;
+        while i < end {
+            let idx_key = DataKey::Index(i);
+            if let Some(id) = env.storage().persistent().get::<DataKey, String>(&idx_key) {
+                Self::bump_persistent(&env, &idx_key);
+                let res_key = DataKey::Resource(id);
+                if let Some(resource) = env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, Resource>(&res_key)
+                {
+                    Self::bump_persistent(&env, &res_key);
+                    scanned += 1;
+                    match resource.schema_version {
+                        RESOURCE_SCHEMA_VERSION => current_count += 1,
+                        PREVIOUS_RESOURCE_SCHEMA_VERSION => supported_count += 1,
+                        _ => unsupported_count += 1,
+                    }
+                }
+            }
+            i += 1;
+        }
+        MigrationCompatibilityReport {
+            report_version: MIGRATION_REPORT_VIEW_VERSION,
+            resource_schema_version: RESOURCE_SCHEMA_VERSION,
+            previous_schema_version: PREVIOUS_RESOURCE_SCHEMA_VERSION,
+            total,
+            scanned,
+            current_count,
+            supported_count,
+            unsupported_count,
             next_cursor: if i < total { Some(i) } else { None },
         }
     }
