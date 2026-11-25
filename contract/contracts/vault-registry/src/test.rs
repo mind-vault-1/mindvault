@@ -60,6 +60,40 @@ fn tags(env: &Env, items: &[&str]) -> Vec<String> {
 }
 
 #[test]
+fn metadata_schema_id_is_optional_creator_metadata() {
+    let (env, _, _, client, id) = setup_strict_auth();
+    let schema = String::from_str(&env, &"s".repeat(MAX_METADATA_SCHEMA_ID_LEN as usize));
+    assert_eq!(client.get_metadata_schema_id(&id), None);
+    assert!(client
+        .try_set_metadata_schema_id(&id, &Some(schema.clone()))
+        .is_err());
+    assert_eq!(client.get_metadata_schema_id(&id), None);
+
+    client
+        .mock_all_auths()
+        .set_metadata_schema_id(&id, &Some(schema.clone()));
+    let revision = client.get_revision(&id);
+    let too_long = String::from_str(&env, &"s".repeat(MAX_METADATA_SCHEMA_ID_LEN as usize + 1));
+    assert_eq!(
+        client
+            .mock_all_auths()
+            .try_set_metadata_schema_id(&id, &Some(too_long)),
+        Err(Ok(Error::MetadataTooLong))
+    );
+    assert_eq!(client.get_metadata_schema_id(&id), Some(schema.clone()));
+    assert_eq!(client.get_revision(&id), revision);
+    client.mock_all_auths().set_metadata_schema_id(&id, &None);
+    assert_eq!(client.get_metadata_schema_id(&id), None);
+    client.mock_all_auths().freeze_metadata(&id);
+    assert_eq!(
+        client
+            .mock_all_auths()
+            .try_set_metadata_schema_id(&id, &Some(schema)),
+        Err(Ok(Error::MetadataFrozen))
+    );
+}
+
+#[test]
 fn register_then_read() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "swcn98besxpp6t1u8e77fqz3");
@@ -2759,6 +2793,51 @@ fn admin_transfer_nominate_then_accept() {
     assert_eq!(client.admin(), Some(new_admin));
     assert_eq!(client.pending_admin(), None);
     assert_eq!(client.pending_admin_expiry(), None);
+}
+
+#[test]
+fn admin_handoff_requires_the_nominees_signature_before_privileges_move() {
+    let (env, _, admin, client) = setup_with_admin();
+    let nominee = Address::generate(&env);
+    env.mock_auths(&[]);
+    assert!(client.try_nominate_new_admin(&nominee).is_err());
+    assert_eq!(client.pending_admin(), None);
+    client.mock_all_auths().nominate_new_admin(&nominee);
+    assert_eq!(
+        client.try_set_paused(&nominee, &true),
+        Err(Ok(Error::Unauthorized))
+    );
+
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ADMIN_NOMINATION_MIN_GAP);
+    let accept = MockAuthInvoke {
+        contract: &client.address,
+        fn_name: "accept_admin",
+        args: (nominee.clone(),).into_val(&env),
+        sub_invokes: &[],
+    };
+    let wrong = [MockAuth {
+        address: &admin,
+        invoke: &accept,
+    }];
+    assert!(client
+        .mock_auths(&wrong)
+        .try_accept_admin(&nominee)
+        .is_err());
+    assert_eq!(client.admin(), Some(admin.clone()));
+    assert_eq!(client.pending_admin(), Some(nominee.clone()));
+
+    let signed = [MockAuth {
+        address: &nominee,
+        invoke: &accept,
+    }];
+    client.mock_auths(&signed).accept_admin(&nominee);
+    assert_eq!(
+        client.try_set_paused(&admin, &true),
+        Err(Ok(Error::Unauthorized))
+    );
+    client.mock_all_auths().set_paused(&nominee, &true);
+    assert!(client.is_paused());
 }
 
 #[test]
@@ -11232,6 +11311,11 @@ fn attempt_anchor_reports_duplicate_and_preserves_the_original() {
         original,
         "a rejected attempt must leave the canonical anchor untouched"
     );
+    assert_eq!(
+        client.try_get_anchor_failure(&id, &buyer),
+        Err(Ok(Error::NotFound))
+    );
+    assert_eq!(client.get_anchor_attempts(&id, &buyer).attempts, 0);
 }
 
 /// Every reason the reporting variant emits maps to the error the reverting
@@ -12422,6 +12506,101 @@ fn list_holder_leases_clamps_limit_and_skips_non_active_records() {
     assert!(!client.lease_is_active(&pending_id, &holder));
     assert!(!client.lease_is_active(&revoked_id, &holder));
     assert!(!client.lease_is_active(&expired_id, &holder));
+}
+
+#[test]
+fn batch_lease_statuses_preserve_order_and_use_the_current_ledger() {
+    let (env, creator, _, settler, client) = setup_with_settler();
+    let holder = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "batchlease", 100);
+    let ids = Vec::from_array(
+        &env,
+        [id.clone(), String::from_str(&env, "missing"), id.clone()],
+    );
+    let tx = String::from_str(&env, "lease-payment");
+
+    let lease = client.buy_lease(&holder, &id, &LeaseTier::Hour, &100, &tx);
+    assert_eq!(
+        client.get_lease_statuses(&holder, &ids).get(0),
+        Some(LeaseStatus::Pending)
+    );
+    client.settle_lease(&settler, &id, &holder);
+    assert_eq!(
+        client.get_lease_statuses(&holder, &ids),
+        Vec::from_array(
+            &env,
+            [
+                LeaseStatus::Active,
+                LeaseStatus::Missing,
+                LeaseStatus::Active
+            ]
+        )
+    );
+    assert_eq!(
+        client
+            .get_lease_statuses(&Address::generate(&env), &ids)
+            .get(0),
+        Some(LeaseStatus::Missing)
+    );
+    env.ledger().set_sequence_number(lease.expiry_ledger);
+    assert_eq!(
+        client.get_lease_statuses(&holder, &ids).get(0),
+        Some(LeaseStatus::Expired)
+    );
+    client.revoke_lease(&id, &holder);
+    assert_eq!(
+        client.get_lease_statuses(&holder, &ids).get(0),
+        Some(LeaseStatus::Revoked)
+    );
+
+    let malformed = Vec::from_array(&env, [id.clone(), String::from_str(&env, "bad-id")]);
+    assert_eq!(
+        client.try_get_lease_statuses(&holder, &malformed),
+        Err(Ok(Error::InvalidResourceId))
+    );
+    let mut batch = Vec::new(&env);
+    assert!(client.get_lease_statuses(&holder, &batch).is_empty());
+    for _ in 0..MAX_BATCH_LEASE_STATUSES {
+        batch.push_back(id.clone());
+    }
+    assert_eq!(
+        client.get_lease_statuses(&holder, &batch).len(),
+        MAX_BATCH_LEASE_STATUSES
+    );
+    batch.push_back(id);
+    assert_eq!(
+        client.try_get_lease_statuses(&holder, &batch),
+        Err(Ok(Error::BatchTooLarge))
+    );
+}
+
+#[test]
+fn receipt_hash_index_follows_the_canonical_anchor_after_cleanup() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "receiptidx", 100);
+    let old = String::from_str(&env, "old-hash");
+    let new = String::from_str(&env, "new-hash");
+    client.anchor_purchase_receipt(&verifier, &id, &first, &old);
+    client.override_purchase_receipt_anchor(&admin, &id, &first, &new);
+
+    // Model a legacy reverse entry left behind after replacing the first receipt.
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(
+            &VaultRegistry::anchor_hash_key(&old),
+            &(id.clone(), first.clone()),
+        );
+    });
+    client.anchor_purchase_receipt(&verifier, &id, &second, &old);
+    assert_eq!(client.get_purchase_receipt(&id, &first).receipt_hash, new);
+    assert_eq!(client.get_purchase_receipt(&id, &second).receipt_hash, old);
+    assert_eq!(
+        client.try_override_purchase_receipt_anchor(&admin, &id, &first, &old),
+        Err(Ok(Error::DuplicateReceipt))
+    );
 }
 
 include!("test/lifecycle_events.rs");
