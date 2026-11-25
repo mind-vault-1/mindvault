@@ -12,7 +12,7 @@ the canonical list enforced by the contract tests. The generated Soroban spec
 carries method signatures but not event topics, so the two inputs are
 deliberately separate.
 
-**138 methods** and **42 event topics** as of last generation.
+**173 methods** and **49 event topics** as of last generation.
 
 ## Methods
 
@@ -73,7 +73,7 @@ of the binding's doc comment — read the generated file for the full contract.
 
 - **Arguments:** `{id, tags}: {id: string, tags: Array<string>}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Result<void>>`
-- **Summary:** Replace a resource's discovery tags.
+- **Summary:** Atomically replace a resource's discovery tags.
 
 ### `top_tags`
 
@@ -116,6 +116,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Arguments:** `{id, new_price}: {id: string, new_price: i128}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Update a resource's price.
+
+### `claim_fees`
+
+- **Arguments:** `options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<i128>>`
+- **Summary:** Acknowledge receipt of all accrued platform fees and reset the accumulated counter to zero.
 
 ### `get_refund`
 
@@ -189,6 +195,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<i128>>`
 - **Summary:** Price of a lease of `tier` on `resource_id`: the resource's current per-request price times the tier's multiplier (`LEASE_*_MULTIPLIER`).
 
+### `lease_quote`
+
+- **Arguments:** `{resource_id, tier}: {resource_id: string, tier: LeaseTier}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<LeaseQuote>>`
+- **Summary:** Read-only quote for a lease: returns both price (in USDC stroops) and duration (in ledgers) for the given tier on the specified resource.
+
 ### `list_by_tag`
 
 - **Arguments:** `{tag, start, limit}: {tag: string, start: u32, limit: u32}, options?: MethodOptions`
@@ -207,6 +219,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Option<u64>>`
 - **Summary:** The active scheduled pause deadline, if one exists.
 
+### `renew_lease`
+
+- **Arguments:** `{holder, resource_id, tier, amount, tx_hash}: {holder: string, resource_id: string, tier: LeaseTier, amount: i128, tx_hash: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<Lease>>`
+- **Summary:** Renew an active, unexpired lease.
+
 ### `accept_admin`
 
 - **Arguments:** `{new_admin}: {new_admin: string}, options?: MethodOptions`
@@ -218,6 +236,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Arguments:** `{verifier}: {verifier: string}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Grant the verifier role to `verifier`, authorizing `set_verification_status`.
+
+### `extend_lease`
+
+- **Arguments:** `{holder, resource_id, tier, amount, tx_hash}: {holder: string, resource_id: string, tier: LeaseTier, amount: i128, tx_hash: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<Lease>>`
+- **Summary:** Extend an existing `Active` lease for `(resource_id, holder)` without changing the holder or resource it is bound to.
 
 ### `flag_details`
 
@@ -236,12 +260,6 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Arguments:** `{address}: {address: string}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<boolean>`
 - **Summary:** Whether `address` currently holds the moderator role.
-
-### `role_inventory_page`
-
-- **Arguments:** `{role, cursor, limit}: {role: RoleKind, cursor: u32, limit: u32}, options?: MethodOptions`
-- **Returns:** `AssembledTransaction<RoleInventoryPage>`
-- **Summary:** Bounded, read-only page of the active holders of a protocol role.
 
 ### `listed_count`
 
@@ -331,7 +349,7 @@ of the binding's doc comment — read the generated file for the full contract.
 
 - **Arguments:** `options?: MethodOptions`
 - **Returns:** `AssembledTransaction<RegistryInfo>`
-- **Summary:** Discover this registry's stable identity and capabilities in one read-only call: name, crate version, `Resource` schema version, and the network this contract is deployed on.
+- **Summary:** Discover this registry's stable identity and capabilities in one read-only call: name, crate version, `Resource` schema version, the network this contract is deployed on, and the role-capability vers…
 
 ### `get_fee_config`
 
@@ -355,7 +373,7 @@ of the binding's doc comment — read the generated file for the full contract.
 
 - **Arguments:** `{settler, receipt_id, resource_id, payer, amount, tx_hash}: {settler: string, receipt_id: string, resource_id: string, payer: string, amount: i128, tx_hash: string}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Result<void>>`
-- **Summary:** Record an x402/Soroban payment receipt in `Escrowed` state.
+- **Summary:** Provenance: this entry point cannot prove which resource the settlement transaction paid for, so it also emits a `nomemo` warning event.
 
 ### `recovery_admin`
 
@@ -429,6 +447,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Freeze an otherwise active resource.
 
+### `is_flag_overdue`
+
+- **Arguments:** `{id}: {id: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<boolean>`
+- **Summary:** Whether the active flag on `id` has passed its resolution deadline.
+
 ### `lease_is_active`
 
 - **Arguments:** `{resource_id, holder}: {resource_id: string, holder: string}, options?: MethodOptions`
@@ -483,6 +507,18 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Emergency-delist a disputed resource.
 
+### `get_accrued_fees`
+
+- **Arguments:** `options?: MethodOptions`
+- **Returns:** `AssembledTransaction<i128>`
+- **Summary:** Read the total accrued platform-fee amount (in USDC stroops) that has been settled but not yet acknowledged via `claim_fees`.
+
+### `get_payment_memo`
+
+- **Arguments:** `{receipt_id}: {receipt_id: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Option<string>>`
+- **Summary:** Canonical settlement memo stored for `receipt_id` by `record_payment_with_memo`, or `None` if the receipt was recorded without one (via `record_payment`) or does not exist.
+
 ### `list_by_tag_page`
 
 - **Arguments:** `{tag, cursor, limit}: {tag: string, cursor: IdCursor, limit: u32}, options?: MethodOptions`
@@ -494,6 +530,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Arguments:** `{cursor, limit}: {cursor: u32, limit: u32}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<CatalogPage>`
 - **Summary:** `list_listed` with next-cursor metadata: `cursor` and `next_cursor` are global catalog indexes (same domain as `list_page`), so a page boundary is stable however many resources change state between c…
+
+### `migration_compatibility_report`
+
+- **Arguments:** `{cursor, limit}: {cursor: u32, limit: u32}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<MigrationCompatibilityReport>`
+- **Summary:** Bounded, read-only migration readiness report. Counts resources in catalog-index order by current, supported predecessor, and unsupported `schema_version`; returns `next_cursor` for pagination. Read-only and available while paused.
 
 ### `migrate_resource`
 
@@ -525,6 +567,30 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Schedule an emergency pause that automatically expires at `pause_until`.
 
+### `get_anchor_status`
+
+- **Arguments:** `{resource_id, buyer}: {resource_id: string, buyer: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<AnchorStatus>>`
+- **Summary:** Read the explicit anchor lifecycle status for `(resource_id, buyer)`.
+
+### `get_flag_deadline`
+
+- **Arguments:** `{id}: {id: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Option<u32>>`
+- **Summary:** Ledger sequence after which the active flag on `id` is overdue, or `None` if the resource is not flagged or was flagged with no window.
+
+### `is_payment_paused`
+
+- **Arguments:** `options?: MethodOptions`
+- **Returns:** `AssembledTransaction<boolean>`
+- **Summary:** Whether payment operations are currently paused.
+
+### `preview_fee_split`
+
+- **Arguments:** `{amount}: {amount: i128}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<FeeSplitPreview>>`
+- **Summary:** Preview how `amount` would be split between the platform, any royalty recipient, and the resource creator, using the current fee configuration.
+
 ### `set_fee_recipient`
 
 - **Arguments:** `{recipient}: {recipient: Option<string>}, options?: MethodOptions`
@@ -536,6 +602,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Arguments:** `{admin, window_ledgers}: {admin: string, window_ledgers: u32}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Configure the creator refund window for payments settled after this call.
+
+### `force_resolve_flag`
+
+- **Arguments:** `{id, admin}: {id: string, admin: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Admin escape hatch for a flag a moderator never resolved: clears the dispute flag once its resolution deadline has passed.
 
 ### `get_anchor_failure`
 
@@ -555,6 +627,18 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Store the intended network identifier once.
 
+### `list_holder_leases`
+
+- **Arguments:** `{holder, cursor, limit}: {holder: string, cursor: Option<u32>, limit: u32}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<HolderLeasePage>`
+- **Summary:** Return a bounded page of leases that currently grant `holder` access.
+
+### `maintenance_status`
+
+- **Arguments:** `options?: MethodOptions`
+- **Returns:** `AssembledTransaction<MaintenanceStatus>`
+- **Summary:** The recorded maintenance status.
+
 ### `nominate_new_admin`
 
 - **Arguments:** `{new_admin}: {new_admin: string}, options?: MethodOptions`
@@ -572,6 +656,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Arguments:** `{creator, id, price, metadata, tags, content_hash, memo_hash}: {creator: string, id: string, price: i128, metadata: string, tags: Array<string>, content_hash: Option<string>, memo_hash: Option<Buffer>}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Register a new resource together with an optional content hash and an optional 32-byte memo hash.
+
+### `set_payment_paused`
+
+- **Arguments:** `{admin, paused}: {admin: string, paused: boolean}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Set or clear the emergency pause on payment and lease operations only.
 
 ### `set_recovery_admin`
 
@@ -633,6 +723,18 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<Array<Option<ResourceState>>>>`
 - **Summary:** Return lifecycle states for up to `MAX_BATCH_RESOURCE_STATES` ids.
 
+### `get_royalty_opt_out`
+
+- **Arguments:** `{id}: {id: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<boolean>>`
+- **Summary:** Whether future royalty routing is disabled for the resource.
+
+### `payment_pause_until`
+
+- **Arguments:** `options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Option<u64>>`
+- **Summary:** The active scheduled payment pause deadline, if one exists.
+
 ### `reactivate_resource`
 
 - **Arguments:** `{id}: {id: string}, options?: MethodOptions`
@@ -645,11 +747,23 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Record a refund under the admin override path.
 
+### `role_inventory_page`
+
+- **Arguments:** `{role, cursor, limit}: {role: RoleKind, cursor: u32, limit: u32}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<RoleInventoryPage>`
+- **Summary:** Bounded, read-only page of the active holders of a protocol role.
+
 ### `set_fee_destination`
 
 - **Arguments:** `{config}: {config: FeeDestinationConfig}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** —
+
+### `set_royalty_opt_out`
+
+- **Arguments:** `{id, opt_out}: {id: string, opt_out: boolean}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Opt a resource out of future royalty routing.
 
 ### `bootstrap_dual_admin`
 
@@ -711,6 +825,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Update the metadata pointer for a small bounded set of owned resources in one transaction.
 
+### `verifier_key_history`
+
+- **Arguments:** `{cursor, limit}: {cursor: u32, limit: u32}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<VerifierKeyHistoryPage>`
+- **Summary:** Bounded, read-only page of the registry-wide verifier key history (#1238): every grant, revocation and rotation of the verifier role, with the key's activation state after the change, the admin that …
+
 ### `get_metadata_pointers`
 
 - **Arguments:** `{id}: {id: string}, options?: MethodOptions`
@@ -747,17 +867,35 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<u32>`
 - **Summary:** Number of resources currently owned by `creator` (moves with `transfer_ownership`/`accept_transfer`; unrelated to the monotonic, never-decremented `count()`).
 
+### `flag_resolution_window`
+
+- **Arguments:** `options?: MethodOptions`
+- **Returns:** `AssembledTransaction<u32>`
+- **Summary:** Configured flag resolution window in ledgers (`0` = no deadline).
+
 ### `list_by_dispute_status`
 
 - **Arguments:** `{flagged, start, limit}: {flagged: boolean, start: u32, limit: u32}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Array<Resource>>`
 - **Summary:** Paginated list of resources filtered by active moderator dispute flag.
 
+### `set_maintenance_status`
+
+- **Arguments:** `{admin, kind, reason_code}: {admin: string, kind: MaintenanceKind, reason_code: u32}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Record the registry-level maintenance status.
+
 ### `anchor_purchase_receipt`
 
 - **Arguments:** `{service, resource_id, buyer, receipt_hash}: {service: string, resource_id: string, buyer: string, receipt_hash: string}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Anchor a purchase receipt hash for `(resource_id, buyer)`.
+
+### `cancel_admin_nomination`
+
+- **Arguments:** `{admin}: {admin: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Cancel a pending admin nomination before it is accepted.
 
 ### `resource_schema_version`
 
@@ -777,11 +915,29 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Update a resource's on-chain verification status.
 
+### `simulate_record_payment`
+
+- **Arguments:** `{settler, receipt_id, resource_id, payer, amount, tx_hash}: {settler: string, receipt_id: string, resource_id: string, payer: string, amount: i128, tx_hash: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<PaymentReceipt>>`
+- **Summary:** Record an x402/Soroban payment receipt in `Escrowed` state.
+
 ### `verify_attestation_hash`
 
 - **Arguments:** `{id, status, document_hash}: {id: string, status: VerificationStatus, document_hash: Buffer}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<boolean>`
 - **Summary:** Whether the resource is currently in `status` and its stored attestation hash equals `compute_attestation_hash(id, status, document_hash)`.
+
+### `accept_verifier_rotation`
+
+- **Arguments:** `{new_verifier}: {new_verifier: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Accept a pending two-step verifier rotation (#1239).
+
+### `cancel_verifier_rotation`
+
+- **Arguments:** `{admin}: {admin: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Cancel a pending verifier rotation proposal before it is accepted (#1239).
 
 ### `compute_attestation_hash`
 
@@ -789,11 +945,47 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<string>`
 - **Summary:** Pure function: recompute the attestation hash a verifier is expected to submit for `(id, status, document_hash)`, so off-chain clients can check integrity without trusting a wallet provider.
 
+### `get_remaining_refundable`
+
+- **Arguments:** `{payment_receipt_id}: {payment_receipt_id: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<i128>>`
+- **Summary:** Remaining refundable balance for a payment receipt.
+
+### `record_payment_with_memo`
+
+- **Arguments:** `{settler, receipt_id, resource_id, payer, amount, tx_hash, memo}: {settler: string, receipt_id: string, resource_id: string, payer: string, amount: i128, tx_hash: string, memo: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Same as `record_payment`, but additionally requires the settlement transaction's `MEMO_TEXT` (`memo`) to be the canonical provenance memo `mv:<resource_id>` for the paid resource; anything else error…
+
+### `set_payment_paused_until`
+
+- **Arguments:** `{admin, pause_until}: {admin: string, pause_until: u64}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Schedule an emergency pause on payment operations that automatically expires at `pause_until`.
+
 ### `creator_earnings_estimate`
 
 - **Arguments:** `{creator}: {creator: string}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<CreatorEarningsEstimate>`
 - **Summary:** Return the total USDC stroops earned by `creator` across all settled payment receipts for resources they owned at settlement time.
+
+### `is_payment_fully_refunded`
+
+- **Arguments:** `{receipt_id}: {receipt_id: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<boolean>>`
+- **Summary:** Whether a payment receipt has been fully refunded.
+
+### `pending_verifier_rotation`
+
+- **Arguments:** `options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Option<PendingVerifierRotation>>`
+- **Summary:** The pending two-step verifier rotation proposal, if one is active (#1239).
+
+### `propose_verifier_rotation`
+
+- **Arguments:** `{old_verifier, new_verifier}: {old_verifier: string, new_verifier: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Propose a two-step verifier key rotation (#1239).
 
 ### `record_payment_idempotent`
 
@@ -801,11 +993,17 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<PaymentReceipt>>`
 - **Summary:** Retry-safe `record_payment`: same auth, validation, and pause rules, but returns the stored receipt.
 
+### `set_flag_resolution_window`
+
+- **Arguments:** `{window_ledgers}: {window_ledgers: u32}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Set how many ledgers a moderator has to resolve a flag before it becomes overdue.
+
 ### `get_verifier_status_history`
 
 - **Arguments:** `{verifier, cursor, limit}: {verifier: string, cursor: u32, limit: u32}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<VerifierStatusPage>`
-- **Summary:** Return a page of verification status changes performed by `verifier`, in chronological order (oldest first).
+- **Summary:** Return a page of verification status changes performed by `verifier`, in deterministic chronological `(ledger, seq)` order (oldest first).
 
 ### `list_by_dispute_status_page`
 
@@ -817,7 +1015,13 @@ of the binding's doc comment — read the generated file for the full contract.
 
 - **Arguments:** `{status, cursor, limit}: {status: VerificationStatus, cursor: u32, limit: u32}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<CatalogPage>`
-- **Summary:** Paginated list of resources filtered by verification status.
+- **Summary:** Paginated list of resources filtered by verification status, in registration order.
+
+### `record_creator_refund_reason`
+
+- **Arguments:** `{creator, refund_id, payment_receipt_id, recipient, amount, tx_hash, reason_hash}: {creator: string, refund_id: string, payment_receipt_id: string, recipient: string, amount: i128, tx_hash: string, reason_hash: Option<string>}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Like [`Self::record_creator_refund`], with an optional bounded hash of the off-chain dispute reason.
 
 ### `list_by_creator_page_filtered`
 
@@ -843,6 +1047,18 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<boolean>>`
 - **Summary:** Attempt to anchor a purchase receipt, reporting a rejected attempt as an on-chain `anchrfail` event instead of reverting.
 
+### `check_lease_renewal_eligibility`
+
+- **Arguments:** `{resource_id, holder}: {resource_id: string, holder: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<LeaseRenewalInfo>>`
+- **Summary:** Check if a lease is eligible for renewal and return renewal pricing information.
+
+### `record_admin_refund_with_reason`
+
+- **Arguments:** `{admin, refund_id, payment_receipt_id, recipient, amount, tx_hash, reason_hash}: {admin: string, refund_id: string, payment_receipt_id: string, recipient: string, amount: i128, tx_hash: string, reason_hash: Option<string>}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Like [`Self::record_admin_refund`], with an optional bounded hash of the off-chain dispute reason.
+
 ### `override_purchase_receipt_anchor`
 
 - **Arguments:** `{admin, resource_id, buyer, new_receipt_hash}: {admin: string, resource_id: string, buyer: string, new_receipt_hash: string}, options?: MethodOptions`
@@ -856,50 +1072,57 @@ event key; the payload column describes the second segment. See the
 [`contract/README.md` Events table](../contract/README.md#events) for the
 lifecycle conditions that emit each topic.
 
-| Topic                 | Payload                                                            |
-| --------------------- | ------------------------------------------------------------------ |
-| `register`            | `Resource`                                                         |
-| `regmemo`             | `memo_hash: BytesN<32>`                                            |
-| `nomemo`              | `(receipt_id: String, tx_hash: String)`                            |
-| `setregt`             | `terms_hash: String`                                               |
-| `setroyal`            | `(old_recipient: Option<Address>, new_recipient: Option<Address>)` |
-| `transfer`            | `(previous_owner: Address, new_owner: Address)`                    |
-| `propose`             | `(owner: Address, proposed: Address)`                              |
-| `cancel`              | `owner: Address`                                                   |
-| `setlisted`           | `(old_listed: bool, new_listed: bool)`                             |
-| `setterms`            | `terms_hash: String`                                               |
-| `setadmin`            | `new_admin: Address`                                               |
-| `setrecov`            | `recovery_admin: Option<Address>`                                  |
-| `recover`             | `(old_admin: Address, new_admin: Address)`                         |
-| `setptrs`             | `MetadataPointers { pointers, primary }`                           |
-| `nomadmin`            | `new_admin: Address`                                               |
-| `accadmin`            | `new_admin: Address`                                               |
-| `nomcncl`             | `(nominee: Address, admin: Address)`                               |
-| `netinit`             | `network_id: BytesN<32>`                                           |
-| `freeze`              | `()`                                                               |
-| `addverif`            | `RoleChange { admin, target, granted: true }`                      |
-| `rmverif`             | `RoleChange { admin, target, granted: false }`                     |
-| `verrot`              | `VerifierRotation { admin, old_verifier, new_verifier, ledger }`   |
-| `reindex`             | `new_count: u32 (topic carries old_count: u32)`                    |
-| `addsettlr`           | `RoleChange { admin, target, granted: true }`                      |
-| `rmsettlr`            | `RoleChange { admin, target, granted: false }`                     |
-| `pause`               | `(paused: bool, admin: Address)`                                   |
-| `pause_until`         | `(pause_until: u64, admin: Address)`                               |
-| `payment_pause`       | `(paused: bool, admin: Address)`                                   |
-| `payment_pause_until` | `(pause_until: u64, admin: Address)`                               |
-| `addmod`              | `RoleChange { admin, target, granted: true }`                      |
-| `rmmod`               | `RoleChange { admin, target, granted: false }`                     |
-| `flag`                | `FlagEvent { id, moderator, reason }`                              |
-| `unflag`              | `resource id`                                                      |
-| `flagrsn`             | `(moderator: Address, reason_hash: String)`                        |
-| `retagidx`            | `new_count: u32`                                                   |
-| `reactive`            | `resource id`                                                      |
-| `claimfee`            | `(claimed_amount: i128, remaining_amount: i128)`                   |
-| `ttlext`              | `()`                                                               |
-| `lease`               | `(resource_id: String, lease: Lease)`                              |
-| `leasesetl`           | `(resource_id: String, lease: Lease)`                              |
-| `simvalid`            | `(passed: bool, error_code: Option<u32>)`                          |
-| `leaserevk`           | `(resource_id: String, lease: Lease)`                              |
+| Topic                 | Payload                                                                                                                                                  |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `register`            | `Resource`                                                                                                                                               |
+| `regmemo`             | `memo_hash: BytesN<32>`                                                                                                                                  |
+| `flagwin`             | `window_ledgers: u32`                                                                                                                                    |
+| `flagfrc`             | `(admin: Address, deadline: u32)`                                                                                                                        |
+| `nomemo`              | `(receipt_id: String, tx_hash: String)`                                                                                                                  |
+| `setregt`             | `terms_hash: String`                                                                                                                                     |
+| `setroyal`            | `(old_recipient: Option<Address>, new_recipient: Option<Address>)`                                                                                       |
+| `transfer`            | `(previous_owner: Address, new_owner: Address)`                                                                                                          |
+| `propose`             | `(owner: Address, proposed: Address)`                                                                                                                    |
+| `cancel`              | `owner: Address`                                                                                                                                         |
+| `setlisted`           | `(old_listed: bool, new_listed: bool)`                                                                                                                   |
+| `setterms`            | `terms_hash: String`                                                                                                                                     |
+| `setadmin`            | `new_admin: Address`                                                                                                                                     |
+| `setrecov`            | `recovery_admin: Option<Address>`                                                                                                                        |
+| `recover`             | `(old_admin: Address, new_admin: Address)`                                                                                                               |
+| `setptrs`             | `MetadataPointers { pointers, primary }`                                                                                                                 |
+| `nomadmin`            | `new_admin: Address`                                                                                                                                     |
+| `accadmin`            | `new_admin: Address`                                                                                                                                     |
+| `nomcncl`             | `(nominee: Address, admin: Address)`                                                                                                                     |
+| `netinit`             | `network_id: BytesN<32>`                                                                                                                                 |
+| `freeze`              | `()`                                                                                                                                                     |
+| `addverif`            | `RoleChange { admin, target, granted: true }`                                                                                                            |
+| `rmverif`             | `RoleChange { admin, target, granted: false }`                                                                                                           |
+| `verrot`              | `VerifierRotation { admin, old_verifier, new_verifier, ledger }`                                                                                         |
+| `verprop`             | `PendingVerifierRotation { admin, old_verifier, new_verifier, nominated_at, expiry }`                                                                    |
+| `veracc`              | `VerifierRotation { admin, old_verifier, new_verifier, ledger }`                                                                                         |
+| `vercncl`             | `(old_verifier: Address, new_verifier: Address, admin: Address)`                                                                                         |
+| `reindex`             | `new_count: u32 (topic carries old_count: u32)`                                                                                                          |
+| `addsettlr`           | `RoleChange { admin, target, granted: true }`                                                                                                            |
+| `rmsettlr`            | `RoleChange { admin, target, granted: false }`                                                                                                           |
+| `pause`               | `(paused: bool, admin: Address)`                                                                                                                         |
+| `pause_until`         | `(pause_until: u64, admin: Address)`                                                                                                                     |
+| `payment_pause_until` | `(pause_until: u64, admin: Address)`                                                                                                                     |
+| `payment_pause`       | `(paused: bool, admin: Address)`                                                                                                                         |
+| `addmod`              | `RoleChange { admin, target, granted: true }`                                                                                                            |
+| `rmmod`               | `RoleChange { admin, target, granted: false }`                                                                                                           |
+| `flag`                | `FlagEvent { id, moderator, reason }`                                                                                                                    |
+| `unflag`              | `resource id`                                                                                                                                            |
+| `flagrsn`             | `(moderator: Address, reason_hash: String)`                                                                                                              |
+| `retagidx`            | `new_count: u32`                                                                                                                                         |
+| `reactive`            | `resource id`                                                                                                                                            |
+| `claimfee`            | `FeesClaimed { claimed_amount, remaining_amount }`                                                                                                       |
+| `ttlext`              | `()`                                                                                                                                                     |
+| `lease`               | `Lease (topic also carries resource_id)`                                                                                                                 |
+| `leasesetl`           | `Lease (topic also carries resource_id)`                                                                                                                 |
+| `simvalid`            | `(passed: bool, error_code: Option<u32>)`                                                                                                                |
+| `refund`              | `RefundReceipt { refund_id, payment_receipt_id, resource_id, recipient, amount, tx_hash, initiated_by, recorded_at, admin_override, remaining_balance }` |
+| `refwin`              | `(old_window: u32, new_window: u32)`                                                                                                                     |
+| `leaserevk`           | `Lease (topic also carries resource_id)`                                                                                                                 |
 
 ## Concrete example
 

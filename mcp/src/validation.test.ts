@@ -101,6 +101,7 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
   mindvault_subscribe_resource: { resourceId: "res-001" },
   mindvault_export_receipts: {},
   mindvault_verify_receipt: { receipt: {} },
+  mindvault_query_audit_log: {},
   mindvault_register_onchain: { resourceId: "res-001" },
   mindvault_agent_status: {},
   mindvault_registry_info: {},
@@ -117,6 +118,8 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
     attestationHash: "a".repeat(64),
   },
   mindvault_registry_lookup: { resourceId: "res-001" },
+  mindvault_contract_event_history: { resourceId: "res-001" },
+  mindvault_cache_chain_diff: {},
   mindvault_registry_list: {},
   mindvault_registry_count: {},
   mindvault_explain_error_code: { code: 1 },
@@ -154,8 +157,10 @@ const VALID_CALLS: Record<string, Record<string, unknown>> = {
     royaltyRecipient: "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH",
   },
   mindvault_check_state_permissions: {},
+  mindvault_state_diagnostics: {},
   mindvault_registry_health: {},
   mindvault_rpc_health: {},
+  mindvault_upstream_health: {},
   mindvault_prewarm_catalog: {},
   mindvault_client_config: {},
   mindvault_mainnet_banner: {},
@@ -759,6 +764,51 @@ describe("string_array arguments", () => {
   });
 });
 
+describe("contract event history arguments", () => {
+  it("accepts a bounded ledger range", () => {
+    expect(() =>
+      validateToolArgs("mindvault_contract_event_history", {
+        resourceId: "res-001",
+        startLedger: 123,
+        limit: 200,
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts a pagination cursor", () => {
+    expect(() =>
+      validateToolArgs("mindvault_contract_event_history", {
+        resourceId: "res-001",
+        cursor: "123-0000000000",
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a start ledger below one", () => {
+    const err = expectInvalid("mindvault_contract_event_history", {
+      resourceId: "res-001",
+      startLedger: 0,
+    });
+    expect(err.message).toContain("startLedger");
+  });
+
+  it("rejects a page above the advertised ceiling", () => {
+    const err = expectInvalid("mindvault_contract_event_history", {
+      resourceId: "res-001",
+      limit: 201,
+    });
+    expect(err.message).toContain("limit");
+  });
+
+  it("rejects an empty cursor", () => {
+    const err = expectInvalid("mindvault_contract_event_history", {
+      resourceId: "res-001",
+      cursor: "",
+    });
+    expect(err.message).toContain("cursor");
+  });
+});
+
 describe("multi-issue reporting", () => {
   it("reports every problem in one deterministic error", () => {
     const err = expectInvalid("mindvault_publish", {
@@ -886,6 +936,10 @@ describe("mindvault_export_receipts arguments", () => {
         limit: 50,
       }),
     ).not.toThrow();
+  });
+
+  it("accepts jsonl as an alias for ndjson", () => {
+    expect(() => validateToolArgs("mindvault_export_receipts", { format: "jsonl" })).not.toThrow();
   });
 
   it("rejects a format it cannot produce", () => {

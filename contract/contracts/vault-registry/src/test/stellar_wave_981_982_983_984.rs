@@ -134,6 +134,39 @@ fn rotate_verifier_emits_complete_actor_previous_and_replacement() {
 }
 
 #[test]
+fn verifier_config_event_matches_storage_for_grant_rotation_and_cancellation() {
+    let (env, _creator, admin, client) = setup_with_admin();
+    let k1 = Address::generate(&env);
+    let k2 = Address::generate(&env);
+
+    client.add_verifier(&k1);
+    let added: VerifierConfigChange = find_event(&env, &client.address, "vercfg").unwrap();
+    assert_eq!(added.version, VERIFIER_CONFIG_EVENT_VERSION);
+    assert_eq!(added.action, VerifierKeyAction::Added);
+    assert_eq!(added.admin, admin);
+    assert_eq!(added.verifier, k1);
+    assert_eq!(added.previous, None);
+    assert!(client.is_verifier(&k1));
+
+    client.rotate_verifier(&k1, &k2);
+    let rotated: VerifierConfigChange = find_event(&env, &client.address, "vercfg").unwrap();
+    assert_eq!(rotated.version, VERIFIER_CONFIG_EVENT_VERSION);
+    assert_eq!(rotated.action, VerifierKeyAction::Rotated);
+    assert_eq!(rotated.verifier, k2);
+    assert_eq!(rotated.previous, Some(k1.clone()));
+    assert!(!client.is_verifier(&k1));
+    assert!(client.is_verifier(&k2));
+
+    client.remove_verifier(&k2);
+    let removed: VerifierConfigChange = find_event(&env, &client.address, "vercfg").unwrap();
+    assert_eq!(removed.version, VERIFIER_CONFIG_EVENT_VERSION);
+    assert_eq!(removed.action, VerifierKeyAction::Removed);
+    assert_eq!(removed.verifier, k2);
+    assert_eq!(removed.previous, None);
+    assert!(!client.is_verifier(&k2));
+}
+
+#[test]
 fn rotate_verifier_still_emits_rmverif_and_addverif_role_changes() {
     let (env, _creator, admin, client) = setup_with_admin();
     let old_verifier = Address::generate(&env);

@@ -49,6 +49,9 @@ export type ErrorCode =
   | "MV_TOOL_UNKNOWN"
   | "MV_NOT_FOUND"
   | "MV_CONFLICT"
+  | "MV_CURSOR_INVALID"
+  | "MV_CURSOR_EXPIRED"
+  | "MV_CURSOR_TAMPERED"
   // Identity and authorisation
   | "MV_AUTH_REQUIRED"
   | "MV_AUTH_REJECTED"
@@ -168,6 +171,27 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeSpec> = {
     "unsafe",
     "The resource is already in the requested state.",
     "No action needed — the desired outcome already holds.",
+  ),
+  MV_CURSOR_INVALID: spec(
+    "MV_CURSOR_INVALID",
+    "validation",
+    "unsafe",
+    "The cursor is malformed, from another tool, or bound to different arguments.",
+    "Omit the cursor and start again. Cursors are opaque tokens; do not edit or combine them.",
+  ),
+  MV_CURSOR_EXPIRED: spec(
+    "MV_CURSOR_EXPIRED",
+    "validation",
+    "unsafe",
+    "The cursor is older than the 15-minute validity window.",
+    "Omit the cursor to start again. Cursors expire after 15 minutes.",
+  ),
+  MV_CURSOR_TAMPERED: spec(
+    "MV_CURSOR_TAMPERED",
+    "validation",
+    "unsafe",
+    "The cursor's signature did not verify; its payload was edited or came from a different server.",
+    "Discard the cursor and use the nextCursor returned by the previous call. Do not edit or combine tokens.",
   ),
   MV_AUTH_REQUIRED: spec(
     "MV_AUTH_REQUIRED",
@@ -322,6 +346,18 @@ const LOCAL_PATTERNS: { code: ErrorCode; test: (name: string, message: string) =
   {
     code: "MV_TIMEOUT",
     test: (name, m) => name === "TimeoutError" || name === "AbortError" || /timed? ?out/i.test(m),
+  },
+  {
+    code: "MV_CURSOR_TAMPERED",
+    test: (_n, m) => /tampered (catalog|registry|resource subscription) cursor/i.test(m),
+  },
+  {
+    code: "MV_CURSOR_EXPIRED",
+    test: (_n, m) => /expired (catalog|registry|resource subscription) cursor/i.test(m),
+  },
+  {
+    code: "MV_CURSOR_INVALID",
+    test: (_n, m) => /invalid (catalog|registry|resource subscription) cursor/i.test(m),
   },
   {
     code: "MV_ARGUMENT_INVALID",

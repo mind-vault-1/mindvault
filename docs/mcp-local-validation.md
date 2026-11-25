@@ -88,9 +88,9 @@ a problem reported here is the same problem that would block a live launch.
 - Argument checks cover the advertised input schemas and the shared
   `TOOL_ARGUMENT_SPECS`. Semantic rules enforced by a remote service are out of
   scope.
-- Tools that validate their own arguments (`mindvault_publish_status` and
-  `mindvault_publish_batch`) are checked against their advertised input schema
-  rather than the shared specs.
+- Tools that validate their own arguments (`mindvault_publish_status`,
+  `mindvault_publish_batch`, and `mindvault_publish_batch_preview`) are checked
+  against their advertised input schema rather than the shared specs.
 - No state, receipt, profile, or wallet file is read or written by a validation
   call. A successful report does not prove local persistence is healthy.
 - Resource and prompt handlers are unaffected by this mode; it applies to tool

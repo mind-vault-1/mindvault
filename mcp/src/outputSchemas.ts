@@ -1083,6 +1083,34 @@ export const PENDING_TRANSFER_OUTPUT_SCHEMA = {
   required: ["resourceId", "found", "message"],
 } as const;
 
+export const CONTRACT_EVENT_HISTORY_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    resourceId: { type: "string" },
+    contractId: { type: "string" },
+    events: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          ledger: { type: "integer" },
+          ledgerClosedAt: { type: ["string", "null"] },
+          txHash: { type: ["string", "null"] },
+          topic: { type: "array", items: {} },
+          value: {},
+        },
+        required: ["id", "ledger", "ledgerClosedAt", "txHash", "topic", "value"],
+      },
+    },
+    scanned: { type: "integer" },
+    cursor: { type: ["string", "null"] },
+    hasMore: { type: "boolean" },
+    notice: { type: ["string", "null"] },
+  },
+  required: ["resourceId", "contractId", "events", "scanned", "cursor", "hasMore", "notice"],
+} as const;
+
 /**
  * One entry of a batch catalog lookup result (#608).
  *
@@ -1094,13 +1122,25 @@ const BATCH_CATALOG_ITEM_SCHEMA = {
   properties: {
     id: { type: ["string", "null"] },
     found: { type: "boolean" },
+    status: { type: "string", enum: ["found", "not_found", "cached"] },
+    reason: { type: "string", enum: ["live", "not_found", "offline_snapshot"] },
     title: { type: ["string", "null"] },
     price: { type: ["string", "number", "null"] },
     verificationStatus: { type: ["string", "null"] },
     resourceType: { type: ["string", "null"] },
     accessUrl: { type: ["string", "null"] },
   },
-  required: ["id", "found", "title", "price", "verificationStatus", "resourceType", "accessUrl"],
+  required: [
+    "id",
+    "found",
+    "status",
+    "reason",
+    "title",
+    "price",
+    "verificationStatus",
+    "resourceType",
+    "accessUrl",
+  ],
 } as const;
 
 export const BATCH_CATALOG_LOOKUP_OUTPUT_SCHEMA = {
@@ -1634,4 +1674,51 @@ export const RECEIPT_VERIFICATION_OUTPUT_SCHEMA = {
     summary: { type: "string" },
   },
   required: ["schema", "outcome", "valid", "fields", "issues", "summary"],
+} as const;
+
+/**
+ * Output schema for `mindvault_query_audit_log`.
+ *
+ * Entries are redacted audit events: their exact shape depends on the tool
+ * that emitted them, but the envelope, filters, and bounded-scan metadata are
+ * fixed so clients can page through results deterministically.
+ */
+export const AUDIT_QUERY_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    schema: { type: "string", const: "mindvault.audit-query/v1" },
+    source: { type: "string", const: "MINDVAULT_AUDIT_LOG_FILE" },
+    filters: {
+      type: "object",
+      properties: {
+        since: { type: ["string", "null"] },
+        until: { type: ["string", "null"] },
+        tool: { type: ["string", "null"] },
+        outcome: { type: ["string", "null"], enum: ["start", "success", "error", null] },
+        limit: { type: "integer", minimum: 1, maximum: 500 },
+        offset: { type: "integer", minimum: 0 },
+      },
+      required: ["since", "until", "tool", "outcome", "limit", "offset"],
+    },
+    count: { type: "integer" },
+    nextOffset: { type: ["integer", "null"] },
+    truncated: { type: "boolean" },
+    scannedBytes: { type: "integer" },
+    maxScannedBytes: { type: "integer" },
+    entries: {
+      type: "array",
+      items: { type: "object" },
+    },
+  },
+  required: [
+    "schema",
+    "source",
+    "filters",
+    "count",
+    "nextOffset",
+    "truncated",
+    "scannedBytes",
+    "maxScannedBytes",
+    "entries",
+  ],
 } as const;

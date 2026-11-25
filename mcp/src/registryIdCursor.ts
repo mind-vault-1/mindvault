@@ -5,13 +5,20 @@
  * created_at)`, or `End` — from `list_by_creator_page` and
  * `list_by_creator_page_filtered`. That is a contract-internal shape: an agent
  * should not have to know that a cursor is a triple, and it should not be
- * able to hand-edit one. The token below is base64url-encoded JSON, the same
- * shape `catalogCursor.ts` uses for the MindVault API catalog, so a cursor
- * stays opaque, versioned, and self-describing.
+ * able to hand-edit one. The token below is a signed, expiring, base64url
+ * envelope, the same shape `catalogCursor.ts` uses for the MindVault API
+ * catalog, so a cursor stays opaque, versioned, and self-describing.
  *
- * The token is *not* authenticated: it is a pagination position, not a
- * capability. Editing it only moves the read position.
+ * The token is authenticated with `cursorToken.ts`: editing a payload breaks
+ * the HMAC, and an expired token is rejected with a distinct error.
  */
+
+import {
+  createCursorToken,
+  cursorErrorMessage,
+  readCursorToken,
+  type CursorFailureReason,
+} from "./cursorToken.js";
 
 /** The contract's id cursor, as the generated bindings model it. */
 export type IdCursor =
@@ -36,54 +43,28 @@ interface IdCursorPayload {
 /** Bump when the token format changes, so old tokens are rejected cleanly. */
 const CURSOR_VERSION = 1;
 
-function encode(payload: IdCursorPayload): string {
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-}
-
-function decode(token: string): unknown {
-  return JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
-}
-
-/**
- * Encode a contract cursor as an opaque token.
- *
- * `Start` and `End` are encoded as a one-word payload; `After` carries the
- * triple the contract needs to resume after a specific entry.
- */
-export function encodeIdCursor(cursor: IdCursor): string {
-  if (cursor.tag === "Start") return encode({ v: CURSOR_VERSION, t: "s" });
-  if (cursor.tag === "End") return encode({ v: CURSOR_VERSION, t: "e" });
-  const [position, id, createdAt] = cursor.values;
-  return encode({ v: CURSOR_VERSION, t: "a", p: position, i: id, c: createdAt });
-}
-
-/**
- * Decode a token back into a contract cursor.
- *
- * Returns an error instead of throwing so the handler can turn it into an
- * actionable message: a stale or hand-edited token must not be passed to the
- * contract, which would silently read the wrong position.
- */
-export function decodeIdCursor(
-  token: string,
-): { ok: true; cursor: IdCursor } | { ok: false; error: string } {
-  let payload: Partial<IdCursorPayload>;
-  try {
-    payload = decode(token) as Partial<IdCursorPayload>;
-  } catch {
-    return {
-      ok: false,
-      error:
-        "Invalid registry cursor. Cursors are opaque tokens returned by a previous call; start a new page instead of editing one.",
-    };
+export function encodeIdCursor(cursor: IdCursor, now: () => number = Date.now): string {
+  let payload: IdCursorPayload;
+  if (cursor.tag === "Start") payload = { v: CURSOR_VERSION, t: "s" };
+  else if (cursor.tag === "End") payload = { v: CURSOR_VERSION, t: "e" };
+  else {
+    const [position, id, createdAt] = cursor.values;
+    payload = { v: CURSOR_VERSION, t: "a", p: position, i: id, c: createdAt };
   }
+  return createCursorToken("registry", payload, now);
+}
 
+export type IdCursorResult =
+  | { ok: true; cursor: IdCursor }
+  | { ok: false; reason: CursorFailureReason; error: string };
+
+export function decodeIdCursor(token: string, now: () => number = Date.now): IdCursorResult {
+  const decoded = readCursorToken<Partial<IdCursorPayload>>(token, "registry", now);
+  if (!decoded.ok) return decoded;
+
+  const payload = decoded.payload;
   if (payload.v !== CURSOR_VERSION) {
-    return {
-      ok: false,
-      error:
-        "Stale registry cursor. The cursor format changed since it was issued; start a new page.",
-    };
+    return { ok: false, reason: "invalid", error: cursorErrorMessage("registry", "invalid") };
   }
 
   if (payload.t === "s") return { ok: true, cursor: { tag: "Start", values: undefined } };
@@ -103,18 +84,10 @@ export function decodeIdCursor(
       typeof id !== "string" ||
       id.length === 0
     ) {
-      return {
-        ok: false,
-        error:
-          "Invalid registry cursor. Cursors are opaque tokens returned by a previous call; start a new page instead of editing one.",
-      };
+      return { ok: false, reason: "invalid", error: cursorErrorMessage("registry", "invalid") };
     }
     return { ok: true, cursor: { tag: "After", values: [position, id, createdAt] } };
   }
 
-  return {
-    ok: false,
-    error:
-      "Invalid registry cursor. Cursors are opaque tokens returned by a previous call; start a new page instead of editing one.",
-  };
+  return { ok: false, reason: "invalid", error: cursorErrorMessage("registry", "invalid") };
 }

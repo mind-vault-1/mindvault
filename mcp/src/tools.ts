@@ -27,13 +27,20 @@ import {
   SUPPORT_BUNDLE_OUTPUT_SCHEMA,
 } from "./supportBundle.js";
 import { withToolErrorVariant } from "./outputValidation.js";
+import { MAX_AUDIT_QUERY_RESULTS } from "./auditQuery.js";
+import {
+  PUBLISH_BATCH_PREVIEW_MAX_ITEMS,
+  PUBLISH_BATCH_PREVIEW_OUTPUT_SCHEMA,
+} from "./publishBatchPreview.js";
 import {
   AGENT_STATUS_OUTPUT_SCHEMA,
+  AUDIT_QUERY_OUTPUT_SCHEMA,
   ATTESTATION_VERIFICATION_OUTPUT_SCHEMA,
   BATCH_CATALOG_LOOKUP_OUTPUT_SCHEMA,
   CATALOG_LIST_OUTPUT_SCHEMA,
   CONSISTENCY_OUTPUT_SCHEMA,
   METADATA_DIFF_OUTPUT_SCHEMA,
+  CONTRACT_EVENT_HISTORY_OUTPUT_SCHEMA,
   FEE_CONFIG_OUTPUT_SCHEMA,
   LIST_PROFILES_OUTPUT_SCHEMA,
   METADATA_HASH_PREVIEW_OUTPUT_SCHEMA,
@@ -364,7 +371,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_search",
     description:
-      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries. Use nextCursor for pagination; cursors are bound to the active profile and exact filter set. Set bypassCache=true for a fresh per-call read.",
+      "Search the MindVault catalog by keyword and optional filters for price, resource type, verification status, owner, sort, pagination, tags, and listed state. Uses server-side filtering where supported and returns compact resource summaries. Use nextCursor for pagination; signed cursors expire after 15 minutes and are bound to the active profile and exact filter set. An expired, malformed, or edited cursor returns a structured cursor error with a documented error code. Set bypassCache=true for a fresh per-call read.",
     inputSchema: {
       type: "object",
       properties: { ...catalogFilterInputProperties },
@@ -649,16 +656,16 @@ const DEFINED_TOOLS: ToolDefinition[] = [
   {
     name: "mindvault_export_receipts",
     description:
-      "Export receipts for resources this agent has purchased as a schema-versioned document (JSON, RFC 4180 CSV in the envelope's csv field, or Newline-Delimited JSON in the envelope's ndjson field). Filter by resource, network, and date range. Reports a row count and the summed USDC total, so an agent can reconcile spend without re-reading each purchase.",
+      "Export receipts for resources this agent has purchased as a schema-versioned document (JSON, RFC 4180 CSV in the envelope's csv field, or Newline-Delimited JSON / JSON Lines in the envelope's ndjson field). Pass format 'jsonl' as an alias for 'ndjson'. Filter by resource, network, and date range. Reports a row count and the summed USDC total, so an agent can reconcile spend without re-reading each purchase.",
     inputSchema: {
       type: "object",
       properties: {
         format: {
           type: "string",
-          enum: ["json", "csv", "ndjson"],
+          enum: ["json", "csv", "ndjson", "jsonl"],
           description:
-            'Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope\'s csv field; "ndjson" renders each row as a JSON object on its own line in the envelope\'s ndjson field.',
-          examples: ["json", "csv", "ndjson"],
+            'Output format. "json" (default) returns the receipts array; "csv" additionally renders the same rows as an RFC 4180 document in the envelope\'s csv field; "ndjson" renders each row as a JSON object on its own line in the envelope\'s ndjson field. "jsonl" is an alias for "ndjson" and returns the same envelope.',
+          examples: ["json", "csv", "ndjson", "jsonl"],
         },
         resourceId: {
           type: "string",
@@ -1051,6 +1058,53 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "mindvault_contract_event_history",
+    description:
+      "Read the vault-registry contract's Soroban event history for one resource id. Queries getEvents for the configured contract, decodes each event's ScVal topics and payload, and keeps the pages that mention the resource. Pass startLedger for a fresh search or the returned cursor to continue; never pass both. Events are ordered by ledger and event id, and the result reports how many events were scanned, how many matched, and whether more pages remain. Read-only: it never signs or submits a transaction. See docs/contract-event-indexing.md for the event catalog.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        resourceId: {
+          type: "string",
+          description:
+            "The resource id to find in registry event topics or payloads, as passed to register and other registry calls.",
+          examples: ["cm7x8y9z", "res-001"],
+        },
+        startLedger: {
+          type: "integer",
+          minimum: 1,
+          description:
+            "First ledger to scan when starting a fresh history search. Omit it when continuing with cursor; mutually exclusive with cursor.",
+          examples: [123456],
+        },
+        cursor: {
+          type: "string",
+          minLength: 1,
+          maxLength: 256,
+          description:
+            "Pagination cursor returned by a previous call. Omit it when starting a fresh search with startLedger; mutually exclusive with startLedger.",
+          examples: ["123456-0000000000"],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 200,
+          description:
+            "Maximum number of raw contract events to scan per page (default 50, maximum 200). Matched events may be fewer than this limit.",
+          examples: [50],
+        },
+      },
+      required: ["resourceId"],
+    },
+    outputSchema: CONTRACT_EVENT_HISTORY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Contract Event History",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
     name: "mindvault_registry_list",
     description:
       "List resources registered in the on-chain vault-registry contract with pagination (Soroban list). Returns compact summaries directly from Stellar, not the MindVault API catalog. Use start/limit to page through insertion order; limit is capped at 20 to match the contract. Empty pages return a clear message and next-step hint.",
@@ -1098,8 +1152,9 @@ const DEFINED_TOOLS: ToolDefinition[] = [
         },
         cursor: {
           type: "string",
-          description: "Opaque cursor from a previous page's nextCursor. Omit for the first page.",
-          examples: ["eyJ2IjoxLCJ0IjoiYSJ9"],
+          description:
+            "Signed cursor from a previous page's nextCursor, valid for 15 minutes. Editing it or reusing it after expiry returns a structured MV_CURSOR_* error. Omit for the first page.",
+          examples: ["eyJ2IjoyLCJrIjoicmVnaXN0cnkifQ"],
         },
         limit: {
           type: "integer",
@@ -1203,7 +1258,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     // labelled cached answers instead of failing the whole batch.
     name: "mindvault_batch_catalog_lookup",
     description:
-      "Look up several catalog resources in one call. Accepts up to 25 resource ids and returns per-id results — title, price, verification status, type, and access URL — plus a missing list for ids the API does not know. A miss is a result, not an error, so one bad id cannot sink the batch. Serves the last cached snapshot (labelled) when the catalog API is unreachable, unless refetch is true. For on-chain registry data use mindvault_registry_lookup instead; for a single fresh id use mindvault_preview.",
+      "Look up several catalog resources in one call. Accepts up to 25 resource ids and returns per-id results — status (found, not_found, or cached), reason (live, not_found, or offline_snapshot), title, price, verification status, type, and access URL — plus a missing list for ids the API does not know. A miss is a result, not an error, so one bad id cannot sink the batch. Serves the last cached snapshot (labelled) when the catalog API is unreachable, unless refetch is true. For on-chain registry data use mindvault_registry_lookup instead; for a single fresh id use mindvault_preview.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2235,7 +2290,7 @@ const DEFINED_TOOLS: ToolDefinition[] = [
         cursor: {
           type: "string",
           description:
-            "Opaque cursor from a previous mindvault_subscribe_resource call. Resumes from the last observed state; omit to start a new subscription.",
+            "Signed cursor from a previous mindvault_subscribe_resource call, valid for 15 minutes. Resumes from the last observed state; an expired or edited cursor returns a structured MV_CURSOR_* error. Omit to start a new subscription.",
         },
         wait: {
           type: "boolean",
@@ -2303,6 +2358,51 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: PURCHASE_HISTORY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Purchase History",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_publish_batch_preview",
+    description:
+      "Validate up to 10 batch-publish items offline before signing or paying. Checks each title, description, positive USDC price, and public http(s) external URL with the same rules mindvault_publish_batch uses, and returns a deterministic per-item report. Read-only and local: no network calls, wallet access, payments, or on-chain writes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          description: `Resources to validate (1–${PUBLISH_BATCH_PREVIEW_MAX_ITEMS} items). Each item may include title, description, price, and externalUrl.`,
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Resource title (1–256 characters)." },
+              description: {
+                type: "string",
+                description: "Optional description (max 2048 characters).",
+              },
+              price: {
+                type: "string",
+                description: "Price in USDC as a positive decimal string, e.g. '5.00'.",
+                examples: ["1.00", "5.00", "10.00"],
+              },
+              externalUrl: {
+                type: "string",
+                description: "Public http(s) URL buyers receive after payment.",
+                examples: ["https://example.com/data.json"],
+              },
+            },
+            required: ["title", "price", "externalUrl"],
+          },
+          minItems: 1,
+          maxItems: PUBLISH_BATCH_PREVIEW_MAX_ITEMS,
+        },
+      },
+      required: ["items"],
+    },
+    outputSchema: PUBLISH_BATCH_PREVIEW_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Preview Batch Publish",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
@@ -2447,6 +2547,60 @@ const DEFINED_TOOLS: ToolDefinition[] = [
     outputSchema: SUPPORT_BUNDLE_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
     annotations: {
       title: "Export Support Bundle",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  },
+  {
+    name: "mindvault_query_audit_log",
+    description:
+      "Query the operator-configured JSONL audit log by time range, tool name, and outcome. Reads only the latest bounded window (at most 1 MiB) and returns at most 500 redacted entries in file order, with a nextOffset for paging. The log path is never an argument — only MINDVAULT_AUDIT_LOG_FILE is consulted — so an agent cannot use this tool to read arbitrary local files. Local and read-only, no network calls.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        since: {
+          type: "string",
+          description: "Inclusive lower bound on the entry timestamp (ISO-8601).",
+          examples: ["2026-11-20T00:00:00Z"],
+        },
+        until: {
+          type: "string",
+          description: "Inclusive upper bound on the entry timestamp (ISO-8601).",
+          examples: ["2026-11-21T00:00:00Z"],
+        },
+        tool: {
+          type: "string",
+          description: "Match only entries emitted by this tool name.",
+          examples: ["mindvault_publish"],
+        },
+        outcome: {
+          type: "string",
+          enum: ["start", "success", "error"],
+          description:
+            'Match only entries with this audit status ("start", "success", or "error").',
+          examples: ["error"],
+        },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          description:
+            "Entries to skip from the matching set. Use the previous result's nextOffset.",
+          examples: [0, 50],
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_AUDIT_QUERY_RESULTS,
+          description: `Max entries to return (1–${MAX_AUDIT_QUERY_RESULTS}, default 50).`,
+          examples: [50, 100],
+        },
+      },
+      required: [],
+    },
+    outputSchema: AUDIT_QUERY_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    annotations: {
+      title: "Query Audit Log",
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,

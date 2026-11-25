@@ -162,7 +162,7 @@ function localIssue(field: string, code: ValidationIssueCode, message: string): 
 
 /**
  * Validate arguments without running a tool. Tools with a shared spec go
- * through the same validator used by live calls; the two self-validating tools
+ * through the same validator used by live calls; the self-validating tools
  * are checked against their advertised JSON input schema instead.
  */
 export function validateLocalArguments(tool: string, args: unknown): ValidationIssue[] {

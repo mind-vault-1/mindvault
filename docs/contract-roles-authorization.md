@@ -83,6 +83,37 @@ invocation; one signer cannot act as both the settler and payer/holder unless
 the addresses are actually the same and each independent role check also
 passes.
 
+## Preparing and submitting signed invocations
+
+Client integrations should use the generated registry binding as the source of
+truth for arguments and return types:
+
+1. Resolve the `Address` for the active wallet and verify that it matches the
+   role or resource-ownership requirement above.
+2. Build a simulation or dry-run with the contract method and exact arguments.
+   For simulations, read-only methods need no wallet signature; mutation methods
+   should declare the account that `require_auth()` expects.
+3. Obtain a signature from Freighter or another Soroban wallet for the final
+   transaction XDR. Do not substitute an admin or moderator key for a creator,
+   holder, payer, settler, verifier, or pending-admin authorization.
+4. Submit the signed transaction, then verify live role/resource state or index
+   events before retrying.
+
+See [Registry client bindings](registry-client-bindings.md),
+[request signing](request-signature.md), and
+[creator-signed registration](creator-signed-registration-flow.md).
+
+## Verifier configuration event compatibility
+
+Every real `add_verifier`, `remove_verifier`, or `rotate_verifier` mutation
+publishes `vercfg` with `VerifierConfigChange`. The payload carries
+`version`, `action`, `admin`, `verifier`, `previous`, and `ledger`. Version 1
+is stable and append-only. Indexers should filter by the contract address,
+process only supported versions, and ignore unknown versions until an indexer
+upgrade. Rebuild authority state only after matching the event to
+`is_verifier` and `role_inventory_page`; no-op grant/revoke calls emit no
+configuration event.
+
 ## Governance and operational implications
 
 - Admin grants and revocations affect authorization for subsequent calls; they
