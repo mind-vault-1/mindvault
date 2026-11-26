@@ -5134,16 +5134,21 @@ fn full_workflow_emits_exactly_the_documented_events() {
         &String::from_str(&env, "sha256anchor2"),
     )); // -> "anchrfail"
     record(&env, &client, &mut observed);
-    // Keep retrying past the back-off window until the pair's attempt cap is
+    // Rejections for a pair that already has an anchor are reported but not
+    // counted, so drive the attempt cap with another buyer reusing the hash
+    // bound to `buyer`. Retry past the back-off window until the cap is
     // reached; the attempt that reaches it also emits "anchrxhst".
-    for _ in 1..MAX_ANCHOR_ATTEMPTS {
-        env.ledger()
-            .set_sequence_number(env.ledger().sequence() + ANCHOR_RETRY_BACKOFF_LEDGERS);
+    let other_buyer = Address::generate(&env);
+    for attempt in 0..MAX_ANCHOR_ATTEMPTS {
+        if attempt > 0 {
+            env.ledger()
+                .set_sequence_number(env.ledger().sequence() + ANCHOR_RETRY_BACKOFF_LEDGERS);
+        }
         assert!(!client.attempt_anchor_purchase_receipt(
             &verifier,
             &r0,
-            &buyer,
-            &String::from_str(&env, "sha256anchor2"),
+            &other_buyer,
+            &String::from_str(&env, "sha256anchor"),
         )); // -> "anchrfail" (+ "anchrxhst" on the last one)
         record(&env, &client, &mut observed);
     }
@@ -10591,7 +10596,7 @@ fn storage_key_variant_ext(env: &Env, key: &DataKeyExt) -> Symbol {
 /// Every `DataKeyExt` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_ext_variant` will not compile until you do.
-fn storage_key_wire_contract_ext(env: &Env) -> [(DataKeyExt, &'static str, u32); 19] {
+fn storage_key_wire_contract_ext(env: &Env) -> [(DataKeyExt, &'static str, u32); 20] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -10650,6 +10655,11 @@ fn storage_key_wire_contract_ext(env: &Env) -> [(DataKeyExt, &'static str, u32);
             2,
         ),
         (DataKeyExt::RoyaltyOptOut(id.clone()), "RoyaltyOptOut", 2),
+        (
+            DataKeyExt::MetadataSchemaId(id.clone()),
+            "MetadataSchemaId",
+            2,
+        ),
     ]
 }
 
@@ -10778,7 +10788,7 @@ fn storage_key_migration_covers_every_ext_variant() {
     let contract = storage_key_wire_contract_ext(&env);
     assert_eq!(
         contract.len(),
-        19,
+        20,
         "storage_key_wire_contract_ext must list every DataKeyExt variant"
     );
 
@@ -10803,6 +10813,7 @@ fn storage_key_migration_covers_every_ext_variant() {
             DataKeyExt::FlagModerator(_) => "FlagModerator",
             DataKeyExt::PaymentFullyRefunded(_) => "PaymentFullyRefunded",
             DataKeyExt::RoyaltyOptOut(_) => "RoyaltyOptOut",
+            DataKeyExt::MetadataSchemaId(_) => "MetadataSchemaId",
         };
         assert_eq!(
             matched, *name,

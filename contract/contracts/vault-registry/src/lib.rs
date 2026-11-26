@@ -8585,10 +8585,7 @@ impl VaultRegistry {
         }
     }
 
-    fn ensure_valid_fee_destination(
-        env: &Env,
-        destination: &FeeDestination,
-    ) -> Result<(), Error> {
+    fn ensure_valid_fee_destination(env: &Env, destination: &FeeDestination) -> Result<(), Error> {
         match destination {
             FeeDestination::Charity(address) => Self::ensure_valid_address(env, address),
             _ => Ok(()),
