@@ -461,11 +461,6 @@ export const REGISTRY_ERROR_GUIDANCE: Record<string, RegistryErrorGuidance> = {
     nextSteps:
       "Lower the combined platform fee and royalty to stay below the registry's recorded lease price floor.",
   },
-  RevocationReasonHashTooLong: {
-    category: "validation",
-    retry: "unsafe",
-    nextSteps: "Use a revocation reason hash no longer than 64 bytes.",
-  },
   InvalidMaintenanceReason: {
     category: "admin",
     retry: "unsafe",
@@ -487,6 +482,40 @@ export const REGISTRY_ERROR_GUIDANCE: Record<string, RegistryErrorGuidance> = {
     retry: "unsafe",
     nextSteps:
       "Choose a flag resolution window of at most 535680 ledgers. Use zero to disable deadlines on new flags.",
+  },
+  PendingVerifierRotationNotSet: {
+    category: "admin",
+    retry: "conditional",
+    nextSteps:
+      "Propose a verifier rotation with propose_verifier_rotation before accepting or cancelling it.",
+  },
+  PendingVerifierRotationAlreadySet: {
+    category: "admin",
+    retry: "conditional",
+    nextSteps: "Accept or cancel the pending verifier rotation before proposing another.",
+  },
+  VerifierRotationExpired: {
+    category: "admin",
+    retry: "conditional",
+    nextSteps:
+      "Check pending_verifier_rotation: propose a new rotation if it expired, or wait for the minimum ledger gap before accepting.",
+  },
+  RefundReasonHashTooLong: {
+    category: "validation",
+    retry: "unsafe",
+    nextSteps: "Use a refund reason hash no longer than 64 bytes.",
+  },
+  InvalidAddress: {
+    category: "validation",
+    retry: "unsafe",
+    nextSteps:
+      "Pass an external Stellar address; the registry contract itself cannot be an owner, recipient, or role holder.",
+  },
+  StaleRevision: {
+    category: "registration",
+    retry: "conditional",
+    nextSteps:
+      "Read get_revision again, rebuild the update from the current resource, and retry with the new expected revision.",
   },
 };
 
