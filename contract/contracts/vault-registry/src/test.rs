@@ -10596,7 +10596,7 @@ fn storage_key_variant_ext(env: &Env, key: &DataKeyExt) -> Symbol {
 /// Every `DataKeyExt` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_ext_variant` will not compile until you do.
-fn storage_key_wire_contract_ext(env: &Env) -> [(DataKeyExt, &'static str, u32); 20] {
+fn storage_key_wire_contract_ext(env: &Env) -> [(DataKeyExt, &'static str, u32); 22] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -10660,6 +10660,8 @@ fn storage_key_wire_contract_ext(env: &Env) -> [(DataKeyExt, &'static str, u32);
             "MetadataSchemaId",
             2,
         ),
+        (DataKeyExt::TombstoneCount, "TombstoneCount", 1),
+        (DataKeyExt::Tombstone(0), "Tombstone", 2),
     ]
 }
 
@@ -10788,7 +10790,7 @@ fn storage_key_migration_covers_every_ext_variant() {
     let contract = storage_key_wire_contract_ext(&env);
     assert_eq!(
         contract.len(),
-        20,
+        22,
         "storage_key_wire_contract_ext must list every DataKeyExt variant"
     );
 
@@ -10814,6 +10816,8 @@ fn storage_key_migration_covers_every_ext_variant() {
             DataKeyExt::PaymentFullyRefunded(_) => "PaymentFullyRefunded",
             DataKeyExt::RoyaltyOptOut(_) => "RoyaltyOptOut",
             DataKeyExt::MetadataSchemaId(_) => "MetadataSchemaId",
+            DataKeyExt::TombstoneCount => "TombstoneCount",
+            DataKeyExt::Tombstone(_) => "Tombstone",
         };
         assert_eq!(
             matched, *name,
@@ -12640,3 +12644,4 @@ include!("test/registry_migration_compatibility.rs");
 include!("test/pause_scope_matrix.rs");
 include!("test/fee_split_preview.rs");
 include!("test/payment_refund_royalty_987_988_993.rs");
+include!("test/stellar_wave_1168_1169_1170_1177.rs");

@@ -114,6 +114,7 @@ Generated and checked-in artifacts:
 | `src/test/stellar_wave_804_805_806_808.rs`       | yes      | Earnings estimate, verifier history, and related (#804–#808)                                                      |
 | `src/test/stellar_wave_970_971_975_976.rs`       | yes      | Listing revision counter and related (#970–#976)                                                                  |
 | `src/test/stellar_wave_977_978_979_980.rs`       | yes      | Tag-index repair idempotency, maintenance status (#977–#980)                                                      |
+| `src/test/stellar_wave_1168_1169_1170_1177.rs`   | yes      | Tombstone history, stale-revision metadata writes, batch listing, expired-lease extension (#1168–#1170, #1177)    |
 | `src/test/stellar_wave_981_982_983_984.rs`       | yes      | Admin recovery guards, role inventory (#981–#984)                                                                 |
 | `src/test/storage_footprint.rs`                  | yes      | Storage footprint report and budgets. See [`contract-storage-footprint.md`](contract-storage-footprint.md)        |
 | `src/test/tag_prefix_search.rs`                  | yes      | `search_by_tag_prefix` (#974)                                                                                     |

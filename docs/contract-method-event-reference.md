@@ -12,7 +12,7 @@ the canonical list enforced by the contract tests. The generated Soroban spec
 carries method signatures but not event topics, so the two inputs are
 deliberately separate.
 
-**173 methods** and **49 event topics** as of last generation.
+**180 methods** and **49 event topics** as of last generation.
 
 ## Methods
 
@@ -483,6 +483,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** —
 
+### `set_listed_many`
+
+- **Arguments:** `{creator, updates}: {creator: string, updates: Array<BatchListingUpdate>}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Change the listing state of up to [`MAX_BATCH_LISTING_UPDATES`] resources owned by `creator` in one call, under a single creator authorization.
+
 ### `unflag_resource`
 
 - **Arguments:** `{id, moderator}: {id: string, moderator: string}, options?: MethodOptions`
@@ -530,12 +536,6 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Arguments:** `{cursor, limit}: {cursor: u32, limit: u32}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<CatalogPage>`
 - **Summary:** `list_listed` with next-cursor metadata: `cursor` and `next_cursor` are global catalog indexes (same domain as `list_page`), so a page boundary is stable however many resources change state between c…
-
-### `migration_compatibility_report`
-
-- **Arguments:** `{cursor, limit}: {cursor: u32, limit: u32}, options?: MethodOptions`
-- **Returns:** `AssembledTransaction<MigrationCompatibilityReport>`
-- **Summary:** Bounded, read-only migration readiness report. Counts resources in catalog-index order by current, supported predecessor, and unsupported `schema_version`; returns `next_cursor` for pagination. Read-only and available while paused.
 
 ### `migrate_resource`
 
@@ -603,6 +603,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Configure the creator refund window for payments settled after this call.
 
+### `tombstone_history`
+
+- **Arguments:** `{moderator, cursor, limit}: {moderator: string, cursor: u32, limit: u32}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<TombstoneHistoryPage>>`
+- **Summary:** One page of the tombstone history, oldest first, for moderation review.
+
 ### `force_resolve_flag`
 
 - **Arguments:** `{id, admin}: {id: string, admin: string}, options?: MethodOptions`
@@ -614,6 +620,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Arguments:** `{resource_id, buyer}: {resource_id: string, buyer: string}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Result<AnchorFailure>>`
 - **Summary:** Read the anchor-failure record for `(resource_id, buyer)`.
+
+### `get_lease_statuses`
+
+- **Arguments:** `{holder, ids}: {holder: string, ids: Array<string>}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<Array<LeaseStatus>>>`
+- **Summary:** Read effective lease statuses for one holder in resource-id order.
 
 ### `get_resource_state`
 
@@ -873,6 +885,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<u32>`
 - **Summary:** Configured flag resolution window in ledgers (`0` = no deadline).
 
+### `get_metadata_schema_id`
+
+- **Arguments:** `{id}: {id: string}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<Option<string>>>`
+- **Summary:** Read the optional off-chain schema identifier for a registered resource.
+
 ### `list_by_dispute_status`
 
 - **Arguments:** `{flagged, start, limit}: {flagged: boolean, start: u32, limit: u32}, options?: MethodOptions`
@@ -884,6 +902,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Arguments:** `{admin, kind, reason_code}: {admin: string, kind: MaintenanceKind, reason_code: u32}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Record the registry-level maintenance status.
+
+### `set_metadata_schema_id`
+
+- **Arguments:** `{id, schema_id}: {id: string, schema_id: Option<string>}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Set or clear the resource's off-chain metadata schema identifier.
 
 ### `anchor_purchase_receipt`
 
@@ -1017,6 +1041,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Returns:** `AssembledTransaction<CatalogPage>`
 - **Summary:** Paginated list of resources filtered by verification status, in registration order.
 
+### `update_metadata_at_revision`
+
+- **Arguments:** `{id, metadata, expected_revision}: {id: string, metadata: string, expected_revision: u32}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<Result<void>>`
+- **Summary:** Compare-and-set variant of `update_metadata`: the write only happens when `expected_revision` equals the resource's current `get_revision`.
+
 ### `record_creator_refund_reason`
 
 - **Arguments:** `{creator, refund_id, payment_receipt_id, recipient, amount, tx_hash, reason_hash}: {creator: string, refund_id: string, payment_receipt_id: string, recipient: string, amount: i128, tx_hash: string, reason_hash: Option<string>}, options?: MethodOptions`
@@ -1040,6 +1070,12 @@ of the binding's doc comment — read the generated file for the full contract.
 - **Arguments:** `{id, new_creator, new_terms_hash, reset_attestation}: {id: string, new_creator: string, new_terms_hash: Option<string>, reset_attestation: boolean}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Result<void>>`
 - **Summary:** Transfer resource ownership while optionally rebinding the new owner's terms hash and/or resetting the resource's attestation record atomically in the same transaction.
+
+### `migration_compatibility_report`
+
+- **Arguments:** `{cursor, limit}: {cursor: u32, limit: u32}, options?: MethodOptions`
+- **Returns:** `AssembledTransaction<MigrationCompatibilityReport>`
+- **Summary:** —
 
 ### `attempt_anchor_purchase_receipt`
 
