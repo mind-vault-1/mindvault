@@ -139,6 +139,8 @@ pub const MAX_BATCH_METADATA_UPDATES: u32 = 10;
 pub const MAX_BATCH_RESOURCE_STATES: u32 = 20;
 /// Maximum number of leases returned by a status lookup.
 pub const MAX_BATCH_LEASE_STATUSES: u32 = 20;
+/// Maximum number of payment receipts returned by `payment_receipt_page`.
+pub const PAYMENT_RECEIPT_PAGE_CAP: u32 = 20;
 /// Maximum number of resource ids accepted by `check_tag_index` in one call.
 pub const MAX_TAG_INDEX_CHECK: u32 = 20;
 /// Maximum number of resource ids accepted by `repair_tag_index` in one call.
@@ -283,6 +285,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("state_digest", "—"),
     ("creator_resource_count", "—"),
     ("creator_listed_count", "—"),
+    ("creator_resource_state_count", "—"),
     // ── Paginated catalog ─────────────────────────────────────────────────
     ("list", "—"),
     ("list_page", "—"),
@@ -392,6 +395,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("settle_payment", "settler"),
     ("get_payment", "—"),
     ("get_payment_receipt", "—"),
+    ("payment_receipt_page", "—"),
     ("set_refund_window", "admin"),
     ("refund_window", "—"),
     ("record_creator_refund", "creator"),
@@ -1174,6 +1178,14 @@ pub struct VerifierStatusPage {
     pub next_cursor: Option<u32>,
 }
 
+/// One page of payment receipts recorded for a `(resource_id, payer)` pair.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaymentReceiptPage {
+    pub items: Vec<PaymentReceipt>,
+    pub next_cursor: Option<u32>,
+}
+
 /// What a [`VerifierKeyChange`] did to the verifier role. The discriminants
 /// are stable; new actions are only appended.
 #[contracttype]
@@ -1311,6 +1323,9 @@ pub enum DataKey {
     /// the most recent payment recorded for that pair, so escrow/lease
     /// contracts can look up a settlement without scanning event history.
     PaymentIndex(String, Address),
+    /// Ordered receipt ids recorded for `(resource_id, payer)`, used by
+    /// `payment_receipt_page` to enumerate purchases without receipt ids.
+    PaymentReceiptIds(String, Address),
     /// Secondary index mapping a settlement transaction hash to the
     /// `receipt_id` recorded for it, guaranteeing one payment receipt per
     /// Stellar tx (`DuplicateTxHash` on reuse).
@@ -3507,6 +3522,31 @@ impl VaultRegistry {
         Self::creator_listed(&env, &creator)
     }
 
+    /// Number of resources currently owned by `creator` in `state`. The read
+    /// walks the creator's resource index; no storage is written and no event
+    /// is emitted, so rejected reads cannot change state.
+    pub fn creator_resource_state_count(
+        env: Env,
+        creator: Address,
+        state: ResourceState,
+    ) -> u32 {
+        let ids = Self::creator_list(&env, &creator);
+        let mut count = 0u32;
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if let Some(resource) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Resource>(&DataKey::Resource(id))
+            {
+                if resource.state == state {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
     /// Return the resource ids tagged with `tag` (normalized to lowercase),
     /// paginated by `start`/`limit`. `limit` is capped at 20. Resources are
     /// returned in the order they were added to the tag index (insertion
@@ -4124,10 +4164,12 @@ impl VaultRegistry {
         if ids.len() > MAX_BATCH_SIZE {
             return Err(Error::BatchTooLarge);
         }
+        for i in 0..ids.len() {
+            Self::validate_resource_id(&ids.get(i).unwrap())?;
+        }
         let mut result: Vec<Option<Resource>> = Vec::new(&env);
         for i in 0..ids.len() {
             let id = ids.get(i).unwrap();
-            Self::validate_resource_id(&id)?;
             let key = DataKey::Resource(id);
             let resource = env.storage().persistent().get(&key);
             if resource.is_some() {
@@ -6153,6 +6195,59 @@ impl VaultRegistry {
         Self::get_payment(env, receipt_id)
     }
 
+    /// Return receipts for `(resource_id, buyer)` in recording order.
+    ///
+    /// Storage cost: one persistent `Vec<String>` per pair, appended once when
+    /// each receipt is written. Each call reads at most `PAYMENT_RECEIPT_PAGE_CAP`
+    /// receipt entries, so the query cost is bounded independently of the
+    /// account's full purchase history. `cursor` is a 0-based index into that
+    /// vector and `next_cursor` is `None` at end-of-list.
+    pub fn payment_receipt_page(
+        env: Env,
+        resource_id: String,
+        buyer: Address,
+        cursor: u32,
+        limit: u32,
+    ) -> Result<PaymentReceiptPage, Error> {
+        Self::validate_resource_id(&resource_id)?;
+        let page_size = limit.min(PAYMENT_RECEIPT_PAGE_CAP);
+        let mut items: Vec<PaymentReceipt> = Vec::new(&env);
+        if page_size == 0 {
+            return Ok(PaymentReceiptPage {
+                items,
+                next_cursor: None,
+            });
+        }
+        let index_key = DataKey::PaymentReceiptIds(resource_id, buyer);
+        let ids: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&index_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        let total = ids.len();
+        if cursor >= total {
+            return Ok(PaymentReceiptPage {
+                items,
+                next_cursor: None,
+            });
+        }
+        Self::bump_persistent(&env, &index_key);
+        let mut i = cursor;
+        while i < total && items.len() < page_size {
+            let receipt_id = ids.get(i).unwrap();
+            let key = DataKey::PaymentReceipt(receipt_id);
+            if let Some(receipt) = env.storage().persistent().get::<DataKey, PaymentReceipt>(&key) {
+                Self::bump_persistent(&env, &key);
+                items.push_back(receipt);
+            }
+            i += 1;
+        }
+        Ok(PaymentReceiptPage {
+            items,
+            next_cursor: if i < total { Some(i) } else { None },
+        })
+    }
+
     /// Record a completed creator-initiated refund for a settled payment.
     /// The transfer must already have occurred; the registry stores its hash
     /// as an audit anchor and does not custody or move USDC.
@@ -8175,9 +8270,19 @@ impl VaultRegistry {
         // Secondary indexes: `(resource_id, payer)` -> most recent receipt id
         // (for `get_payment_receipt`), and `tx_hash` -> receipt id (enforces
         // one receipt per Stellar settlement transaction).
-        let index_key = DataKey::PaymentIndex(resource_id, payer);
+        let index_key = DataKey::PaymentIndex(resource_id.clone(), payer.clone());
         env.storage().persistent().set(&index_key, &receipt_id);
         Self::bump_persistent(env, &index_key);
+
+        let page_key = DataKey::PaymentReceiptIds(resource_id, payer);
+        let mut receipt_ids: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&page_key)
+            .unwrap_or_else(|| Vec::new(env));
+        receipt_ids.push_back(receipt_id.clone());
+        env.storage().persistent().set(&page_key, &receipt_ids);
+        Self::bump_persistent(env, &page_key);
 
         // Pin the creator who owned the resource at record time. Settlement
         // and refunds are rejected if ownership later moves elsewhere, so a
