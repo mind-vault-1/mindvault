@@ -248,7 +248,9 @@ The on-chain half of Option C now exists in `vault-registry` (see
 `expiry_ledger`, `tier` and `state`, written by `buy_lease` (holder, `Pending`)
 or `record_lease` (settler, `Active`), promoted by `settle_lease`, renewed by
 the holder with `extend_lease`, revoked by the creator with `revoke_lease`, and
-read with `get_lease`, `lease_is_active` and `lease_price`. Renewal writes verify
+read with `get_lease`, `lease_is_active` and `lease_price`. `renew_lease` is holder-only
+and requires the lease to remain active (`now < expiry_ledger`), so renewal is
+rejected at the exact expiry boundary. Renewal writes verify
 the stored binding before touching the record, so extensions keep the original
 holder and resource even after an ownership transfer. Tier durations and price
 multipliers are platform defaults (`LEASE_*_LEDGERS`, `LEASE_*_MULTIPLIER`);
