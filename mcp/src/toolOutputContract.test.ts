@@ -70,6 +70,7 @@ import {
   recordPurchase,
 } from "./purchaseHistory.js";
 import { exportReceiptsTool } from "./receipts.js";
+import { spendingSummaryTool } from "./spendingSummary.js";
 import { createMindVaultServer } from "./serverFactory.js";
 import { normalizeToolResult, type ToolOutcome } from "./toolResult.js";
 import { hasOutputSchema } from "./toolSurface.js";
@@ -172,6 +173,7 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
     json(dryRunOnchain("register_onchain" as any, "mock-1", NETWORK, BASE, true, true)),
   mindvault_purchase_history: () => purchaseHistoryTool({}),
   mindvault_export_receipts: () => exportReceiptsTool({}),
+  mindvault_spending_summary: () => spendingSummaryTool({}, { profile: "default" }),
   mindvault_publish_status: () =>
     json(
       buildPublishStatusSnapshot(

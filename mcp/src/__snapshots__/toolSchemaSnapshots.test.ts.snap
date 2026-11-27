@@ -10810,6 +10810,249 @@ exports[`tool schema snapshots > mindvault_setup_wallet > output schema 1`] = `
 }
 `;
 
+exports[`tool schema snapshots > mindvault_spending_summary > annotations 1`] = `
+{
+  "destructiveHint": false,
+  "idempotentHint": true,
+  "readOnlyHint": true,
+  "title": "Spending Summary",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_spending_summary > input schema 1`] = `
+{
+  "properties": {
+    "groupBy": {
+      "description": "Time-range grouping: "month" (default, YYYY-MM UTC), "day" (YYYY-MM-DD UTC), or "none" (single "all" bucket).",
+      "enum": [
+        "day",
+        "month",
+        "none",
+      ],
+      "examples": [
+        "month",
+        "day",
+        "none",
+      ],
+      "type": "string",
+    },
+    "network": {
+      "description": "Optional. Only include receipts settled on this x402 network id. Example: 'stellar:testnet'",
+      "examples": [
+        "stellar:testnet",
+        "stellar:pubnet",
+      ],
+      "type": "string",
+    },
+    "since": {
+      "description": "Inclusive lower bound on the purchase time (ISO-8601 date or timestamp; a bare date is read as midnight UTC).",
+      "examples": [
+        "2026-08-01",
+        "2026-08-01T12:00:00Z",
+      ],
+      "type": "string",
+    },
+    "until": {
+      "description": "Inclusive upper bound on the purchase time (ISO-8601 date or timestamp; a bare date is read as midnight UTC).",
+      "examples": [
+        "2026-08-31",
+        "2026-08-31T23:59:59Z",
+      ],
+      "type": "string",
+    },
+  },
+  "required": [],
+  "type": "object",
+}
+`;
+
+exports[`tool schema snapshots > mindvault_spending_summary > output schema 1`] = `
+{
+  "anyOf": [
+    {
+      "properties": {
+        "count": {
+          "description": "Total matching purchase receipts for this profile.",
+          "type": "integer",
+        },
+        "dataSource": {
+          "description": "Local purchase receipt store path (~/.mindvault/purchases.json).",
+          "type": "string",
+        },
+        "filters": {
+          "properties": {
+            "groupBy": {
+              "enum": [
+                "day",
+                "month",
+                "none",
+              ],
+              "type": "string",
+            },
+            "network": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "since": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "until": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+          },
+          "required": [
+            "network",
+            "since",
+            "until",
+            "groupBy",
+          ],
+          "type": "object",
+        },
+        "message": {
+          "type": "string",
+        },
+        "profile": {
+          "description": "Active wallet profile the summary is scoped to.",
+          "type": "string",
+        },
+        "schema": {
+          "const": "mindvault.spending-summary/v1",
+          "type": "string",
+        },
+        "summaries": {
+          "description": "Exact decimal totals grouped by time period and currency, newest period first.",
+          "items": {
+            "properties": {
+              "count": {
+                "type": "integer",
+              },
+              "currency": {
+                "type": "string",
+              },
+              "period": {
+                "type": "string",
+              },
+              "totalAmount": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "period",
+              "currency",
+              "count",
+              "totalAmount",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "totalsByCurrency": {
+          "description": "Exact decimal totals across the matched range, grouped by currency.",
+          "items": {
+            "properties": {
+              "count": {
+                "type": "integer",
+              },
+              "currency": {
+                "type": "string",
+              },
+              "totalAmount": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "currency",
+              "count",
+              "totalAmount",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "schema",
+        "profile",
+        "dataSource",
+        "filters",
+        "count",
+        "totalsByCurrency",
+        "summaries",
+      ],
+      "type": "object",
+    },
+    {
+      "properties": {
+        "troubleshooting": {
+          "properties": {
+            "action": {
+              "type": "string",
+            },
+            "category": {
+              "type": "string",
+            },
+            "code": {
+              "type": "string",
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "requestId": {
+              "type": [
+                "string",
+                "null",
+              ],
+            },
+            "schema": {
+              "const": "mindvault.troubleshooting/v1",
+              "type": "string",
+            },
+            "source": {
+              "type": "string",
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null",
+              ],
+            },
+            "summary": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "schema",
+            "source",
+            "category",
+            "status",
+            "summary",
+            "detail",
+            "action",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "troubleshooting",
+      ],
+      "type": "object",
+    },
+  ],
+  "type": "object",
+}
+`;
+
 exports[`tool schema snapshots > mindvault_state_diagnostics > annotations 1`] = `
 {
   "destructiveHint": false,
@@ -14801,6 +15044,7 @@ exports[`tool schema snapshots > the covered tool names are pinned 1`] = `
   "mindvault_set_price",
   "mindvault_set_tags",
   "mindvault_setup_wallet",
+  "mindvault_spending_summary",
   "mindvault_state_diagnostics",
   "mindvault_subscribe_resource",
   "mindvault_support_bundle",

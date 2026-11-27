@@ -111,6 +111,7 @@ export const TOOL_SIDE_EFFECTS: Readonly<Record<string, ToolSideEffects>> = {
   mindvault_purchase_history: READ,
   mindvault_export_receipts: READ,
   mindvault_verify_receipt: READ,
+  mindvault_spending_summary: READ,
 
   // ── Registry reads ───────────────────────────────────────────────────────
   mindvault_agent_status: READ,

@@ -119,17 +119,18 @@ permissions, and backup path are covered in
 
 ## Tool Summary
 
-| Tool                         | API Call(s)                                      | Stellar/Soroban                                                        |
-| ---------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------- |
-| `mindvault_setup_wallet`     | `POST /create` (sponsored service)               | Creates account + trustline                                            |
-| `mindvault_wallet_info`      | Horizon `/accounts/:key`                         | Reads USDC balance                                                     |
-| `mindvault_browse`           | `GET /resources`                                 | None                                                                   |
-| `mindvault_preview`          | `GET /resources/:id/meta`                        | None                                                                   |
-| `mindvault_register`         | `POST /publishers`                               | None                                                                   |
-| `mindvault_publish`          | `POST /resources`, `POST /verify-content` (x402) | Signs + settles USDC payment to platform wallet                        |
-| `mindvault_buy`              | `GET /resources/:id` (x402)                      | Signs + settles USDC payment to creator wallet; persists local receipt |
-| `mindvault_purchase_history` | Local `~/.mindvault/purchases.json`              | None (read-only; filter by resourceId / network)                       |
-| `mindvault_agent_status`     | `GET /agent/status`                              | None                                                                   |
+| Tool                         | API Call(s)                                                      | Stellar/Soroban                                                        |
+| ---------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `mindvault_setup_wallet`     | `POST /create` (sponsored service)                               | Creates account + trustline                                            |
+| `mindvault_wallet_info`      | Horizon `/accounts/:key`                                         | Reads USDC balance                                                     |
+| `mindvault_browse`           | `GET /resources`                                                 | None                                                                   |
+| `mindvault_preview`          | `GET /resources/:id/meta`                                        | None                                                                   |
+| `mindvault_register`         | `POST /publishers`                                               | None                                                                   |
+| `mindvault_publish`          | `POST /resources`, `POST /verify-content` (x402)                 | Signs + settles USDC payment to platform wallet                        |
+| `mindvault_buy`              | `GET /resources/:id` (x402)                                      | Signs + settles USDC payment to creator wallet; persists local receipt |
+| `mindvault_purchase_history` | Local `~/.mindvault/purchases.json`                              | None (read-only; filter by resourceId / network)                       |
+| `mindvault_spending_summary` | Local `~/.mindvault/purchases.json` (`MINDVAULT_PURCHASES_FILE`) | None (read-only; active-profile spend totals by currency & time range) |
+| `mindvault_agent_status`     | `GET /agent/status`                                              | None                                                                   |
 
 ---
 

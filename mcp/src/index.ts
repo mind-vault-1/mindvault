@@ -123,6 +123,7 @@ import { Mutex } from "./mutex.js";
 import { exportReceiptsTool } from "./receipts.js";
 import { queryAuditLogTool } from "./auditQuery.js";
 import { previewPublishBatch } from "./publishBatchPreview.js";
+import { spendingSummaryTool } from "./spendingSummary.js";
 import { debugBundleTool } from "./debugBundle.js";
 import { onchainPreflightTool } from "./onchainPreflight.js";
 import { deploymentVerificationTool } from "./deploymentVerification.js";
@@ -5394,6 +5395,8 @@ async function executeTool(
           null,
           2,
         );
+      case "mindvault_spending_summary":
+        return spendingSummaryTool(rawRecord, { profile: activeProfileName });
       case "mindvault_register_onchain":
         return registerOnchain(requiredString(args, "resourceId"), onProgress);
       case "mindvault_agent_status":
