@@ -135,6 +135,9 @@ pub const MAX_BATCH_PRICE_UPDATES: u32 = 10;
 /// Maximum number of metadata pointers that can be updated in one
 /// `update_metadata_many` call.
 pub const MAX_BATCH_METADATA_UPDATES: u32 = 10;
+/// Maximum number of listing-state changes accepted by one `set_listed_many`
+/// call.
+pub const MAX_BATCH_LISTING_UPDATES: u32 = 10;
 /// Maximum number of lifecycle states returned by `get_resource_states`.
 pub const MAX_BATCH_RESOURCE_STATES: u32 = 20;
 /// Maximum number of leases returned by a status lookup.
@@ -164,6 +167,9 @@ pub const ROLE_INVENTORY_PAGE_CAP: u32 = 20;
 /// Most entries `verifier_key_history` returns in one page. A `limit` above
 /// it (or `0`) is clamped to `1..=VERIFIER_KEY_HISTORY_PAGE_CAP`.
 pub const VERIFIER_KEY_HISTORY_PAGE_CAP: u32 = 20;
+/// Most entries `tombstone_history` returns in one page. A `limit` above it
+/// (or `0`) is clamped to `1..=TOMBSTONE_HISTORY_PAGE_CAP`.
+pub const TOMBSTONE_HISTORY_PAGE_CAP: u32 = 20;
 /// Version of the `vercfg` event payload (`VerifierConfigChange`).
 pub const VERIFIER_CONFIG_EVENT_VERSION: u32 = 1;
 /// Maximum number of revision snapshots retained per resource in
@@ -246,6 +252,7 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("set_price", "creator"),
     ("set_price_many", "creator"),
     ("update_metadata", "creator"),
+    ("update_metadata_at_revision", "creator"),
     ("update_metadata_many", "creator"),
     ("freeze_metadata", "creator"),
     ("set_metadata_pointers", "creator"),
@@ -257,12 +264,14 @@ pub const METHOD_SCHEMA: &[(&str, &str)] = &[
     ("set_royalty_opt_out", "creator"),
     ("get_royalty_opt_out", "—"),
     ("set_listed", "creator"),
+    ("set_listed_many", "creator"),
     ("delist", "creator"),
     ("freeze_resource", "creator"),
     ("open_dispute", "admin"),
     ("resolve_dispute", "admin"),
     ("emergency_delist", "admin"),
     ("tombstone_resource", "admin"),
+    ("tombstone_history", "moderator"),
     ("reactivate_resource", "creator"),
     // ── Ownership transfer ────────────────────────────────────────────────
     ("transfer_ownership", "creator"),
@@ -491,7 +500,7 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (40, "ContractPaused", "A state-changing method was called while the registry is paused."),
     (41, "NotSettler", "Caller does not hold the settler role."),
     (42, "ReceiptAlreadyExists", "A payment or refund receipt is already stored for the supplied id."),
-    (43, "InvalidPaymentTransition", "Payment is not settled, its creator refund deadline has expired, or a payment state transition is not allowed."),
+    (43, "InvalidPaymentTransition", "Payment is not settled, its creator refund deadline has expired, a payment state transition is not allowed, or a lease extension or renewal would push `expiry_ledger` past `u32::MAX`."),
     (44, "InvalidReceiptId", "`receipt_id` is empty or exceeds `MAX_RECEIPT_ID_LEN` (64 bytes)."),
     (45, "ContentHashTooLong", "`content_hash` is empty, malformed, or exceeds `MAX_CONTENT_HASH_LEN` (128 bytes) after normalization."),
     (46, "AttestationHashTooLong", "`attestation_hash` is empty, malformed, or exceeds `MAX_ATTESTATION_HASH_LEN` (64 bytes) after normalization."),
@@ -516,6 +525,7 @@ pub const ERROR_SCHEMA: &[(u32, &str, &str)] = &[
     (65, "FlagNotOverdue", "A force-resolution was attempted on a flag whose deadline has not yet elapsed, or which has no deadline set."),
     (66, "RefundReasonHashTooLong", "`reason_hash` supplied to `record_refund` exceeds `MAX_REFUND_REASON_HASH_LEN` (64 bytes)."),
     (67, "InvalidAddress", "An address-typed argument is the registry contract itself; privileged, recipient, and owner targets must be external Stellar addresses."),
+    (68, "StaleRevision", "`update_metadata_at_revision` was called with an `expected_revision` that differs from the resource's current `get_revision`; nothing is written."),
 ];
 
 /// Canonical list of every event topic this contract emits, paired with a
@@ -1018,6 +1028,14 @@ pub struct BatchMetadataUpdate {
     pub metadata: String,
 }
 
+/// Input for one item in a batch listing-state update (`set_listed_many`).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatchListingUpdate {
+    pub id: String,
+    pub listed: bool,
+}
+
 /// Result of a batch registration attempt. Contains successfully registered
 /// resource IDs and any errors encountered (with their indices).
 #[contracttype]
@@ -1256,6 +1274,37 @@ pub struct VerifierKeyHistoryPage {
     pub total: u32,
 }
 
+/// One entry of the append-only tombstone history read by
+/// `tombstone_history`. Written once by `tombstone_resource` and never
+/// rewritten.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct TombstoneRecord {
+    /// 1-based position in the history. Entry `position` is read with cursor
+    /// `position - 1`.
+    pub position: u32,
+    pub id: String,
+    /// Creator that owned the resource when it was tombstoned.
+    pub creator: Address,
+    /// Admin that tombstoned it.
+    pub admin: Address,
+    /// Ledger sequence the resource was tombstoned in.
+    pub ledger: u32,
+}
+
+/// One page of [`TombstoneRecord`] entries, oldest first. Returned by
+/// `tombstone_history`.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct TombstoneHistoryPage {
+    pub records: Vec<TombstoneRecord>,
+    /// Cursor for the next page, or `None` when this page reaches the end of
+    /// the history as it stood when it was read.
+    pub next_cursor: Option<u32>,
+    /// Number of entries in the whole history when the page was read.
+    pub total: u32,
+}
+
 /// One page of active holders of a protocol role, with a cursor for the next
 /// page. Returned by `role_inventory_page`. Mirrors `CatalogPage` semantics:
 /// `next_cursor` is `None` at end-of-list. The page is a read-only projection
@@ -1483,6 +1532,11 @@ pub enum DataKeyExt {
     /// Per-resource royalty opt-out set by the creator (#993). Absent means
     /// royalties remain enabled, preserving pre-existing resources.
     RoyaltyOptOut(String),
+    /// Number of entries in the tombstone history. Absent (read as `0`) until
+    /// the first `tombstone_resource`.
+    TombstoneCount,
+    /// Tombstone history entry at a 0-based position.
+    Tombstone(u32),
 }
 
 /// Payload of every role grant/revoke event (`addverif`/`rmverif`,
@@ -2083,6 +2137,9 @@ pub enum Error {
     RefundReasonHashTooLong = 66,
     /// An address-typed argument is the registry contract itself.
     InvalidAddress = 67,
+    /// `update_metadata_at_revision` was called with an `expected_revision`
+    /// that no longer matches the resource's listing revision.
+    StaleRevision = 68,
 }
 
 #[contract]
@@ -2454,11 +2511,44 @@ impl VaultRegistry {
     /// emitting an `updmeta` event. A resource registered with a content hash
     /// rejects any divergent pointer with `MetadataFrozen`.
     pub fn update_metadata(env: Env, id: String, metadata: String) -> Result<(), Error> {
-        Self::require_not_paused(&env)?;
+        Self::write_metadata(&env, id, metadata, None)
+    }
+
+    /// Compare-and-set variant of `update_metadata`: the write only happens
+    /// when `expected_revision` equals the resource's current `get_revision`.
+    /// A caller that read revision `n` and builds a new pointer from that
+    /// state passes `n`; if another write landed in between, the call fails
+    /// with `StaleRevision` and nothing is written or emitted, so the caller
+    /// re-reads instead of overwriting a change it never saw.
+    ///
+    /// The revision check runs after authorization and the lifecycle check
+    /// and before every other rule, so a stale caller is rejected even when
+    /// its pointer equals the current one. Every other rule, the no-op guard
+    /// and the `updmeta` event are exactly those of `update_metadata`.
+    pub fn update_metadata_at_revision(
+        env: Env,
+        id: String,
+        metadata: String,
+        expected_revision: u32,
+    ) -> Result<(), Error> {
+        Self::write_metadata(&env, id, metadata, Some(expected_revision))
+    }
+
+    /// Shared body of `update_metadata` and `update_metadata_at_revision`.
+    fn write_metadata(
+        env: &Env,
+        id: String,
+        metadata: String,
+        expected_revision: Option<u32>,
+    ) -> Result<(), Error> {
+        Self::require_not_paused(env)?;
         Self::validate_resource_id(&id)?;
-        let mut resource = Self::load(&env, &id)?;
+        let mut resource = Self::load(env, &id)?;
         resource.creator.require_auth();
         Self::ensure_mutable(&resource)?;
+        if expected_revision.is_some_and(|expected| expected != Self::listing_revision(env, &id)) {
+            return Err(Error::StaleRevision);
+        }
         if resource.frozen {
             return Err(Error::MetadataFrozen);
         }
@@ -2472,10 +2562,10 @@ impl VaultRegistry {
 
         Self::validate_metadata_pointer(&metadata)?;
 
-        let revision = Self::bump_listing_revision(&env, &id)?;
+        let revision = Self::bump_listing_revision(env, &id)?;
         let old_metadata = resource.metadata.clone();
         resource.metadata = metadata.clone();
-        Self::save(&env, &mut resource);
+        Self::save(env, &mut resource);
         // A new primary pointer invalidates any previously published mirrors.
         env.storage()
             .persistent()
@@ -3099,6 +3189,71 @@ impl VaultRegistry {
         Ok(())
     }
 
+    /// Change the listing state of up to [`MAX_BATCH_LISTING_UPDATES`]
+    /// resources owned by `creator` in one call, under a single creator
+    /// authorization.
+    ///
+    /// Atomic: every item is validated (id format, existence, ownership, and
+    /// a `Listed` or `Delisted` current state) before anything is written. If
+    /// any item fails, the call errors with that item's error and no
+    /// resource, listed count, or event changes. An empty or oversized batch
+    /// fails with `BatchTooLarge`; a resource owned by someone else fails with
+    /// `Unauthorized`; a frozen, disputed, or tombstoned resource fails with
+    /// `InvalidLifecycleTransition`, exactly as `set_listed` would.
+    ///
+    /// Duplicate ids use the last supplied value. An item that already has
+    /// the requested state is skipped without a write or event; every changed
+    /// resource emits its own `setlisted` event, as `set_listed` does.
+    pub fn set_listed_many(
+        env: Env,
+        creator: Address,
+        updates: Vec<BatchListingUpdate>,
+    ) -> Result<(), Error> {
+        creator.require_auth();
+        Self::require_not_paused(&env)?;
+        if updates.is_empty() || updates.len() > MAX_BATCH_LISTING_UPDATES {
+            return Err(Error::BatchTooLarge);
+        }
+
+        let mut pending: alloc::vec::Vec<(Resource, bool)> = alloc::vec::Vec::new();
+        for item in updates.iter() {
+            Self::validate_resource_id(&item.id)?;
+            let resource = Self::load(&env, &item.id)?;
+            if resource.creator != creator {
+                return Err(Error::Unauthorized);
+            }
+            if !matches!(
+                resource.state,
+                ResourceState::Listed | ResourceState::Delisted
+            ) {
+                return Err(Error::InvalidLifecycleTransition);
+            }
+            if let Some(existing) = pending.iter_mut().find(|entry| entry.0.id == item.id) {
+                existing.1 = item.listed;
+            } else {
+                pending.push((resource, item.listed));
+            }
+        }
+
+        for (mut resource, listed) in pending {
+            let next = if listed {
+                ResourceState::Listed
+            } else {
+                ResourceState::Delisted
+            };
+            if resource.state == next {
+                continue;
+            }
+            let old_listed = resource.listed;
+            Self::transition_state(&env, &mut resource, next);
+            env.events().publish(
+                (symbol_short!("setlisted"), resource.id),
+                (old_listed, listed),
+            );
+        }
+        Ok(())
+    }
+
     /// Delist a resource (convenience method for set_listed(false)). Only the creator may call this.
     pub fn delist(env: Env, id: String) -> Result<(), Error> {
         Self::set_listed(env, id, false)
@@ -3269,6 +3424,9 @@ impl VaultRegistry {
     /// place and stays readable through `get` for audit, and the global
     /// `Index`/`Count` pair is deliberately untouched: `Count` is monotonic
     /// and finding a resource's slot in it would cost an unbounded scan.
+    ///
+    /// Each tombstone appends one [`TombstoneRecord`] to the history read by
+    /// `tombstone_history`.
     pub fn tombstone_resource(env: Env, id: String, admin: Address) -> Result<(), Error> {
         Self::require_not_paused(&env)?;
         Self::validate_resource_id(&id)?;
@@ -3289,7 +3447,59 @@ impl VaultRegistry {
             .persistent()
             .remove(&DataKey::PendingTransfer(id.clone()));
         Self::transition_state(&env, &mut resource, ResourceState::Tombstoned);
+        Self::log_tombstone(&env, id, resource.creator, admin);
         Ok(())
+    }
+
+    /// One page of the tombstone history, oldest first, for moderation
+    /// review. Only an address holding the moderator role may read it
+    /// (`Unauthorized` otherwise).
+    ///
+    /// - `cursor` is a 0-based position; entry `position` sits at cursor
+    ///   `position - 1`. The history only grows at the end, so a cursor stays
+    ///   valid while new tombstones are written.
+    /// - `limit` is clamped to `1..=TOMBSTONE_HISTORY_PAGE_CAP` (20).
+    /// - `next_cursor` is `None` on the last page, and on an empty history or
+    ///   a cursor at or past `total`, which return no records.
+    ///
+    /// Only tombstones written after this method shipped are recorded; older
+    /// ones remain visible through `export_page`.
+    pub fn tombstone_history(
+        env: Env,
+        moderator: Address,
+        cursor: u32,
+        limit: u32,
+    ) -> Result<TombstoneHistoryPage, Error> {
+        moderator.require_auth();
+        if !Self::is_moderator(env.clone(), moderator) {
+            return Err(Error::Unauthorized);
+        }
+        let page_size = limit.clamp(1, TOMBSTONE_HISTORY_PAGE_CAP);
+        let total: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKeyExt::TombstoneCount)
+            .unwrap_or(0);
+        let mut records = Vec::new(&env);
+        let mut i = cursor;
+        while i < total && records.len() < page_size {
+            let key = DataKeyExt::Tombstone(i);
+            if let Some(record) = env
+                .storage()
+                .persistent()
+                .get::<DataKeyExt, TombstoneRecord>(&key)
+            {
+                Self::bump_persistent(&env, &key);
+                records.push_back(record);
+            }
+            i += 1;
+        }
+        let next_cursor = if i < total { Some(i) } else { None };
+        Ok(TombstoneHistoryPage {
+            records,
+            next_cursor,
+            total,
+        })
     }
 
     /// Paginated resource list in insertion order. `limit` is capped at 20.
@@ -7346,7 +7556,13 @@ impl VaultRegistry {
     /// with `Unauthorized`; reusing the recorded `tx_hash` is rejected with
     /// `DuplicateTxHash`. The new payment is added to `amount`, the window is
     /// extended from the later of the current ledger and the old expiry, and
-    /// the original `start_ledger` is retained. Emits `lease`.
+    /// the original `start_ledger` is retained. An expired lease therefore
+    /// restarts from the current ledger, and the lapsed ledgers are never
+    /// credited back. An extension whose new expiry would pass `u32::MAX` is
+    /// rejected with `InvalidPaymentTransition` instead of being silently capped.
+    /// Every rejection leaves the stored lease, its expiry included, unchanged.
+    /// The extended lease is open again, so its resource price is counted by
+    /// the `set_fee_config` lease guard. Emits `lease`.
     pub fn extend_lease(
         env: Env,
         holder: Address,
@@ -7385,13 +7601,13 @@ impl VaultRegistry {
         }
 
         let now = env.ledger().sequence();
-        let base_ledger = existing.expiry_ledger.max(now);
+        let expiry_ledger = Self::extended_expiry(existing.expiry_ledger.max(now), tier)?;
         let extended = Lease {
             resource_id: existing.resource_id,
             holder: existing.holder,
             tier,
             start_ledger: existing.start_ledger,
-            expiry_ledger: base_ledger.saturating_add(Self::tier_ledgers(tier)),
+            expiry_ledger,
             amount: existing.amount.saturating_add(amount),
             tx_hash,
             state: LeaseState::Active,
@@ -7399,6 +7615,7 @@ impl VaultRegistry {
         };
         env.storage().persistent().set(&key, &extended);
         Self::bump_persistent(&env, &key);
+        Self::update_lease_price_floor(&env, resource.price);
         env.events()
             .publish((symbol_short!("lease"), resource_id), extended.clone());
         Ok(extended)
@@ -7619,14 +7836,15 @@ impl VaultRegistry {
         }
 
         let now = env.ledger().sequence();
+        lease.expiry_ledger = Self::extended_expiry(lease.expiry_ledger, tier)?;
         lease.tier = tier;
-        lease.expiry_ledger = lease.expiry_ledger.saturating_add(Self::tier_ledgers(tier));
         lease.amount = amount;
         lease.tx_hash = tx_hash;
         lease.recorded_at = now;
 
         env.storage().persistent().set(&key, &lease);
         Self::bump_persistent(&env, &key);
+        Self::update_lease_price_floor(&env, resource.price);
         env.events()
             .publish((symbol_short!("leasernew"), resource_id), lease.clone());
         Ok(lease)
@@ -8690,10 +8908,7 @@ impl VaultRegistry {
         }
     }
 
-    fn ensure_valid_fee_destination(
-        env: &Env,
-        destination: &FeeDestination,
-    ) -> Result<(), Error> {
+    fn ensure_valid_fee_destination(env: &Env, destination: &FeeDestination) -> Result<(), Error> {
         match destination {
             FeeDestination::Charity(address) => Self::ensure_valid_address(env, address),
             _ => Ok(()),
@@ -9062,6 +9277,29 @@ impl VaultRegistry {
         Self::bump_instance(env);
     }
 
+    /// Append one entry to the tombstone history read by `tombstone_history`.
+    fn log_tombstone(env: &Env, id: String, creator: Address, admin: Address) {
+        let index: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKeyExt::TombstoneCount)
+            .unwrap_or(0);
+        let record = TombstoneRecord {
+            position: index + 1,
+            id,
+            creator,
+            admin,
+            ledger: env.ledger().sequence(),
+        };
+        let key = DataKeyExt::Tombstone(index);
+        env.storage().persistent().set(&key, &record);
+        Self::bump_persistent(env, &key);
+        env.storage()
+            .instance()
+            .set(&DataKeyExt::TombstoneCount, &(index + 1));
+        Self::bump_instance(env);
+    }
+
     /// Append one entry to the verifier key history read by
     /// `verifier_key_history`.
     fn log_verifier_key_change(
@@ -9298,6 +9536,13 @@ impl VaultRegistry {
             LeaseTier::Week => LEASE_WEEK_MULTIPLIER,
         };
         price.checked_mul(multiplier).ok_or(Error::PriceExceedsMax)
+    }
+
+    /// `base` plus the duration of `tier`, or `InvalidPaymentTransition` when that
+    /// would pass `u32::MAX`.
+    fn extended_expiry(base: u32, tier: LeaseTier) -> Result<u32, Error> {
+        base.checked_add(Self::tier_ledgers(tier))
+            .ok_or(Error::InvalidPaymentTransition)
     }
 
     fn lease_grants_access(env: &Env, lease: &Lease) -> bool {
