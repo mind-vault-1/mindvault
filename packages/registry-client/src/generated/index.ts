@@ -611,7 +611,12 @@ state: PaymentState;
   /**
  * Stellar transaction hash of the USDC transfer (non-empty, max 128 bytes).
  */
-tx_hash: string;
+  tx_hash: string;
+}
+
+export interface PaymentReceiptPage {
+  items: Array<PaymentReceipt>;
+  next_cursor: Option<u32>;
 }
 
 
@@ -2512,6 +2517,11 @@ export interface Client {
   get_payment_receipt: ({resource_id, payer}: {resource_id: string, payer: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<PaymentReceipt>>>
 
   /**
+   * Construct and simulate a payment_receipt_page transaction. Returns receipts for a buyer/resource pair in recording order.
+   */
+  payment_receipt_page: ({resource_id, buyer, cursor, limit}: {resource_id: string, buyer: string, cursor: number, limit: number}, options?: MethodOptions) => Promise<AssembledTransaction<Result<PaymentReceiptPage>>>
+
+  /**
    * Construct and simulate a get_refunded_amount transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    * Total amount recorded as refunded for a payment receipt.
    */
@@ -2638,6 +2648,11 @@ export interface Client {
    * reactivate, tombstone) and moves between owners on transfer.
    */
   creator_listed_count: ({creator}: {creator: string}, options?: MethodOptions) => Promise<AssembledTransaction<u32>>
+
+  /**
+   * Construct and simulate a creator_resource_state_count transaction. Returns the creator's resource count for one lifecycle state.
+   */
+  creator_resource_state_count: ({creator, state}: {creator: string, state: ResourceState}, options?: MethodOptions) => Promise<AssembledTransaction<u32>>
 
   /**
    * Construct and simulate a get_attestation_hash transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -3645,6 +3660,7 @@ export class Client extends ContractClient {
         get_anchor_attempts: this.txFromJSON<Result<AnchorAttempts>>,
         get_fee_destination: this.txFromJSON<FeeDestinationConfig>,
         get_payment_receipt: this.txFromJSON<Result<PaymentReceipt>>,
+        payment_receipt_page: this.txFromJSON<Result<PaymentReceiptPage>>,
         get_refunded_amount: this.txFromJSON<Result<i128>>,
         get_refund_deadline: this.txFromJSON<Result<u32>>,
         get_resource_states: this.txFromJSON<Result<Array<Option<ResourceState>>>>,
@@ -3657,6 +3673,7 @@ export class Client extends ContractClient {
         set_royalty_opt_out: this.txFromJSON<Result<void>>,
         bootstrap_dual_admin: this.txFromJSON<Result<void>>,
         creator_listed_count: this.txFromJSON<u32>,
+        creator_resource_state_count: this.txFromJSON<u32>,
         get_attestation_hash: this.txFromJSON<Option<string>>,
         get_flag_reason_hash: this.txFromJSON<Result<string>>,
         get_purchase_receipt: this.txFromJSON<Result<PurchaseReceiptAnchor>>,

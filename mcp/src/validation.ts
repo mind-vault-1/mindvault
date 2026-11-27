@@ -418,6 +418,12 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     includeSensitive: { kind: "flag" },
     groupBy: { kind: "enum", values: ["month"] },
   },
+  mindvault_spending_summary: {
+    network: { kind: "string", maxLength: 64 },
+    since: { kind: "string", maxLength: 64 },
+    until: { kind: "string", maxLength: 64 },
+    groupBy: { kind: "enum", values: ["day", "month", "none"] },
+  },
   mindvault_register_onchain: {
     resourceId: RESOURCE_ID,
     confirmMainnet: CONFIRM_MAINNET,

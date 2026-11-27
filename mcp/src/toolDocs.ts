@@ -133,6 +133,7 @@ export function groupOf(name: string): string {
       "mindvault_purchase_history",
       "mindvault_export_receipts",
       "mindvault_verify_receipt",
+      "mindvault_spending_summary",
     ].includes(name)
   ) {
     return "Receipts";

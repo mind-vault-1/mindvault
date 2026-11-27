@@ -183,6 +183,7 @@ const PROBE_OVERRIDES: Record<string, Record<string, unknown>> = {
   mindvault_purchase_history: {},
   mindvault_export_receipts: { format: "csv" },
   mindvault_explain_error_code: { code: 1 },
+  mindvault_spending_summary: {},
 };
 
 function probeArgs(name: string): Record<string, unknown> {
