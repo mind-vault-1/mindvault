@@ -894,3 +894,47 @@ fn lease_quote_preserves_atomic_failure_semantics() {
     assert_eq!(client.get_resource(&id), resource_before);
     assert_eq!(env.events().all().len(), events_before);
 }
+
+#[test]
+fn renew_lease_before_expiry_and_reject_at_exact_expiry() {
+    let (env, creator, settler, holder, client) = lease_setup();
+    let id = register_priced(&env, &creator, &client, "leasernw", 100i128);
+    env.ledger().set_sequence_number(100);
+
+    let original = client.buy_lease(
+        &holder,
+        &id,
+        &LeaseTier::Hour,
+        &100i128,
+        &String::from_str(&env, "renew-original"),
+    );
+    client.settle_lease(&settler, &id, &holder);
+
+    env.ledger().set_sequence_number(original.expiry_ledger - 1);
+    let renewed = client.renew_lease(
+        &holder,
+        &id,
+        &LeaseTier::Day,
+        &500i128,
+        &String::from_str(&env, "renew-day"),
+    );
+    assert_eq!(renewed.expiry_ledger, original.expiry_ledger + LEASE_DAY_LEDGERS);
+    assert_eq!(renewed.amount, 500i128);
+    assert_eq!(renewed.tier, LeaseTier::Day);
+    assert_eq!(last_lease_event(&env, symbol_short!("leasernew"), &id), renewed);
+
+    env.ledger().set_sequence_number(renewed.expiry_ledger);
+    let events_before = env.events().all().len();
+    assert_eq!(
+        client.try_renew_lease(
+            &holder,
+            &id,
+            &LeaseTier::Hour,
+            &100i128,
+            &String::from_str(&env, "renew-rejected"),
+        ),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+    assert_eq!(client.get_lease(&id, &holder), renewed);
+    assert_eq!(env.events().all().len(), events_before);
+}

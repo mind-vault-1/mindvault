@@ -223,7 +223,7 @@ of the binding's doc comment — read the generated file for the full contract.
 
 - **Arguments:** `{holder, resource_id, tier, amount, tx_hash}: {holder: string, resource_id: string, tier: LeaseTier, amount: i128, tx_hash: string}, options?: MethodOptions`
 - **Returns:** `AssembledTransaction<Result<Lease>>`
-- **Summary:** Renew an active, unexpired lease.
+- **Summary:** Renew an active, unexpired lease. The holder must authorize; `amount` must equal the exact current tier price, and renewal is rejected when the ledger reaches `expiry_ledger`. Each successful call adds the selected tier duration to the existing expiry and emits `leasernew`.
 
 ### `accept_admin`
 
