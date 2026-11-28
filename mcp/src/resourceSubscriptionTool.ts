@@ -18,6 +18,7 @@ import {
   type ResourceSubscriptionPollResult,
 } from "./resourceSubscription.js";
 import { mapHttpError, mcpError, throwHttpError } from "./errorMapping.js";
+import { cursorMappedError } from "./cursorToken.js";
 
 export type ResourceSubscriptionSnapshot = {
   resourceId: string;
@@ -136,8 +137,21 @@ export async function subscribeResource(
   onProgress?: ResourceProgressReporter,
 ): Promise<ResourceSubscriptionSnapshot> {
   const now = opts.now ?? Date.now;
-  const resolvedCursor = resolveResourceChangeCursor(opts.cursor, opts.resourceId, opts.context);
-  if (!resolvedCursor.ok) throw new Error(resolvedCursor.error);
+  const resolvedCursor = resolveResourceChangeCursor(
+    opts.cursor,
+    opts.resourceId,
+    opts.context,
+    now,
+  );
+  if (!resolvedCursor.ok) {
+    throw mcpError(
+      cursorMappedError({
+        operation: "Subscription cursor rejected",
+        reason: resolvedCursor.reason,
+        error: resolvedCursor.error,
+      }),
+    );
+  }
 
   const startedAt = now();
   const resumed = resolvedCursor.lastDetectedAt > 0;

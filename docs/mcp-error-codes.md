@@ -60,6 +60,9 @@ report, or a client's error handler.
 | `MV_CLOCK_SKEW`               | `auth`       | ✅ safe        | A request signature was rejected because this machine's clock is outside the accepted window.                         |
 | `MV_CONFLICT`                 | `conflict`   | ❌ unsafe      | The resource is already in the requested state.                                                                       |
 | `MV_CONTRACT_ERROR`           | `contract`   | ❌ unsafe      | The vault-registry contract rejected the call or is not the expected contract.                                        |
+| `MV_CURSOR_EXPIRED`           | `validation` | ❌ unsafe      | The cursor is older than the 15-minute validity window.                                                               |
+| `MV_CURSOR_INVALID`           | `validation` | ❌ unsafe      | The cursor is malformed, from another tool, or bound to different arguments.                                          |
+| `MV_CURSOR_TAMPERED`          | `validation` | ❌ unsafe      | The cursor's signature did not verify; its payload was edited or came from a different server.                        |
 | `MV_INSUFFICIENT_FUNDS`       | `payment`    | ✅ safe        | The wallet lacks the USDC or the native XLM reserve needed to pay.                                                    |
 | `MV_MAINNET_UNCONFIRMED`      | `validation` | ❌ unsafe      | A mainnet mutation or payment was attempted without explicit confirmation.                                            |
 | `MV_MALFORMED_RESPONSE`       | `server`     | ✅ safe        | The upstream answered with a body that was not JSON — a proxy, gateway or load balancer usually does this.            |
@@ -115,6 +118,17 @@ the fixes differ:
 The last row is the one that matters most: a bare 402 is the resource stating
 its price, not a failed payment. Conflating the two would send an agent to
 check a transaction it never made.
+
+Cursor failures are classified locally, before any HTTP mapping:
+
+| Situation                                   | Code                 |
+| ------------------------------------------- | -------------------- |
+| Malformed, wrong-tool, or old-version token | `MV_CURSOR_INVALID`  |
+| Payload edited or signed by another key     | `MV_CURSOR_TAMPERED` |
+| Older than the 15-minute validity window    | `MV_CURSOR_EXPIRED`  |
+
+All three mean the same thing operationally: omit the cursor and start a new
+page. See [registry-cursor.md](registry-cursor.md) for the token format.
 
 ## Coverage
 

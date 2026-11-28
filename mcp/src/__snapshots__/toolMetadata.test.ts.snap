@@ -30,8 +30,10 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_check_bindings",
   "mindvault_check_consistency",
   "mindvault_metadata_diff",
+  "mindvault_cache_chain_diff",
   "mindvault_verify_attestation",
   "mindvault_registry_lookup",
+  "mindvault_contract_event_history",
   "mindvault_registry_list",
   "mindvault_registry_creator_page",
   "mindvault_registry_tag_search",
@@ -59,10 +61,12 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_freeze",
   "mindvault_fee_config",
   "mindvault_royalty",
+  "mindvault_state_diagnostics",
   "mindvault_check_state_permissions",
   "mindvault_registry_health",
   "mindvault_explain_error_code",
   "mindvault_rpc_health",
+  "mindvault_upstream_health",
   "mindvault_prewarm_catalog",
   "mindvault_client_config",
   "mindvault_mainnet_banner",
@@ -75,11 +79,13 @@ exports[`MCP tool metadata > exposes the expected tool surface 1`] = `
   "mindvault_verify_publisher",
   "mindvault_subscribe_resource",
   "mindvault_purchase_history",
+  "mindvault_publish_batch_preview",
   "mindvault_publish_batch",
   "mindvault_onchain_preflight",
   "mindvault_verify_deployment",
   "mindvault_migration_preview",
   "mindvault_support_bundle",
+  "mindvault_query_audit_log",
 ]
 `;
 
@@ -148,7 +154,7 @@ exports[`MCP tool metadata > mindvault_search inputSchema 1`] = `
       "type": "boolean",
     },
     "cursor": {
-      "description": "Opaque cursor returned as nextCursor. It is valid only with the same profile, network, API origin, and filters; discard it after switching profiles or changing filters.",
+      "description": "Signed, opaque cursor returned as nextCursor. Valid for 15 minutes and only with the same profile, network, API origin, and filters; an expired, malformed, or edited cursor returns a structured MV_CURSOR_* error. Omit it to start a new page.",
       "type": "string",
     },
     "limit": {

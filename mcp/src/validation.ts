@@ -42,7 +42,14 @@ import {
   REGISTRY_TAG_MAX_LENGTH,
 } from "./registryPagination.js";
 import { RECEIPT_EXPORT_MAX_LIMIT, RECEIPT_ROW_FIELDS } from "./receipts.js";
+import { CACHE_CHAIN_DIFF_MAX_RESOURCES } from "./cacheChainDiff.js";
+import {
+  UPSTREAM_IDS,
+  UPSTREAM_PROBE_MAX_TIMEOUT_MS,
+  UPSTREAM_PROBE_MIN_TIMEOUT_MS,
+} from "./upstreamProbe.js";
 import { DEBUG_BUNDLE_MAX_AUDIT_LINES } from "./debugBundleSchema.js";
+import { MAX_AUDIT_QUERY_RESULTS } from "./auditQuery.js";
 import { SUPPORT_BUNDLE_MAX_AUDIT_LINES } from "./supportBundle.js";
 import { TOOL_DEFINITIONS } from "./tools.js";
 import {
@@ -295,6 +302,9 @@ export const TOOLS_WITHOUT_ARG_VALIDATION: readonly string[] = [
   // string/flag/hash/integer/enum/tag_array fields. Argument shape is enforced
   // by the input schema in tools.ts and validated inline in the dispatch handler.
   "mindvault_publish_batch",
+  // Same reason as publish_batch: items is an array of objects, validated by
+  // publishBatchPreview.ts before any signing or payment.
+  "mindvault_publish_batch_preview",
 ];
 
 /**
@@ -388,8 +398,12 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     query: { kind: "string" },
     idempotencyKey: { kind: "string" },
   },
+  mindvault_verify_receipt: {
+    receipt: { kind: "object", required: true },
+    expected: { kind: "object" },
+  },
   mindvault_export_receipts: {
-    format: { kind: "enum", values: ["json", "csv", "ndjson"] },
+    format: { kind: "enum", values: ["json", "csv", "ndjson", "jsonl"] },
     resourceId: { ...RESOURCE_ID, required: false },
     network: { kind: "string", maxLength: 64 },
     since: { kind: "string", maxLength: 64 },
@@ -403,6 +417,12 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     },
     includeSensitive: { kind: "flag" },
     groupBy: { kind: "enum", values: ["month"] },
+  },
+  mindvault_spending_summary: {
+    network: { kind: "string", maxLength: 64 },
+    since: { kind: "string", maxLength: 64 },
+    until: { kind: "string", maxLength: 64 },
+    groupBy: { kind: "enum", values: ["day", "month", "none"] },
   },
   mindvault_register_onchain: {
     resourceId: RESOURCE_ID,
@@ -456,6 +476,12 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
     attestationHash: ATTESTATION_HASH,
   },
   mindvault_registry_lookup: { resourceId: RESOURCE_ID },
+  mindvault_contract_event_history: {
+    resourceId: RESOURCE_ID,
+    startLedger: { kind: "integer", min: 1 },
+    cursor: { kind: "string", minLength: 1, maxLength: 256 },
+    limit: { kind: "integer", min: 1, max: 200 },
+  },
   mindvault_explain_error_code: {
     // Exactly one of the two identifies the error. The spec marks neither as
     // required because the pair is an exclusive choice, and the validator's
@@ -540,6 +566,14 @@ export const TOOL_ARGUMENT_SPECS: Record<string, ToolArgumentSpec> = {
   mindvault_support_bundle: {
     incidentId: { kind: "string", required: true, minLength: 1, maxLength: 128 },
     auditLines: { kind: "integer", min: 0, max: SUPPORT_BUNDLE_MAX_AUDIT_LINES },
+  },
+  mindvault_query_audit_log: {
+    since: { kind: "string", maxLength: 64 },
+    until: { kind: "string", maxLength: 64 },
+    tool: { kind: "string", maxLength: 128 },
+    outcome: { kind: "enum", values: ["start", "success", "error"] },
+    offset: { kind: "integer", min: 0 },
+    limit: { kind: "integer", min: 1, max: MAX_AUDIT_QUERY_RESULTS },
   },
   mindvault_set_tags: {
     resourceId: RESOURCE_ID,

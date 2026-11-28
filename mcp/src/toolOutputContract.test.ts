@@ -15,7 +15,7 @@
  * logged by tool name and schema path without the payload, and sent as an
  * `isError` result that still validates.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
+import { queryAuditLogTool } from "./auditQuery.js";
+import { previewPublishBatch } from "./publishBatchPreview.js";
 import { debugBundleTool } from "./debugBundle.js";
 import {
   DEFAULT_DEPLOYMENT_MANIFESTS,
@@ -68,6 +70,7 @@ import {
   recordPurchase,
 } from "./purchaseHistory.js";
 import { exportReceiptsTool } from "./receipts.js";
+import { spendingSummaryTool } from "./spendingSummary.js";
 import { createMindVaultServer } from "./serverFactory.js";
 import { normalizeToolResult, type ToolOutcome } from "./toolResult.js";
 import { hasOutputSchema } from "./toolSurface.js";
@@ -92,6 +95,10 @@ beforeAll(() => {
     txHash: TX,
     receiptRef: "x402:mock",
   });
+  writeFileSync(
+    join(stateDir, "audit.jsonl"),
+    `${JSON.stringify({ timestamp: "2026-01-01T00:00:00Z", toolName: "browse", status: "success" })}\n`,
+  );
 });
 
 afterAll(() => {
@@ -116,7 +123,32 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
   mindvault_set_listed: () => mockSetListed("mock-1", false),
   mindvault_publish_batch: () =>
     mockPublishBatch([{ title: "One", price: "1", externalUrl: "https://example.com/1" }]),
+  mindvault_publish_batch_preview: () =>
+    previewPublishBatch({
+      items: [{ title: "One", price: "1.00", externalUrl: "https://example.com/1" }],
+    }),
   mindvault_registry_lookup: () => mockRegistryLookup("mock-1", CONTRACT, ADDRESS),
+  mindvault_contract_event_history: () => ({
+    text: 'Contract event history for resource "mock-1" (contract CTEST).',
+    structured: {
+      resourceId: "mock-1",
+      contractId: "CTEST",
+      events: [
+        {
+          id: "event-1",
+          ledger: 123,
+          ledgerClosedAt: null,
+          txHash: "abc",
+          topic: ["register", "mock-1"],
+          value: { id: "mock-1" },
+        },
+      ],
+      scanned: 1,
+      cursor: null,
+      hasMore: false,
+      notice: null,
+    },
+  }),
   mindvault_registry_list: () => mockRegistryList(0, 10, CONTRACT, ADDRESS),
   mindvault_registry_count: () => mockRegistryCount(undefined, CONTRACT),
   mindvault_registry_creator_page: () =>
@@ -141,6 +173,7 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
     json(dryRunOnchain("register_onchain" as any, "mock-1", NETWORK, BASE, true, true)),
   mindvault_purchase_history: () => purchaseHistoryTool({}),
   mindvault_export_receipts: () => exportReceiptsTool({}),
+  mindvault_spending_summary: () => spendingSummaryTool({}, { profile: "default" }),
   mindvault_publish_status: () =>
     json(
       buildPublishStatusSnapshot(
@@ -240,6 +273,8 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
   mindvault_migration_preview: () => migrationPreviewTool({}),
   mindvault_support_bundle: () =>
     supportBundleTool({ incidentId: "mv-01hq7x9k2m4p6r8t0v2w4y6a8c", auditLines: 25 }),
+  mindvault_query_audit_log: () =>
+    queryAuditLogTool({}, { MINDVAULT_AUDIT_LOG_FILE: join(stateDir, "audit.jsonl") }),
 
   // ── Payloads in the shape the network-backed handlers build ────────────
   mindvault_setup_wallet: () => json({ profile: "default", address: ADDRESS, persisted: true }),
@@ -425,6 +460,8 @@ const SUCCESS_OUTCOMES: Record<string, () => ToolOutcome> = {
         {
           id: "mock-1",
           found: true,
+          status: "found",
+          reason: "live",
           title: "Intro",
           price: "1.5",
           verificationStatus: "verified",

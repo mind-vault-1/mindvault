@@ -183,6 +183,7 @@ const PROBE_OVERRIDES: Record<string, Record<string, unknown>> = {
   mindvault_purchase_history: {},
   mindvault_export_receipts: { format: "csv" },
   mindvault_explain_error_code: { code: 1 },
+  mindvault_spending_summary: {},
 };
 
 function probeArgs(name: string): Record<string, unknown> {
@@ -240,7 +241,7 @@ describe("side-effect reference documentation", () => {
       line
         .trim()
         .match(
-          /^\| `(mindvault_[a-z0-9_]+)` \| `(\w+)` \| `(\w+)` \| `(\w+)` \| (yes|no) \| (yes|no) \| (yes|no) \|$/,
+          /^\|\s*`(mindvault_[a-z0-9_]+)`\s*\|\s*`(\w+)`\s*\|\s*`(\w+)`\s*\|\s*`(\w+)`\s*\|\s*(yes|no)\s*\|\s*(yes|no)\s*\|\s*(yes|no)\s*\|$/,
         ),
     )
     .filter((match): match is RegExpMatchArray => match !== null);

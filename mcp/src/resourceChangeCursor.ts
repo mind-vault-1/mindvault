@@ -1,4 +1,10 @@
 import type { CatalogCacheContext } from "./catalogCache.js";
+import {
+  createCursorToken,
+  cursorErrorMessage,
+  readCursorToken,
+  type CursorFailureReason,
+} from "./cursorToken.js";
 
 export interface ResourceChangeCursorState {
   price: string | null;
@@ -12,14 +18,6 @@ export interface ResourceChangeCursorPayload {
   context: CatalogCacheContext;
   state: ResourceChangeCursorState;
   lastDetectedAt: number;
-}
-
-function encode(value: ResourceChangeCursorPayload): string {
-  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-}
-
-function decode(value: string): unknown {
-  return JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
 }
 
 function isState(value: unknown): value is ResourceChangeCursorState {
@@ -49,23 +47,28 @@ export function createResourceChangeCursor(
   context: CatalogCacheContext,
   now: () => number = Date.now,
 ): string {
-  return encode({
-    version: 1,
-    resourceId,
-    context,
-    state,
-    lastDetectedAt: now(),
-  } satisfies ResourceChangeCursorPayload);
+  return createCursorToken(
+    "subscription",
+    {
+      version: 1,
+      resourceId,
+      context,
+      state,
+      lastDetectedAt: now(),
+    } satisfies ResourceChangeCursorPayload,
+    now,
+  );
 }
 
 export type ResolvedResourceChangeCursor =
   | { ok: true; state: ResourceChangeCursorState; lastDetectedAt: number }
-  | { ok: false; error: string };
+  | { ok: false; reason: CursorFailureReason; error: string };
 
 export function resolveResourceChangeCursor(
   cursor: string | undefined,
   resourceId: string,
   context: CatalogCacheContext,
+  now: () => number = Date.now,
 ): ResolvedResourceChangeCursor {
   if (cursor === undefined) {
     return {
@@ -75,29 +78,28 @@ export function resolveResourceChangeCursor(
     };
   }
 
-  try {
-    const payload = decode(cursor) as Partial<ResourceChangeCursorPayload>;
-    if (
-      payload.version !== 1 ||
-      payload.resourceId !== resourceId ||
-      !sameContext(payload.context, context) ||
-      !isState(payload.state) ||
-      typeof payload.lastDetectedAt !== "number" ||
-      !Number.isFinite(payload.lastDetectedAt) ||
-      payload.lastDetectedAt < 0
-    ) {
-      return {
-        ok: false,
-        error:
-          "Invalid or stale resource subscription cursor. Start a new subscription for this resource, profile, network, and API.",
-      };
-    }
-    return { ok: true, state: payload.state, lastDetectedAt: payload.lastDetectedAt };
-  } catch {
+  const token = readCursorToken<Partial<ResourceChangeCursorPayload>>(cursor, "subscription", now);
+  if (!token.ok) return token;
+
+  const payload = token.payload;
+  if (
+    payload.version !== 1 ||
+    payload.resourceId !== resourceId ||
+    !sameContext(payload.context, context) ||
+    !isState(payload.state) ||
+    typeof payload.lastDetectedAt !== "number" ||
+    !Number.isFinite(payload.lastDetectedAt) ||
+    payload.lastDetectedAt < 0
+  ) {
     return {
       ok: false,
-      error:
-        "Invalid resource subscription cursor. Pass the cursor from the previous mindvault_subscribe_resource call, or omit it to start a new subscription.",
+      reason: "invalid",
+      error: cursorErrorMessage("subscription", "invalid"),
     };
   }
+  return {
+    ok: true,
+    state: payload.state,
+    lastDetectedAt: payload.lastDetectedAt,
+  };
 }

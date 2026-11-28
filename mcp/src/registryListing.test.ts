@@ -74,6 +74,7 @@ const { server } = await import("./index.js");
 const { startIntegrationHarness, harnessIsToolError, harnessResultText } =
   await import("./integrationHarness.js");
 const { decodeIdCursor, encodeIdCursor } = await import("./registryIdCursor.js");
+const { CURSOR_TTL_MS } = await import("./cursorToken.js");
 
 const CREATOR = "GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH";
 
@@ -407,5 +408,19 @@ describe("the registry id cursor", () => {
     const encoded = Buffer.from(JSON.stringify({ v: 99, t: "Start" })).toString("base64url");
     const decoded = decodeIdCursor(encoded);
     expect(decoded.ok).toBe(false);
+    if (!decoded.ok) expect(decoded.reason).toBe("invalid");
+  });
+
+  it("distinguishes an expired cursor from a tampered one", () => {
+    const issuedAt = 1_000_000;
+    const encoded = encodeIdCursor({ tag: "Start", values: void 0 } as never, () => issuedAt);
+    const expired = decodeIdCursor(encoded, () => issuedAt + CURSOR_TTL_MS);
+    expect(expired).toMatchObject({ ok: false, reason: "expired" });
+
+    const envelope = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    envelope.p.t = "a";
+    const edited = Buffer.from(JSON.stringify(envelope), "utf8").toString("base64url");
+    const tampered = decodeIdCursor(edited, () => issuedAt);
+    expect(tampered).toMatchObject({ ok: false, reason: "tampered" });
   });
 });

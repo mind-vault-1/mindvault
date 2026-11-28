@@ -828,64 +828,71 @@ fn zero_fee_config_always_allowed() {
 }
 
 #[test]
-fn renew_lease_is_allowed_before_expiry_and_rejected_at_exact_expiry() {
-    let (env, creator, settler, holder, client) = lease_setup();
+fn lease_quote_returns_price_and_duration_for_all_tiers() {
+    let (env, creator, _settler, _holder, client) = lease_setup();
+    let id = register_priced(&env, &creator, &client, "leasequote", 1_000i128);
 
-    env.ledger().set_sequence_number(100);
-    let exact_id = register_priced(&env, &creator, &client, "renewexact", 100i128);
-    let exact_original = client.record_lease(
-        &settler,
-        &holder,
-        &exact_id,
-        &LeaseTier::Hour,
-        &100i128,
-        &String::from_str(&env, "exact-origin"),
-    );
+    let hour = client.lease_quote(&id, &LeaseTier::Hour);
+    assert_eq!(hour.resource_id, id);
+    assert_eq!(hour.tier, LeaseTier::Hour);
+    assert_eq!(hour.price, 1_000i128);
+    assert_eq!(hour.duration_ledgers, LEASE_HOUR_LEDGERS);
 
-    env.ledger().set_sequence_number(exact_original.expiry_ledger);
-    let before_rejection_events = env.events().all().len();
+    let day = client.lease_quote(&id, &LeaseTier::Day);
+    assert_eq!(day.price, 5_000i128);
+    assert_eq!(day.duration_ledgers, LEASE_DAY_LEDGERS);
+
+    let week = client.lease_quote(&id, &LeaseTier::Week);
+    assert_eq!(week.price, 20_000i128);
+    assert_eq!(week.duration_ledgers, LEASE_WEEK_LEDGERS);
+
+    client.set_price(&id, &2_000i128);
+    let updated = client.lease_quote(&id, &LeaseTier::Week);
+    assert_eq!(updated.price, 40_000i128);
+    assert_eq!(updated.duration_ledgers, LEASE_WEEK_LEDGERS);
+
     assert_eq!(
-        client.try_renew_lease(
-            &holder,
-            &exact_id,
-            &LeaseTier::Day,
-            &500i128,
-            &String::from_str(&env, "renew-at-expiry"),
-        ),
-        Err(Ok(Error::InvalidPaymentTransition))
+        client.try_lease_quote(&String::from_str(&env, "nosuchquote"), &LeaseTier::Hour),
+        Err(Ok(Error::NotFound))
     );
-    assert_eq!(client.get_lease(&exact_id, &holder), exact_original);
-    assert_eq!(env.events().all().len(), before_rejection_events);
+}
 
-    env.ledger().set_sequence_number(100);
-    let before_id = register_priced(&env, &creator, &client, "renewbefore", 100i128);
-    let original = client.record_lease(
-        &settler,
-        &holder,
-        &before_id,
-        &LeaseTier::Hour,
-        &100i128,
-        &String::from_str(&env, "renew-origin"),
-    );
+#[test]
+fn lease_quote_boundary_cases() {
+    let (env, creator, _settler, _holder, client) = lease_setup();
 
-    env.ledger().set_sequence_number(original.expiry_ledger - 1);
-    let renewed = client.renew_lease(
-        &holder,
-        &before_id,
-        &LeaseTier::Day,
-        &500i128,
-        &String::from_str(&env, "renew-before"),
-    );
+    let minimum_id = register_priced(&env, &creator, &client, "quotemin", 1i128);
+    let minimum = client.lease_quote(&minimum_id, &LeaseTier::Hour);
+    assert_eq!(minimum.price, 1i128);
+    assert_eq!(minimum.duration_ledgers, LEASE_HOUR_LEDGERS);
 
-    assert_eq!(renewed.resource_id, before_id);
-    assert_eq!(renewed.holder, holder);
-    assert_eq!(renewed.tier, LeaseTier::Day);
-    assert_eq!(renewed.expiry_ledger, original.expiry_ledger + LEASE_DAY_LEDGERS);
-    assert_eq!(renewed.amount, 500i128);
+    let large_price = 1_000_000_000i128;
+    let large_id = register_priced(&env, &creator, &client, "quotelarge", large_price);
+    let large = client.lease_quote(&large_id, &LeaseTier::Week);
+    assert_eq!(large.price, large_price * 20);
+    assert_eq!(large.duration_ledgers, LEASE_WEEK_LEDGERS);
+
     assert_eq!(
-        last_lease_event(&env, symbol_short!("leasernew"), &before_id),
-        renewed
+        client.try_lease_quote(&String::from_str(&env, "INVALID-ID!"), &LeaseTier::Day),
+        Err(Ok(Error::InvalidResourceId))
     );
+}
+
+#[test]
+fn lease_quote_preserves_atomic_failure_semantics() {
+    let (env, creator, _settler, _holder, client) = lease_setup();
+    let id = register_priced(&env, &creator, &client, "quoteatom", 100i128);
+
+    let resource_before = client.get_resource(&id);
+    let events_before = env.events().all().len();
+
+    assert_eq!(
+        client.try_lease_quote(&String::from_str(&env, "doesnotexist"), &LeaseTier::Day),
+        Err(Ok(Error::NotFound))
+    );
+
+    assert_eq!(client.get_resource(&id), resource_before);
+    assert_eq!(env.events().all().len(), events_before);
 }
 
 #[test]

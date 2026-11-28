@@ -60,6 +60,40 @@ fn tags(env: &Env, items: &[&str]) -> Vec<String> {
 }
 
 #[test]
+fn metadata_schema_id_is_optional_creator_metadata() {
+    let (env, _, _, client, id) = setup_strict_auth();
+    let schema = String::from_str(&env, &"s".repeat(MAX_METADATA_SCHEMA_ID_LEN as usize));
+    assert_eq!(client.get_metadata_schema_id(&id), None);
+    assert!(client
+        .try_set_metadata_schema_id(&id, &Some(schema.clone()))
+        .is_err());
+    assert_eq!(client.get_metadata_schema_id(&id), None);
+
+    client
+        .mock_all_auths()
+        .set_metadata_schema_id(&id, &Some(schema.clone()));
+    let revision = client.get_revision(&id);
+    let too_long = String::from_str(&env, &"s".repeat(MAX_METADATA_SCHEMA_ID_LEN as usize + 1));
+    assert_eq!(
+        client
+            .mock_all_auths()
+            .try_set_metadata_schema_id(&id, &Some(too_long)),
+        Err(Ok(Error::MetadataTooLong))
+    );
+    assert_eq!(client.get_metadata_schema_id(&id), Some(schema.clone()));
+    assert_eq!(client.get_revision(&id), revision);
+    client.mock_all_auths().set_metadata_schema_id(&id, &None);
+    assert_eq!(client.get_metadata_schema_id(&id), None);
+    client.mock_all_auths().freeze_metadata(&id);
+    assert_eq!(
+        client
+            .mock_all_auths()
+            .try_set_metadata_schema_id(&id, &Some(schema)),
+        Err(Ok(Error::MetadataFrozen))
+    );
+}
+
+#[test]
 fn register_then_read() {
     let (env, creator, client) = setup();
     let id = String::from_str(&env, "swcn98besxpp6t1u8e77fqz3");
@@ -2762,6 +2796,51 @@ fn admin_transfer_nominate_then_accept() {
 }
 
 #[test]
+fn admin_handoff_requires_the_nominees_signature_before_privileges_move() {
+    let (env, _, admin, client) = setup_with_admin();
+    let nominee = Address::generate(&env);
+    env.mock_auths(&[]);
+    assert!(client.try_nominate_new_admin(&nominee).is_err());
+    assert_eq!(client.pending_admin(), None);
+    client.mock_all_auths().nominate_new_admin(&nominee);
+    assert_eq!(
+        client.try_set_paused(&nominee, &true),
+        Err(Ok(Error::Unauthorized))
+    );
+
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ADMIN_NOMINATION_MIN_GAP);
+    let accept = MockAuthInvoke {
+        contract: &client.address,
+        fn_name: "accept_admin",
+        args: (nominee.clone(),).into_val(&env),
+        sub_invokes: &[],
+    };
+    let wrong = [MockAuth {
+        address: &admin,
+        invoke: &accept,
+    }];
+    assert!(client
+        .mock_auths(&wrong)
+        .try_accept_admin(&nominee)
+        .is_err());
+    assert_eq!(client.admin(), Some(admin.clone()));
+    assert_eq!(client.pending_admin(), Some(nominee.clone()));
+
+    let signed = [MockAuth {
+        address: &nominee,
+        invoke: &accept,
+    }];
+    client.mock_auths(&signed).accept_admin(&nominee);
+    assert_eq!(
+        client.try_set_paused(&admin, &true),
+        Err(Ok(Error::Unauthorized))
+    );
+    client.mock_all_auths().set_paused(&nominee, &true);
+    assert!(client.is_paused());
+}
+
+#[test]
 fn expired_admin_nomination_can_be_replaced() {
     let (env, _creator, client) = setup();
     let admin = Address::generate(&env);
@@ -4746,7 +4825,9 @@ where
     D: TryFromVal<Env, Val>,
 {
     let events = env.events().all();
-    for i in 0..events.len() {
+    let mut i = events.len();
+    while i > 0 {
+        i -= 1;
         let (address, topics, data) = events.get(i).unwrap();
         if address != *contract || topic0_symbol(env, &topics) != Some(Symbol::new(env, topic)) {
             continue;
@@ -4978,6 +5059,8 @@ fn full_workflow_emits_exactly_the_documented_events() {
     // `pause_until`).
     client.set_royalty_recipient(&r1, &Some(bob.clone())); // -> "setroyal"
     record(&env, &client, &mut observed);
+    client.set_royalty_opt_out(&r1, &true); // -> "royopt"
+    record(&env, &client, &mut observed);
     client.set_metadata_pointers(
         &r1,
         &Vec::from_array(
@@ -5051,20 +5134,49 @@ fn full_workflow_emits_exactly_the_documented_events() {
         &String::from_str(&env, "sha256anchor2"),
     )); // -> "anchrfail"
     record(&env, &client, &mut observed);
-    // Keep retrying past the back-off window until the pair's attempt cap is
+    // Rejections for a pair that already has an anchor are reported but not
+    // counted, so drive the attempt cap with another buyer reusing the hash
+    // bound to `buyer`. Retry past the back-off window until the cap is
     // reached; the attempt that reaches it also emits "anchrxhst".
-    for _ in 1..MAX_ANCHOR_ATTEMPTS {
-        env.ledger()
-            .set_sequence_number(env.ledger().sequence() + ANCHOR_RETRY_BACKOFF_LEDGERS);
+    let other_buyer = Address::generate(&env);
+    for attempt in 0..MAX_ANCHOR_ATTEMPTS {
+        if attempt > 0 {
+            env.ledger()
+                .set_sequence_number(env.ledger().sequence() + ANCHOR_RETRY_BACKOFF_LEDGERS);
+        }
         assert!(!client.attempt_anchor_purchase_receipt(
             &verifier,
             &r0,
-            &buyer,
-            &String::from_str(&env, "sha256anchor2"),
+            &other_buyer,
+            &String::from_str(&env, "sha256anchor"),
         )); // -> "anchrfail" (+ "anchrxhst" on the last one)
         record(&env, &client, &mut observed);
     }
     client.remove_verifier(&verifier); // -> "rmverif"
+    record(&env, &client, &mut observed);
+
+    // Two-step verifier rotation (#1239): propose → accept (emits `verprop`,
+    // `veracc`) and propose → cancel (emits `verprop`, `vercncl`).
+    let v_two_step = Address::generate(&env);
+    let v_two_step_next = Address::generate(&env);
+    let v_cancel_next = Address::generate(&env);
+    client.add_verifier(&v_two_step); // -> "addverif"
+    record(&env, &client, &mut observed);
+    let seq_before_prop = env.ledger().sequence();
+    client.propose_verifier_rotation(&v_two_step, &v_two_step_next); // -> "verprop"
+    record(&env, &client, &mut observed);
+    env.ledger()
+        .set_sequence_number(seq_before_prop + VERIFIER_ROTATION_MIN_GAP);
+    client.accept_verifier_rotation(&v_two_step_next); // -> "veracc"
+    record(&env, &client, &mut observed);
+    // Now v_two_step_next holds the role; propose and cancel for `vercncl`.
+    let seq_before_prop2 = env.ledger().sequence();
+    client.propose_verifier_rotation(&v_two_step_next, &v_cancel_next); // -> "verprop"
+    record(&env, &client, &mut observed);
+    env.ledger().set_sequence_number(seq_before_prop2 + 1);
+    client.cancel_verifier_rotation(&admin2); // -> "vercncl"
+    record(&env, &client, &mut observed);
+    client.remove_verifier(&v_two_step_next); // -> "rmverif"
     record(&env, &client, &mut observed);
 
     client.freeze_metadata(&r2); // -> "freeze"
@@ -5285,9 +5397,9 @@ fn fee_preview_floor_matches_accrued_fee_at_truncation_boundaries() {
 
     // 1 base unit of fee sits exactly on the floor boundary; 99 units are
     // rounded away. Both must agree with the persisted accrued fee.
-    for (index, (price, expected_fee)) in [(101i128, 1i128), (99i128, 0i128)]
-        .into_iter()
-        .enumerate()
+    // Prices must exceed combined_fee_bps (100) per validate_price.
+    for (index, (price, expected_fee)) in
+        [(201i128, 2i128), (199i128, 1i128)].into_iter().enumerate()
     {
         let id = if index == 0 { "feebnd01" } else { "feebnd02" };
         let id = register_priced(&env, &creator, &client, id, price);
@@ -10381,7 +10493,7 @@ fn storage_key_variant(env: &Env, key: &DataKey) -> Symbol {
 /// Every `DataKey` variant, with the name and arity it must keep across
 /// upgrades. Adding a variant means adding a row here — the exhaustive match in
 /// `storage_key_migration_covers_every_variant` will not compile until you do.
-fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 59] {
+fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 48] {
     let id = String::from_str(env, "migkey");
     let who = Address::generate(env);
     [
@@ -10414,10 +10526,13 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 59] {
         (DataKey::RefundDeadline(id.clone()), "RefundDeadline", 2),
         (DataKey::RefundedAmount(id.clone()), "RefundedAmount", 2),
         (DataKey::RefundWindow, "RefundWindow", 1),
-        (DataKey::VerifierHistory(who.clone()), "VerifierHistory", 2),
         (DataKey::CreatorEarnings(who.clone()), "CreatorEarnings", 2),
-        (DataKey::FlagModerator(id.clone()), "FlagModerator", 2),
         (DataKey::Lease(id.clone(), who.clone()), "Lease", 3),
+        (
+            DataKey::HolderLeaseIndex(who.clone()),
+            "HolderLeaseIndex",
+            2,
+        ),
         (
             DataKey::AnchorAttempts(id.clone(), who.clone()),
             "AnchorAttempts",
@@ -10462,20 +10577,91 @@ fn storage_key_wire_contract(env: &Env) -> [(DataKey, &'static str, u32); 59] {
         (DataKey::MetadataPointers(id.clone()), "MetadataPointers", 2),
         (DataKey::RecoveryAdmin, "RecoveryAdmin", 1),
         (DataKey::Revision(id.clone()), "Revision", 2),
-        (DataKey::MaintenanceStatus, "MaintenanceStatus", 1),
+    ]
+}
+
+/// Decompose a `DataKeyExt` storage key into the vec Soroban encodes it as.
+fn storage_key_parts_ext(env: &Env, key: &DataKeyExt) -> Vec<Val> {
+    let val: Val = key.into_val(env);
+    Vec::try_from_val(env, &val).expect("a #[contracttype] enum key encodes as a vec")
+}
+
+/// The variant name a `DataKeyExt` storage key is addressed by on the ledger.
+fn storage_key_variant_ext(env: &Env, key: &DataKeyExt) -> Symbol {
+    let parts = storage_key_parts_ext(env, key);
+    Symbol::try_from_val(env, &parts.get(0).expect("key has a discriminant"))
+        .expect("key discriminant is a symbol")
+}
+
+/// Every `DataKeyExt` variant, with the name and arity it must keep across
+/// upgrades. Adding a variant means adding a row here — the exhaustive match in
+/// `storage_key_migration_covers_every_ext_variant` will not compile until you do.
+fn storage_key_wire_contract_ext(env: &Env) -> [(DataKeyExt, &'static str, u32); 22] {
+    let id = String::from_str(env, "migkey");
+    let who = Address::generate(env);
+    [
+        (DataKeyExt::MaintenanceStatus, "MaintenanceStatus", 1),
         (
-            DataKey::RevocationReasonHash(id.clone()),
+            DataKeyExt::RevocationReasonHash(id.clone()),
             "RevocationReasonHash",
             2,
         ),
-        (DataKey::AccruedFees, "AccruedFees", 1),
-        (DataKey::PaymentMemo(id.clone()), "PaymentMemo", 2),
-        (DataKey::FlagResolutionWindow, "FlagResolutionWindow", 1),
-        (DataKey::FlagDeadline(id.clone()), "FlagDeadline", 2),
-        (DataKey::ActiveLeasePriceFloor, "ActiveLeasePriceFloor", 1),
-        (DataKey::RoleHolders(RoleKind::Verifier), "RoleHolders", 2),
-        (DataKey::PaymentPaused, "PaymentPaused", 1),
-        (DataKey::PaymentPauseUntil, "PaymentPauseUntil", 1),
+        (DataKeyExt::AccruedFees, "AccruedFees", 1),
+        (
+            DataKeyExt::RoleHolders(RoleKind::Verifier),
+            "RoleHolders",
+            2,
+        ),
+        (DataKeyExt::PaymentPaused, "PaymentPaused", 1),
+        (DataKeyExt::PaymentPauseUntil, "PaymentPauseUntil", 1),
+        (
+            DataKeyExt::ActiveLeasePriceFloor,
+            "ActiveLeasePriceFloor",
+            1,
+        ),
+        (
+            DataKeyExt::VerifierKeyChangeCount,
+            "VerifierKeyChangeCount",
+            1,
+        ),
+        (DataKeyExt::VerifierKeyChange(0), "VerifierKeyChange", 2),
+        (
+            DataKeyExt::PendingVerifierRotation,
+            "PendingVerifierRotation",
+            1,
+        ),
+        (
+            DataKeyExt::VerifierHistory(who.clone()),
+            "VerifierHistory",
+            2,
+        ),
+        (DataKeyExt::PaymentMemo(id.clone()), "PaymentMemo", 2),
+        (
+            DataKeyExt::RefundReasonHash(id.clone()),
+            "RefundReasonHash",
+            2,
+        ),
+        (DataKeyExt::FlagDeadline(id.clone()), "FlagDeadline", 2),
+        (DataKeyExt::FlagResolutionWindow, "FlagResolutionWindow", 1),
+        (
+            DataKeyExt::ResourceHistory(id.clone()),
+            "ResourceHistory",
+            2,
+        ),
+        (DataKeyExt::FlagModerator(id.clone()), "FlagModerator", 2),
+        (
+            DataKeyExt::PaymentFullyRefunded(id.clone()),
+            "PaymentFullyRefunded",
+            2,
+        ),
+        (DataKeyExt::RoyaltyOptOut(id.clone()), "RoyaltyOptOut", 2),
+        (
+            DataKeyExt::MetadataSchemaId(id.clone()),
+            "MetadataSchemaId",
+            2,
+        ),
+        (DataKeyExt::TombstoneCount, "TombstoneCount", 1),
+        (DataKeyExt::Tombstone(0), "Tombstone", 2),
     ]
 }
 
@@ -10515,7 +10701,7 @@ fn storage_key_migration_covers_every_variant() {
     let contract = storage_key_wire_contract(&env);
     assert_eq!(
         contract.len(),
-        59,
+        48,
         "storage_key_wire_contract must list every DataKey variant"
     );
 
@@ -10542,10 +10728,9 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::RefundDeadline(_) => "RefundDeadline",
             DataKey::RefundedAmount(_) => "RefundedAmount",
             DataKey::RefundWindow => "RefundWindow",
-            DataKey::VerifierHistory(_) => "VerifierHistory",
             DataKey::CreatorEarnings(_) => "CreatorEarnings",
-            DataKey::FlagModerator(_) => "FlagModerator",
             DataKey::Lease(_, _) => "Lease",
+            DataKey::HolderLeaseIndex(_) => "HolderLeaseIndex",
             DataKey::AnchorAttempts(_, _) => "AnchorAttempts",
             DataKey::RegistryTerms => "RegistryTerms",
             DataKey::Paused => "Paused",
@@ -10570,20 +10755,73 @@ fn storage_key_migration_covers_every_variant() {
             DataKey::MetadataPointers(_) => "MetadataPointers",
             DataKey::RecoveryAdmin => "RecoveryAdmin",
             DataKey::Revision(_) => "Revision",
-            DataKey::MaintenanceStatus => "MaintenanceStatus",
-            DataKey::RevocationReasonHash(_) => "RevocationReasonHash",
-            DataKey::AccruedFees => "AccruedFees",
-            DataKey::PaymentMemo(_) => "PaymentMemo",
-            DataKey::FlagResolutionWindow => "FlagResolutionWindow",
-            DataKey::FlagDeadline(_) => "FlagDeadline",
-            DataKey::ActiveLeasePriceFloor => "ActiveLeasePriceFloor",
-            DataKey::RoleHolders(_) => "RoleHolders",
-            DataKey::PaymentPaused => "PaymentPaused",
-            DataKey::PaymentPauseUntil => "PaymentPauseUntil",
         };
         assert_eq!(
             matched, *name,
             "storage_key_wire_contract lists {name} against the wrong variant"
+        );
+    }
+}
+
+#[test]
+fn storage_key_variant_names_are_stable_ext() {
+    let env = Env::default();
+    for (key, name, _) in storage_key_wire_contract_ext(&env).iter() {
+        assert_eq!(
+            storage_key_variant_ext(&env, key),
+            Symbol::new(&env, name),
+            "DataKeyExt::{name} is addressed on-chain by its variant name."
+        );
+    }
+}
+
+#[test]
+fn storage_key_arity_is_stable_ext() {
+    let env = Env::default();
+    for (key, name, arity) in storage_key_wire_contract_ext(&env).iter() {
+        let parts = storage_key_parts_ext(&env, key);
+        assert_eq!(parts.len(), *arity, "DataKeyExt::{name} arity changed");
+    }
+}
+
+#[test]
+fn storage_key_migration_covers_every_ext_variant() {
+    let env = Env::default();
+    let contract = storage_key_wire_contract_ext(&env);
+    assert_eq!(
+        contract.len(),
+        22,
+        "storage_key_wire_contract_ext must list every DataKeyExt variant"
+    );
+
+    for (key, name, _) in contract.iter() {
+        let matched = match key {
+            DataKeyExt::MaintenanceStatus => "MaintenanceStatus",
+            DataKeyExt::RevocationReasonHash(_) => "RevocationReasonHash",
+            DataKeyExt::AccruedFees => "AccruedFees",
+            DataKeyExt::RoleHolders(_) => "RoleHolders",
+            DataKeyExt::PaymentPaused => "PaymentPaused",
+            DataKeyExt::PaymentPauseUntil => "PaymentPauseUntil",
+            DataKeyExt::ActiveLeasePriceFloor => "ActiveLeasePriceFloor",
+            DataKeyExt::VerifierKeyChangeCount => "VerifierKeyChangeCount",
+            DataKeyExt::VerifierKeyChange(_) => "VerifierKeyChange",
+            DataKeyExt::PendingVerifierRotation => "PendingVerifierRotation",
+            DataKeyExt::VerifierHistory(_) => "VerifierHistory",
+            DataKeyExt::PaymentMemo(_) => "PaymentMemo",
+            DataKeyExt::RefundReasonHash(_) => "RefundReasonHash",
+            DataKeyExt::FlagDeadline(_) => "FlagDeadline",
+            DataKeyExt::FlagResolutionWindow => "FlagResolutionWindow",
+            DataKeyExt::ResourceHistory(_) => "ResourceHistory",
+            DataKeyExt::FlagModerator(_) => "FlagModerator",
+            DataKeyExt::PaymentFullyRefunded(_) => "PaymentFullyRefunded",
+            DataKeyExt::RoyaltyOptOut(_) => "RoyaltyOptOut",
+            DataKeyExt::MetadataSchemaId(_) => "MetadataSchemaId",
+            DataKeyExt::TombstoneCount => "TombstoneCount",
+            DataKeyExt::Tombstone(_) => "Tombstone",
+        };
+        assert_eq!(
+            matched, *name,
+            "storage_key_wire_contract_ext lists {name} against the wrong variant"
         );
     }
 }
@@ -11088,6 +11326,11 @@ fn attempt_anchor_reports_duplicate_and_preserves_the_original() {
         original,
         "a rejected attempt must leave the canonical anchor untouched"
     );
+    assert_eq!(
+        client.try_get_anchor_failure(&id, &buyer),
+        Err(Ok(Error::NotFound))
+    );
+    assert_eq!(client.get_anchor_attempts(&id, &buyer).attempts, 0);
 }
 
 /// Every reason the reporting variant emits maps to the error the reverting
@@ -12213,7 +12456,7 @@ fn list_holder_leases_clamps_limit_and_skips_non_active_records() {
         );
     }
     let capped = client.list_holder_leases(&holder, &None::<u32>, &u32::MAX);
-    assert_eq!(capped.items.len(), LIST_PAGE_CAP as usize);
+    assert_eq!(capped.items.len(), LIST_PAGE_CAP);
     assert_eq!(capped.next_cursor, Some(LIST_PAGE_CAP));
 
     let tail = client.list_holder_leases(&holder, &capped.next_cursor, &20u32);
@@ -12267,7 +12510,7 @@ fn list_holder_leases_clamps_limit_and_skips_non_active_records() {
     }
 
     let filtered = client.list_holder_leases(&holder, &None::<u32>, &LIST_PAGE_CAP);
-    assert_eq!(filtered.items.len(), LIST_PAGE_CAP as usize);
+    assert_eq!(filtered.items.len(), LIST_PAGE_CAP);
     for lease in filtered.items.iter() {
         assert!(client.lease_is_active(&lease.resource_id, &holder));
     }
@@ -12278,6 +12521,292 @@ fn list_holder_leases_clamps_limit_and_skips_non_active_records() {
     assert!(!client.lease_is_active(&pending_id, &holder));
     assert!(!client.lease_is_active(&revoked_id, &holder));
     assert!(!client.lease_is_active(&expired_id, &holder));
+}
+
+#[test]
+fn batch_lease_statuses_preserve_order_and_use_the_current_ledger() {
+    let (env, creator, _, settler, client) = setup_with_settler();
+    let holder = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "batchlease", 100);
+    let ids = Vec::from_array(
+        &env,
+        [id.clone(), String::from_str(&env, "missing"), id.clone()],
+    );
+    let tx = String::from_str(&env, "lease-payment");
+
+    let lease = client.buy_lease(&holder, &id, &LeaseTier::Hour, &100, &tx);
+    assert_eq!(
+        client.get_lease_statuses(&holder, &ids).get(0),
+        Some(LeaseStatus::Pending)
+    );
+    client.settle_lease(&settler, &id, &holder);
+    assert_eq!(
+        client.get_lease_statuses(&holder, &ids),
+        Vec::from_array(
+            &env,
+            [
+                LeaseStatus::Active,
+                LeaseStatus::Missing,
+                LeaseStatus::Active
+            ]
+        )
+    );
+    assert_eq!(
+        client
+            .get_lease_statuses(&Address::generate(&env), &ids)
+            .get(0),
+        Some(LeaseStatus::Missing)
+    );
+    env.ledger().set_sequence_number(lease.expiry_ledger);
+    assert_eq!(
+        client.get_lease_statuses(&holder, &ids).get(0),
+        Some(LeaseStatus::Expired)
+    );
+    client.revoke_lease(&id, &holder);
+    assert_eq!(
+        client.get_lease_statuses(&holder, &ids).get(0),
+        Some(LeaseStatus::Revoked)
+    );
+
+    let malformed = Vec::from_array(&env, [id.clone(), String::from_str(&env, "bad-id")]);
+    assert_eq!(
+        client.try_get_lease_statuses(&holder, &malformed),
+        Err(Ok(Error::InvalidResourceId))
+    );
+    let mut batch = Vec::new(&env);
+    assert!(client.get_lease_statuses(&holder, &batch).is_empty());
+    for _ in 0..MAX_BATCH_LEASE_STATUSES {
+        batch.push_back(id.clone());
+    }
+    assert_eq!(
+        client.get_lease_statuses(&holder, &batch).len(),
+        MAX_BATCH_LEASE_STATUSES
+    );
+    batch.push_back(id);
+    assert_eq!(
+        client.try_get_lease_statuses(&holder, &batch),
+        Err(Ok(Error::BatchTooLarge))
+    );
+}
+
+#[test]
+fn receipt_hash_index_follows_the_canonical_anchor_after_cleanup() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let verifier = Address::generate(&env);
+    client.add_verifier(&verifier);
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    let id = register_priced(&env, &creator, &client, "receiptidx", 100);
+    let old = String::from_str(&env, "old-hash");
+    let new = String::from_str(&env, "new-hash");
+    client.anchor_purchase_receipt(&verifier, &id, &first, &old);
+    client.override_purchase_receipt_anchor(&admin, &id, &first, &new);
+
+    // Model a legacy reverse entry left behind after replacing the first receipt.
+    env.as_contract(&client.address, || {
+        env.storage().persistent().set(
+            &VaultRegistry::anchor_hash_key(&old),
+            &(id.clone(), first.clone()),
+        );
+    });
+    client.anchor_purchase_receipt(&verifier, &id, &second, &old);
+    assert_eq!(client.get_purchase_receipt(&id, &first).receipt_hash, new);
+    assert_eq!(client.get_purchase_receipt(&id, &second).receipt_hash, old);
+    assert_eq!(
+        client.try_override_purchase_receipt_anchor(&admin, &id, &first, &old),
+        Err(Ok(Error::DuplicateReceipt))
+    );
+}
+
+#[test]
+fn get_many_validates_all_ids_before_bumping_ttl() {
+    let (env, creator, client) = setup();
+    let id = register_default(&env, &creator, &client, "manyvld");
+    let contract = client.address.clone();
+    let ttl_before = resource_storage_ttl(&env, &contract, &id);
+    let events_before = env.events().all().len();
+    let ids = Vec::from_array(&env, [id.clone(), String::from_str(&env, "bad!")]);
+
+    assert_eq!(
+        client.try_get_many(&ids),
+        Err(Ok(Error::InvalidResourceId))
+    );
+    assert_eq!(resource_storage_ttl(&env, &contract, &id), ttl_before);
+    assert_eq!(env.events().all().len(), events_before);
+}
+
+#[test]
+fn creator_resource_state_count_tracks_lifecycle() {
+    let (env, creator, admin, client) = setup_with_admin();
+    let frozen = register_default(&env, &creator, &client, "sttfrz");
+    let delisted = register_default(&env, &creator, &client, "sttdel");
+    let tombstoned = register_default(&env, &creator, &client, "stttmb");
+    let listed = register_default(&env, &creator, &client, "sttlst");
+
+    client.freeze_resource(&frozen);
+    client.delist(&delisted);
+    client.tombstone_resource(&tombstoned, &admin);
+
+    assert_eq!(
+        client.creator_resource_state_count(&creator, &ResourceState::Frozen),
+        1
+    );
+    assert_eq!(
+        client.creator_resource_state_count(&creator, &ResourceState::Delisted),
+        1
+    );
+    assert_eq!(
+        client.creator_resource_state_count(&creator, &ResourceState::Tombstoned),
+        1
+    );
+    assert_eq!(
+        client.creator_resource_state_count(&creator, &ResourceState::Listed),
+        1
+    );
+    assert_eq!(
+        client.creator_resource_state_count(&creator, &ResourceState::Disputed),
+        0
+    );
+    assert_eq!(
+        client.creator_resource_state_count(&Address::generate(&env), &ResourceState::Listed),
+        0
+    );
+}
+
+#[test]
+fn payment_receipt_page_filters_by_buyer_and_resource_and_paginates() {
+    let (env, creator, _admin, settler, client) = setup_with_settler();
+    let id = register_priced(&env, &creator, &client, "pageid1", 1_000_000);
+    let other_id = register_priced(&env, &creator, &client, "pageid2", 1_000_000);
+    let buyer = Address::generate(&env);
+    let other_buyer = Address::generate(&env);
+    let amount = 1_000_000i128;
+
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "page1"),
+        &id,
+        &buyer,
+        &amount,
+        &String::from_str(&env, "pagetx1"),
+    );
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "page2"),
+        &id,
+        &buyer,
+        &amount,
+        &String::from_str(&env, "pagetx2"),
+    );
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "pageother"),
+        &id,
+        &other_buyer,
+        &amount,
+        &String::from_str(&env, "pagetx3"),
+    );
+    client.record_payment(
+        &settler,
+        &String::from_str(&env, "pageres"),
+        &other_id,
+        &buyer,
+        &amount,
+        &String::from_str(&env, "pagetx4"),
+    );
+
+    let first = client.payment_receipt_page(&id, &buyer, &0, &1);
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(
+        first.items.get(0).unwrap().receipt_id,
+        String::from_str(&env, "page1")
+    );
+    assert_eq!(first.next_cursor, Some(1));
+
+    let second = client.payment_receipt_page(&id, &buyer, &1, &20);
+    assert_eq!(second.items.len(), 1);
+    assert_eq!(
+        second.items.get(0).unwrap().receipt_id,
+        String::from_str(&env, "page2")
+    );
+    assert_eq!(second.next_cursor, None);
+
+    assert_eq!(
+        client
+            .payment_receipt_page(&id, &other_buyer, &0, &20)
+            .items
+            .len(),
+        1
+    );
+    assert_eq!(
+        client
+            .payment_receipt_page(&other_id, &buyer, &0, &20)
+            .items
+            .len(),
+        1
+    );
+    assert_eq!(
+        client
+            .payment_receipt_page(&id, &buyer, &0, &0)
+            .items
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn revoked_lease_stays_inactive_through_resource_lifecycle() {
+    let (env, creator, admin, settler, client) = setup_with_settler();
+    let id = register_priced(&env, &creator, &client, "leaselcy", 1_000_000);
+    let holder = Address::generate(&env);
+    let amount = client.lease_price(&id, &LeaseTier::Hour);
+
+    client.buy_lease(
+        &holder,
+        &id,
+        &LeaseTier::Hour,
+        &amount,
+        &String::from_str(&env, "leasetx1"),
+    );
+    client.settle_lease(&settler, &id, &holder);
+    client.revoke_lease(&id, &holder);
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Revoked);
+    assert!(!client.lease_is_active(&id, &holder));
+
+    client.freeze_resource(&id);
+    client.reactivate_resource(&id);
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Revoked);
+    assert!(!client.lease_is_active(&id, &holder));
+
+    client.delist(&id);
+    client.reactivate_resource(&id);
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Revoked);
+    assert!(!client.lease_is_active(&id, &holder));
+
+    client.open_dispute(&id, &admin);
+    client.resolve_dispute(&id, &admin, &ResourceState::Frozen);
+    client.reactivate_resource(&id);
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Revoked);
+    assert!(!client.lease_is_active(&id, &holder));
+
+    assert_eq!(
+        client.try_settle_lease(&settler, &id, &holder),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+    assert_eq!(
+        client.try_extend_lease(
+            &holder,
+            &id,
+            &LeaseTier::Hour,
+            &amount,
+            &String::from_str(&env, "leasetx2")
+        ),
+        Err(Ok(Error::InvalidPaymentTransition))
+    );
+
+    client.tombstone_resource(&id, &admin);
+    assert_eq!(client.get_lease(&id, &holder).state, LeaseState::Revoked);
+    assert!(!client.lease_is_active(&id, &holder));
 }
 
 include!("test/lifecycle_events.rs");
@@ -12300,6 +12829,10 @@ include!("test/stellar_wave_977_978_979_980.rs");
 include!("test/creator_page_filtered.rs");
 include!("test/tag_prefix_search.rs");
 include!("test/verifier_key_history.rs");
+include!("test/verifier_rotation_two_step.rs");
 include!("test/event_indexing_guide.rs");
+include!("test/registry_migration_compatibility.rs");
 include!("test/pause_scope_matrix.rs");
 include!("test/fee_split_preview.rs");
+include!("test/payment_refund_royalty_987_988_993.rs");
+include!("test/stellar_wave_1168_1169_1170_1177.rs");

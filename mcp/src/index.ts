@@ -7,6 +7,7 @@ import {
 import { randomUUID } from "node:crypto";
 import {
   checkContractBindings,
+  createRegistryClient,
   getAttestationHash,
   Errors as RegistryErrors,
   listResources,
@@ -120,6 +121,9 @@ import {
 } from "./purchaseHistory.js";
 import { Mutex } from "./mutex.js";
 import { exportReceiptsTool } from "./receipts.js";
+import { queryAuditLogTool } from "./auditQuery.js";
+import { previewPublishBatch } from "./publishBatchPreview.js";
+import { spendingSummaryTool } from "./spendingSummary.js";
 import { debugBundleTool } from "./debugBundle.js";
 import { onchainPreflightTool } from "./onchainPreflight.js";
 import { deploymentVerificationTool } from "./deploymentVerification.js";
@@ -330,6 +334,7 @@ import {
 } from "./catalogCache.js";
 import { resetRegistrySchemaCache } from "./registrySchema.js";
 import { createCatalogCursor, resolveCatalogCursor } from "./catalogCursor.js";
+import { cursorMappedError } from "./cursorToken.js";
 import {
   acceptTransfer,
   cancelTransfer,
@@ -344,6 +349,10 @@ import {
   _resetProfiles as _resetProfilesRuntime,
   setActiveProfileName as setActiveProfileNameRuntime,
 } from "./runtime.js";
+import {
+  CONTRACT_EVENT_HISTORY_DEFAULT_LIMIT,
+  contractEventHistoryOutcome,
+} from "./contractEventHistory.js";
 
 export { acceptTransfer, cancelTransfer };
 
@@ -2506,7 +2515,15 @@ async function browseOutcome(filters: CatalogFilters = {}): Promise<ToolOutcome>
   const cursorResult = filters.cursor
     ? resolveCatalogCursor(filters.cursor, filters, context)
     : { ok: true as const, offset: filters.offset };
-  if (!cursorResult.ok) return catalogOutcome([], cursorResult.error, null);
+  if (!cursorResult.ok) {
+    throw mcpError(
+      cursorMappedError({
+        operation: "Browse failed",
+        reason: cursorResult.reason,
+        error: cursorResult.error,
+      }),
+    );
+  }
   const requestFilters =
     cursorResult.offset === undefined ? filters : { ...filters, offset: cursorResult.offset };
   const qs = buildCatalogQueryString(requestFilters);
@@ -2612,7 +2629,15 @@ async function searchOutcome(filtersOrQuery: string | CatalogFilters): Promise<T
   const cursorResult = filters.cursor
     ? resolveCatalogCursor(filters.cursor, filters, context)
     : { ok: true as const, offset: filters.offset };
-  if (!cursorResult.ok) return catalogOutcome([], cursorResult.error, null);
+  if (!cursorResult.ok) {
+    throw mcpError(
+      cursorMappedError({
+        operation: "Search failed",
+        reason: cursorResult.reason,
+        error: cursorResult.error,
+      }),
+    );
+  }
   const requestFilters =
     cursorResult.offset === undefined ? filters : { ...filters, offset: cursorResult.offset };
   const requestQs = buildCatalogQueryString(requestFilters);
@@ -2741,6 +2766,8 @@ async function batchCatalogLookupOutcome(
     items.push({
       id,
       found: Boolean(r),
+      status: !r ? "not_found" : meta?.label ? "cached" : "found",
+      reason: !r ? "not_found" : meta?.label ? "offline_snapshot" : "live",
       title: r?.title ?? null,
       price: r?.price ?? null,
       verificationStatus: r?.verificationStatus ?? null,
@@ -4427,13 +4454,14 @@ export async function registryCreatorPage(
       ? ({ ok: true, cursor: { tag: "Start", values: undefined } } as const)
       : decodeIdCursor(cursorToken);
   if (!decoded.ok) {
-    throw mcpError({
-      source: "soroban",
-      category: "validation",
-      summary: `Creator page rejected: ${decoded.error}`,
-      action:
-        "Call mindvault_registry_creator_page again without a cursor to start from the first page.",
-    });
+    throw mcpError(
+      cursorMappedError({
+        operation: "Creator page rejected",
+        reason: decoded.reason,
+        error: decoded.error,
+        source: "soroban",
+      }),
+    );
   }
 
   const client = createLimitedRegistryClient({
@@ -5367,6 +5395,8 @@ async function executeTool(
           null,
           2,
         );
+      case "mindvault_spending_summary":
+        return spendingSummaryTool(rawRecord, { profile: activeProfileName });
       case "mindvault_register_onchain":
         return registerOnchain(requiredString(args, "resourceId"), onProgress);
       case "mindvault_agent_status":
@@ -5398,6 +5428,16 @@ async function executeTool(
         );
       case "mindvault_registry_lookup":
         return registryLookup(requiredString(args, "resourceId"));
+      case "mindvault_contract_event_history":
+        return contractEventHistoryOutcome(
+          {
+            resourceId: requiredString(args, "resourceId"),
+            startLedger: optionalInt(args, "startLedger", 0) || undefined,
+            cursor: optionalString(args, "cursor"),
+            limit: optionalInt(args, "limit", CONTRACT_EVENT_HISTORY_DEFAULT_LIMIT),
+          },
+          { contractId: REGISTRY_CONTRACT_ID || undefined, fetch: sorobanRpcFetch },
+        );
       case "mindvault_explain_error_code":
         return explainErrorCode(
           args.code === undefined ? undefined : Number(args.code),
@@ -5533,6 +5573,8 @@ async function executeTool(
         return migrationPreviewTool(rawRecord);
       case "mindvault_support_bundle":
         return supportBundleTool(rawRecord);
+      case "mindvault_query_audit_log":
+        return queryAuditLogTool(rawRecord, process.env);
       case "mindvault_recover_catalog_cache":
         return recoverCatalogCache();
       case "mindvault_wallet_balances":

@@ -21,6 +21,8 @@
  * changes in code changes the generated reference in the same PR.
  */
 
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
+import { MCP_PROTOCOL_VERSION_ENV } from "./diagnostics.js";
 import { DEFAULT_MAX_AUTO_FEE_STROOPS, DEFAULT_MAX_AUTO_PAY_USDC } from "./paymentCeiling.js";
 import { DEFAULT_PAID_CONFIRMATION_POLICY } from "./paidOperations.js";
 import { DEFAULT_DESTRUCTIVE_CONFIRMATION_POLICY } from "./destructiveOperations.js";
@@ -33,6 +35,7 @@ import { DEFAULT_TOOL_DURATION_BUDGET_MS } from "./metrics.js";
 import { DEFAULT_COOLDOWN_MS, DEFAULT_MAX_ATTEMPTS } from "./rpcFailover.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_FILES } from "./auditLogRotation.js";
 import { DEFAULT_CATALOG_CACHE_CONFIG } from "./catalogCache.js";
+import { CURSOR_TTL_MS } from "./cursorToken.js";
 import { DEFAULT_MAX_RESPONSE_BYTES } from "./responseSize.js";
 import {
   DEFAULT_STATE_BACKUP_MAX_AGE_DAYS,
@@ -174,6 +177,16 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
     source: "mcp/src/proxy.ts",
   },
 
+  // ── MCP protocol ───────────────────────────────────────────────────────────
+  {
+    name: MCP_PROTOCOL_VERSION_ENV,
+    description:
+      "Optional pin for the MCP protocol version used by the initialize handshake. An unsupported value is a blocking startup error instead of silently negotiating a different version. Unset means negotiate normally (#1202).",
+    default: "unset — negotiate from the client's initialize request",
+    values: [...SUPPORTED_PROTOCOL_VERSIONS],
+    source: "mcp/src/diagnostics.ts",
+  },
+
   // ── Guardrails & policies ──────────────────────────────────────────────────
   {
     name: "MINDVAULT_ALLOW_MAINNET",
@@ -224,6 +237,12 @@ export const ENV_VAR_DOCS: EnvVarDoc[] = [
   },
 
   // ── Catalog & cache ────────────────────────────────────────────────────────
+  {
+    name: "MINDVAULT_CURSOR_SIGNING_KEY",
+    description: `HMAC key for paginated tool cursors, at least 32 characters. Cursors are signed and expire after ${CURSOR_TTL_MS / 60_000} minutes. Without this setting a fresh key is generated per server process, so cursors do not survive a restart; set the same value for every process that must share cursors.`,
+    default: "random key per server process",
+    source: "mcp/src/cursorToken.ts",
+  },
   {
     name: "MINDVAULT_CATALOG_CACHE_TTL_MS",
     description:

@@ -13,7 +13,7 @@
 
 #[test]
 fn simulate_record_payment_matches_stored_receipt() {
-    let (env, creator, _admin, settler, client) = setup_with_settlement();
+    let (env, creator, _admin, settler, client) = setup_with_settler();
     let resource_id = register_default(&env, &creator, &client, "simres0");
     let payer = Address::generate(&env);
     let amount = 100i128;
@@ -44,7 +44,7 @@ fn simulate_record_payment_matches_stored_receipt() {
 
 #[test]
 fn simulate_record_payment_fails_for_invalid_resource() {
-    let (env, _creator, _admin, settler, client) = setup_with_settlement();
+    let (env, _creator, _admin, settler, client) = setup_with_settler();
     let payer = Address::generate(&env);
     let amount = 100i128;
 
@@ -73,7 +73,7 @@ fn simulate_record_payment_fails_for_invalid_resource() {
 
 #[test]
 fn simulate_record_payment_fails_for_invalid_payment_amount() {
-    let (env, creator, _admin, settler, client) = setup_with_settlement();
+    let (env, creator, _admin, settler, client) = setup_with_settler();
     let resource_id = register_default(&env, &creator, &client, "simres1");
     let payer = Address::generate(&env);
 
@@ -104,7 +104,7 @@ fn simulate_record_payment_fails_for_invalid_payment_amount() {
 
 #[test]
 fn simulate_record_payment_fails_when_paused_like_mutation() {
-    let (env, creator, admin, settler, client) = setup_with_settlement();
+    let (env, creator, admin, settler, client) = setup_with_settler();
     let resource_id = register_default(&env, &creator, &client, "simres2");
     let payer = Address::generate(&env);
     let amount = 100i128;
@@ -137,7 +137,7 @@ fn simulate_record_payment_fails_when_paused_like_mutation() {
 
 #[test]
 fn simulate_record_payment_fails_when_payment_paused_like_mutation() {
-    let (env, creator, admin, settler, client) = setup_with_settlement();
+    let (env, creator, admin, settler, client) = setup_with_settler();
     let resource_id = register_default(&env, &creator, &client, "simres3");
     let payer = Address::generate(&env);
     let amount = 100i128;
@@ -172,7 +172,7 @@ fn simulate_record_payment_fails_when_payment_paused_like_mutation() {
 
 #[test]
 fn simulate_record_payment_does_not_modify_state() {
-    let (env, creator, _admin, settler, client) = setup_with_settlement();
+    let (env, creator, _admin, settler, client) = setup_with_settler();
     let resource_id = register_default(&env, &creator, &client, "simres4");
     let payer = Address::generate(&env);
     let amount = 100i128;
@@ -196,7 +196,7 @@ fn simulate_record_payment_does_not_modify_state() {
 
 #[test]
 fn simulate_record_payment_returns_correct_receipt_structure() {
-    let (env, creator, _admin, settler, client) = setup_with_settlement();
+    let (env, creator, _admin, settler, client) = setup_with_settler();
     let resource_id = register_default(&env, &creator, &client, "simres5");
     let payer = Address::generate(&env);
     let amount = 100i128;
@@ -228,7 +228,7 @@ fn simulate_record_payment_returns_correct_receipt_structure() {
 
 #[test]
 fn simulate_record_payment_emits_validation_event() {
-    let (env, creator, _admin, settler, client) = setup_with_settlement();
+    let (env, creator, _admin, settler, client) = setup_with_settler();
     let resource_id = register_default(&env, &creator, &client, "simres6");
     let payer = Address::generate(&env);
     let amount = 100i128;
@@ -265,7 +265,7 @@ fn simulate_record_payment_emits_validation_event() {
 
 #[test]
 fn simulate_record_payment_fails_without_settler_role() {
-    let (env, creator, _admin, _settler, client) = setup_with_settlement();
+    let (env, creator, _admin, _settler, client) = setup_with_settler();
     let resource_id = register_default(&env, &creator, &client, "simres7");
     let not_settler = Address::generate(&env);
     let payer = Address::generate(&env);

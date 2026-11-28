@@ -9,7 +9,7 @@ fn setup_with_payment<'a>() -> (
     String,
     String,
 ) {
-    let (env, creator, _admin, settler, client) = setup_with_settlement();
+    let (env, creator, _admin, settler, client) = setup_with_settler();
     let resource_id = register_default(&env, &creator, &client, "refundres");
     let payment_id = String::from_str(&env, "payment1");
     let payer = Address::generate(&env);
@@ -399,7 +399,7 @@ fn remaining_refundable_never_negative() {
 
 #[test]
 fn refunds_work_independently_across_payments() {
-    let (env, creator, _admin, settler, client) = setup_with_settlement();
+    let (env, creator, _admin, settler, client) = setup_with_settler();
     let resource_id = register_default(&env, &creator, &client, "multiref");
     let payer = Address::generate(&env);
     

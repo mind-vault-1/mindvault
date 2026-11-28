@@ -1,19 +1,17 @@
 import type { CatalogCacheContext } from "./catalogCache.js";
 import type { CatalogFilters } from "./catalogFilters.js";
+import {
+  createCursorToken,
+  cursorErrorMessage,
+  readCursorToken,
+  type CursorFailureReason,
+} from "./cursorToken.js";
 
 export interface CatalogCursorPayload {
   version: 1;
   offset: number;
   fingerprint: string;
   context: CatalogCacheContext;
-}
-
-function encode(value: unknown): string {
-  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-}
-
-function decode(value: string): unknown {
-  return JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
 }
 
 export function catalogFilterFingerprint(filters: CatalogFilters): string {
@@ -25,43 +23,48 @@ export function createCatalogCursor(
   offset: number,
   filters: CatalogFilters,
   context: CatalogCacheContext,
+  now: () => number = Date.now,
 ): string {
-  return encode({
-    version: 1,
-    offset,
-    fingerprint: catalogFilterFingerprint(filters),
-    context,
-  } satisfies CatalogCursorPayload);
+  return createCursorToken(
+    "catalog",
+    {
+      version: 1,
+      offset,
+      fingerprint: catalogFilterFingerprint(filters),
+      context,
+    } satisfies CatalogCursorPayload,
+    now,
+  );
 }
+
+export type CatalogCursorResult =
+  | { ok: true; offset: number }
+  | { ok: false; reason: CursorFailureReason; error: string };
 
 export function resolveCatalogCursor(
   cursor: string,
   filters: CatalogFilters,
   context: CatalogCacheContext,
-): { ok: true; offset: number } | { ok: false; error: string } {
-  try {
-    const payload = decode(cursor) as Partial<CatalogCursorPayload>;
-    const offset = payload.offset;
-    if (
-      payload.version !== 1 ||
-      !Number.isInteger(offset) ||
-      offset === undefined ||
-      offset < 0 ||
-      payload.fingerprint !== catalogFilterFingerprint(filters) ||
-      JSON.stringify(payload.context) !== JSON.stringify(context)
-    ) {
-      return {
-        ok: false,
-        error:
-          "Invalid or stale catalog cursor. Start a new browse or search for the active profile and filters.",
-      };
-    }
-    return { ok: true, offset: offset as number };
-  } catch {
+  now: () => number = Date.now,
+): CatalogCursorResult {
+  const token = readCursorToken<Partial<CatalogCursorPayload>>(cursor, "catalog", now);
+  if (!token.ok) return token;
+
+  const payload = token.payload;
+  const offset = payload.offset;
+  if (
+    payload.version !== 1 ||
+    !Number.isInteger(offset) ||
+    offset === undefined ||
+    offset < 0 ||
+    payload.fingerprint !== catalogFilterFingerprint(filters) ||
+    JSON.stringify(payload.context) !== JSON.stringify(context)
+  ) {
     return {
       ok: false,
-      error:
-        "Invalid catalog cursor. Start a new browse or search for the active profile and filters.",
+      reason: "invalid",
+      error: cursorErrorMessage("catalog", "invalid"),
     };
   }
+  return { ok: true, offset: offset as number };
 }
