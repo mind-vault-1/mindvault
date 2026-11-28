@@ -887,3 +887,27 @@ fn renew_lease_is_allowed_before_expiry_and_rejected_at_exact_expiry() {
         renewed
     );
 }
+
+#[test]
+fn lease_quote_returns_price_and_duration_for_each_tier() {
+    let (env, creator, _settler, _holder, client) = lease_setup();
+    let id = register_priced(&env, &creator, &client, "leasequote", 1_000i128);
+
+    let hour = client.lease_quote(&id, &LeaseTier::Hour);
+    assert_eq!(hour.resource_id, id);
+    assert_eq!(hour.tier, LeaseTier::Hour);
+    assert_eq!(hour.price, 1_000i128);
+    assert_eq!(hour.duration_ledgers, LEASE_HOUR_LEDGERS);
+
+    let day = client.lease_quote(&id, &LeaseTier::Day);
+    assert_eq!(day.resource_id, id);
+    assert_eq!(day.tier, LeaseTier::Day);
+    assert_eq!(day.price, 5_000i128);
+    assert_eq!(day.duration_ledgers, LEASE_DAY_LEDGERS);
+
+    let week = client.lease_quote(&id, &LeaseTier::Week);
+    assert_eq!(week.resource_id, id);
+    assert_eq!(week.tier, LeaseTier::Week);
+    assert_eq!(week.price, 20_000i128);
+    assert_eq!(week.duration_ledgers, LEASE_WEEK_LEDGERS);
+}
