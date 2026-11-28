@@ -247,18 +247,18 @@ The on-chain half of Option C now exists in `vault-registry` (see
 `Lease` record per `(resource_id, holder)` with `start_ledger`,
 `expiry_ledger`, `tier` and `state`, written by `buy_lease` (holder, `Pending`)
 or `record_lease` (settler, `Active`), promoted by `settle_lease`, renewed by
-the holder with `extend_lease`, revoked by the creator with `revoke_lease`, and
-read with `get_lease`, `lease_is_active` and `lease_price`. `renew_lease` is holder-only
-and requires the lease to remain active (`now < expiry_ledger`), so renewal is
-rejected at the exact expiry boundary. Renewal writes verify
-the stored binding before touching the record, so extensions keep the original
-holder and resource even after an ownership transfer. Tier durations and price
-multipliers are platform defaults (`LEASE_*_LEDGERS`, `LEASE_*_MULTIPLIER`);
-creator-configurable tiers remain a follow-up. The MCP server buys and inspects
-leases with `mindvault_buy_lease` and `mindvault_lease_status`: the agent pays
-the creator in USDC directly, then records the lease on-chain with the payment
-hash. `mindvault_lease_status` continues to read the original
-`(resource_id, holder)` key, so it reflects extensions without a client change.
+the holder with `renew_lease`, revoked by the creator with `revoke_lease`, and
+read with `get_lease`, `lease_is_active` and `lease_price`. Holder-only
+`renew_lease` requires the exact current tier price and adds the selected tier
+duration to the existing expiry, while `leasernew` is emitted for successful
+renewals. Renewal is accepted only while `now < expiry_ledger` and is rejected
+at the exact expiry boundary without changing the stored lease or publishing an
+event. Renewal writes verify the stored binding before touching the record.
+Tier durations and price multipliers are platform defaults
+(`LEASE_*_LEDGERS`, `LEASE_*_MULTIPLIER`); creator-configurable tiers remain a
+follow-up. The MCP server buys and inspects leases with
+`mindvault_buy_lease` and `mindvault_lease_status`; it reflects renewals through
+the existing `(resource_id, holder)` status key without a client change.
 The off-chain lease table, the paywall short-circuit and the expiry sweeper
 (follow-ups 1 to 3) are still open.
 
@@ -278,5 +278,3 @@ See [ADR: Fee Config](adr-fee-config.md#negative--limitations) for details.
 - [MindVault architecture](architecture.md)
 - [Resource publish lifecycle](resource-publish-lifecycle.md)
 - [dynamic paywall middleware](../server/src/middleware/dynamicPaywall.ts)
-- [vault-registry contract source](../contract/contracts/vault-registry/src/lib.rs)
-- [Soroban SDK — persisting data](https://soroban.stellar.org/docs/learn/persisting-data)

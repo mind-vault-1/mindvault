@@ -11,9 +11,11 @@
  *
  * `mindvault_lease_status` reads `get_lease` / `lease_is_active` so an agent
  * can check its window before re-buying. The contract's holder-only
- * `renew_lease` can extend an active window before expiry; status reflects the
- * updated expiry and remains unchanged at the exact expiry boundary. Both tools
- * honour mock mode.
+ * `renew_lease` requires the exact current tier price, adds the tier duration
+ * to the existing expiry, and emits `leasernew`. It remains renewable while
+ * `now < expiry_ledger`; at the exact expiry ledger it rejects and publishes
+ * no renewal event. Status reflects the updated expiry without a client change.
+ * Both tools honour mock mode.
  */
 
 import { createLimitedRegistryClient } from "../upstreamStellar.js";
